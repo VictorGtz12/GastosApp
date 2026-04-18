@@ -7,7 +7,7 @@ const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw3f5xddozgvhT0ZTMXp
 
 // ── Configuración ─────────────────────────────────────────────
 const PRESUPUESTO = 3400.09;
- 
+
 // Iconos por defecto para motivos conocidos
 const MOTIVO_ICON_DEFAULT = {
   'Comida':'🍽️','Comida a Domicilio':'🛵','Mandado':'🧺','Otros':'📋',
@@ -15,7 +15,7 @@ const MOTIVO_ICON_DEFAULT = {
   'Entretenimiento':'🎬','Servicios':'🏠','Reembolso':'↩️','Ahorro':'🐷',
   'Ahorro Victor':'💰','GN':'📌'
 };
- 
+
 // Catálogos dinámicos (se cargan desde localStorage / Sheets)
 let catalogoCuentas = [
   { nombre:'Banamex',     color:'#e24b4a', tieneCorte:true,  diaCorte:3  },
@@ -27,20 +27,20 @@ let catalogoCuentas = [
   { nombre:'MercadoPago', color:'#eab308', tieneCorte:true,  diaCorte:21 },
   { nombre:'Debito',      color:'#64748b', tieneCorte:false, diaCorte:null },
 ];
- 
+
 let catalogoMotivos = [
   'Comida','Comida a Domicilio','Mandado','Otros','ATM',
   'Compra en Linea','Farmacia','Abarrotes','Entretenimiento',
   'Servicios','Reembolso','Ahorro','Ahorro Victor','GN'
 ];
- 
+
 let catalogoComentarios = [
   'Starbucks','Caffenio','Amazon','Mercado Libre','Chipotles',
   'Carls Jr','Jack In The Box','DQ','Pizza','Tacos','Sams',
   'Walmart','Oxxo','Hot Dogs','HBO MAX','Apple One','Boneless',
   '260','Costco','Gas','Luz','Agua','Internet'
 ];
- 
+
 // Helpers que reemplazan las constantes estáticas anteriores
 function getCuentas()      { return catalogoCuentas.map(c => c.nombre); }
 function getCuentaObj(n)   { return catalogoCuentas.find(c => c.nombre === n) || {}; }
@@ -53,7 +53,7 @@ function getCortesConfig() {
   });
   return cfg;
 }
- 
+
 // ── Estado ────────────────────────────────────────────────────
 let gastos = [];
 let historico = [];
@@ -61,7 +61,7 @@ let nextId = 1;
 let cuentasAhorro = [];
 let nextAhorroId = 1;
 let excepciones = []; // [{Cuenta, FechaOriginal, FechaExcepcion, Nota}]
- 
+
 let abonado = false;
 let ignorar = false;
 let externo = 'no';
@@ -73,12 +73,12 @@ let editingId = null;
 let movMode = 'abono';
 let movCuentaId = null;
 let traspasoOrigenId = null;
- 
+
 // ── Utilidades ────────────────────────────────────────────────
 const fmt = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtD = d => d instanceof Date ? d.toISOString().slice(0, 10) : d;
- 
+
 function getWeek(d) {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day = date.getUTCDay() || 7;
@@ -86,10 +86,10 @@ function getWeek(d) {
   const y = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
   return date.getUTCFullYear() + '-W' + String(Math.ceil((((date - y) / 86400000) + 1) / 7)).padStart(2, '0');
 }
- 
+
 // ── Google Sheets API ─────────────────────────────────────────
 const usingSheets = SCRIPT_URL !== 'PEGA_AQUI_TU_URL_DE_APPS_SCRIPT';
- 
+
 async function apiGet(action) {
   const res = await fetch(`${SCRIPT_URL}?action=${action}`);
   return res.json();
@@ -102,7 +102,7 @@ async function apiPost(action, data) {
   });
   return res.json();
 }
- 
+
 // ── Normalización ────────────────────────────────────────────
 function normalizeGasto(row) {
   return {
@@ -127,7 +127,7 @@ function gastoToSheets(g) {
     Semana: g.semana, AhorroDesc: g.ahorroDesc || ''
   };
 }
- 
+
 // ── Almacenamiento local (caché offline) ──────────────────────
 function saveLocal() {
   try {
@@ -142,7 +142,7 @@ function saveLocal() {
     localStorage.setItem('catalogoComentarios', JSON.stringify(catalogoComentarios));
   } catch(e) { console.warn('localStorage lleno'); }
 }
- 
+
 function loadFromLocal() {
   try {
     // Leer con claves actuales, y también buscar claves legacy de versiones anteriores
@@ -153,7 +153,7 @@ function loadFromLocal() {
       }
       return null;
     };
- 
+
     const g    = tryGet('gastos',   'gastos_v7','gastos_v6','gastos_v5','gastos_v4','gastos_v3');
     const h    = tryGet('historico','historico_v7','historico_v6','historico_v5','historico_v4','historico_v3');
     const n    = tryGet('nextId',   'nextId_v7','nextId_v6','nextId_v5','nextId_v4','nextId_v3');
@@ -163,7 +163,7 @@ function loadFromLocal() {
     const cc   = tryGet('catalogoCuentas');
     const cm   = tryGet('catalogoMotivos');
     const ccom = tryGet('catalogoComentarios');
- 
+
     // Normalizar gastos: asegurar que todos los campos existan
     const normGasto = x => ({
       id:          x.id || x.ID,
@@ -178,7 +178,7 @@ function loadFromLocal() {
       semana:      x.semana || x.Semana || getWeek(new Date()),
       ahorroDesc:  x.ahorroDesc || x.AhorroDesc || '',
     });
- 
+
     if (g)    gastos     = JSON.parse(g).map(normGasto);
     if (h)    historico  = JSON.parse(h).map(normGasto);
     if (n)    nextId     = parseInt(n) || 1;
@@ -187,7 +187,7 @@ function loadFromLocal() {
     if (cc)   catalogoCuentas = JSON.parse(cc);
     if (cm)   catalogoMotivos = JSON.parse(cm);
     if (ccom) catalogoComentarios = JSON.parse(ccom);
- 
+
     // Normalizar ahorros: asegurar campos nuevos (grupo, excluirTotal)
     if (a) {
       cuentasAhorro = JSON.parse(a).map(c => ({
@@ -200,13 +200,13 @@ function loadFromLocal() {
         movimientos:  (c.movimientos || []),
       }));
     }
- 
+
     // Si venía de claves legacy, re-guardar con claves actuales
     if (!localStorage.getItem('gastos') && g) saveLocal();
- 
+
   } catch(e) { console.error('loadFromLocal error:', e); }
 }
- 
+
 // ── saveData: guarda local Y en Sheets ───────────────────────
 async function saveData(opts = {}) {
   saveLocal();
@@ -223,20 +223,20 @@ async function saveData(opts = {}) {
     await Promise.all(proms);
   } catch(e) { console.warn('Sheets save error:', e); }
 }
- 
+
 // Guarda un gasto individual en Sheets (add o update)
 async function saveGastoSheets(gasto, accion) {
   if (!usingSheets) return;
   try { await apiPost(accion, gastoToSheets(gasto)); } catch(e) {}
 }
- 
+
 // Sincronización completa desde Sheets
 // Parsea datos de Sheets y llena variables globales
 function applySheetData(result) {
   gastos      = (result.semana    || []).map(normalizeGasto);
   historico   = (result.historico || []).map(normalizeGasto);
   excepciones = (result.excepciones || []);
- 
+
   if (result.ahorros && result.ahorros.length) {
     cuentasAhorro = result.ahorros.map(c => ({
       id:           Number(c.id || c.ID),
@@ -257,17 +257,17 @@ function applySheetData(result) {
     const ids = cuentasAhorro.map(c => c.id).filter(Boolean);
     nextAhorroId = ids.length ? Math.max(...ids) + 1 : 1;
   }
- 
+
   const allIds = [...gastos, ...historico].map(g => Number(g.id)).filter(Boolean);
   nextId = allIds.length ? Math.max(...allIds) + 1 : 1;
- 
+
   if (result.catalogos) {
     if (result.catalogos.cuentas     && result.catalogos.cuentas.length)     catalogoCuentas     = result.catalogos.cuentas;
     if (result.catalogos.motivos     && result.catalogos.motivos.length)     catalogoMotivos     = result.catalogos.motivos;
     if (result.catalogos.comentarios && result.catalogos.comentarios.length) catalogoComentarios = result.catalogos.comentarios;
   }
 }
- 
+
 // Sheets SIEMPRE gana — borra local antes de aplicar
 async function syncFromSheets() {
   setSyncDot(true);
@@ -278,7 +278,7 @@ async function syncFromSheets() {
     clearTimeout(timer);
     const result = await res.json();
     if (result.error) throw new Error(result.error);
- 
+
     // Limpiar claves de datos antes de aplicar Sheets
     ['gastos','historico','ahorros','excepciones'].forEach(k => localStorage.removeItem(k));
     applySheetData(result);
@@ -291,7 +291,7 @@ async function syncFromSheets() {
     return false;
   }
 }
- 
+
 async function loadData() {
   if (usingSheets) {
     const ok = await syncFromSheets();
@@ -308,7 +308,7 @@ async function loadData() {
   actualizarSelectMotivos();
   showTab('menu');
 }
- 
+
 // Refresh manual — muestra loading, fuerza sync completo
 async function refreshData() {
   if (!usingSheets) { showToast('Sin Google Sheets configurado'); return; }
@@ -325,20 +325,26 @@ async function refreshData() {
     showToast('Error al conectar con Sheets');
   }
 }
- 
- 
+
+
 function setSyncDot(on) {
   const el = document.getElementById('sync-dot');
   if (el) el.style.opacity = on ? '1' : '0';
 }
- 
+
 // ── Navegación ────────────────────────────────────────────────
 const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos'];
- 
+
 function showTab(tab) {
   TABS.forEach(t => {
     document.getElementById('content-' + t).classList.toggle('active', t === tab);
-    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+    const tabEl = document.getElementById('tab-' + t);
+    if (tabEl) tabEl.classList.toggle('active', t === tab);
+  });
+  // Marcar activo en drawer
+  ['historico','catalogos'].forEach(t => {
+    const el = document.getElementById('drawer-' + t);
+    if (el) el.classList.toggle('active-item', t === tab);
   });
   const titles = {
     menu:'Gastos Semanales', gastos:'Mis Gastos',
@@ -355,7 +361,7 @@ function showTab(tab) {
   if (tab === 'historico') renderHistorico();
   if (tab === 'catalogos') renderCatalogos();
 }
- 
+
 // ── Menú ──────────────────────────────────────────────────────
 function renderMenu() {
   const activos = gastos.filter(g => !g.ignorar);
@@ -364,20 +370,20 @@ function renderMenu() {
   const disp    = Math.max(0, PRESUPUESTO - total);
   const extPend = [...gastos, ...historico].filter(g => g.externo === 'externo').reduce((s,g) => s+g.cantidad, 0);
   const totA    = cuentasAhorro.filter(c=>!c.excluirTotal).reduce((s, c) => s + saldoCuenta(c), 0);
- 
+
   document.getElementById('s-total').textContent = fmt(total);
   document.getElementById('s-disp').textContent  = fmt(disp);
   document.getElementById('s-disp').className = 'stat-val ' + (disp < 500 ? 'red' : 'green');
   document.getElementById('s-ext').textContent    = fmt(extPend);
   document.getElementById('s-ahorro').textContent = fmt(totA);
   document.getElementById('p-nums').textContent   = fmt(total) + ' / ' + fmt(PRESUPUESTO);
- 
+
   const fill = document.getElementById('p-fill');
   fill.style.width  = pct + '%';
   fill.className    = 'progress-fill' + (pct >= 100 ? ' over' : pct >= 80 ? ' warn' : '');
   document.getElementById('p-pct').textContent   = pct + '% usado';
   document.getElementById('p-resta').textContent = 'Resta ' + fmt(disp);
- 
+
   const rows = getCuentas().map(c => {
     const sum = activos.filter(g => g.cuenta === c).reduce((s,g) => s+g.cantidad, 0);
     if (!sum) return '';
@@ -389,7 +395,7 @@ function renderMenu() {
   document.getElementById('saldos-list').innerHTML = rows ||
     '<div style="font-size:12px;color:var(--text2);padding:6px 0">Sin gastos esta semana</div>';
 }
- 
+
 // ── Gastos ────────────────────────────────────────────────────
 function renderGastos() {
   const q = (document.getElementById('search-in').value || '').toLowerCase();
@@ -425,7 +431,7 @@ function renderGastos() {
     </div>`;
   }).join('');
 }
- 
+
 function setFilter(f) {
   activeFilter = f;
   ['todos','pendiente','abonado','ignorar','externo'].forEach(x =>
@@ -433,7 +439,7 @@ function setFilter(f) {
   );
   renderGastos();
 }
- 
+
 // ── Externos ──────────────────────────────────────────────────
 function renderExternos() {
   const todos = [...gastos,...historico].filter(g => g.externo !== 'no');
@@ -466,13 +472,13 @@ function renderExternos() {
     </div>`;
   }).join('');
 }
- 
+
 function setExtFilter(f) {
   extFilter = f;
   ['todos','pendiente','pagado'].forEach(x => document.getElementById('ef-'+x).classList.toggle('active',x===f));
   renderExternos();
 }
- 
+
 async function marcarExterno(id, estado) {
   let g = gastos.find(x=>x.id===id) || historico.find(x=>x.id===id);
   if (g) g.externo = estado;
@@ -481,7 +487,7 @@ async function marcarExterno(id, estado) {
   showToast(estado==='pagado'?'Marcado como cobrado ✓':'Marcado como pendiente');
   renderExternos(); renderMenu();
 }
- 
+
 // ── Excepciones de corte ──────────────────────────────────────
 // Dado un día de corte y una fecha, devuelve la fecha de corte real
 // considerando si existe una excepción para ese período
@@ -493,16 +499,16 @@ function diaCorteEfectivo(cuenta, fechaCorteNormal) {
   if (exc && exc.FechaExcepcion) return new Date(exc.FechaExcepcion + 'T12:00:00');
   return fechaCorteNormal;
 }
- 
+
 function fechaCorteNormal(cfg, año, mes) {
   return new Date(año, mes, cfg.dia);
 }
- 
+
 // Calcula el período activo para una tarjeta respetando excepciones
 function getPeriodoActual(cfg, cuenta) {
   const hoy = new Date();
   let desde, hastaBase, hasta;
- 
+
   if (hoy.getDate() <= cfg.dia) {
     const pm = hoy.getMonth() === 0 ? 11 : hoy.getMonth() - 1;
     const py = hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear();
@@ -523,7 +529,7 @@ function getPeriodoActual(cfg, cuenta) {
   }
   return { desde, hasta };
 }
- 
+
 function periodoAnterior(cfg, cuenta, desde) {
   // El corte que terminó justo antes de 'desde' es el día anterior
   const hastaBase = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate() - 1);
@@ -536,7 +542,7 @@ function periodoAnterior(cfg, cuenta, desde) {
   const nuevaDesde = new Date(corteAnt.getFullYear(), corteAnt.getMonth(), corteAnt.getDate() + 1);
   return { desde: nuevaDesde, hasta };
 }
- 
+
 function periodoSiguiente(cfg, cuenta, hasta) {
   const nuevaDesde = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate() + 1);
   const nm = (nuevaDesde.getMonth() + 1) % 12;
@@ -545,7 +551,7 @@ function periodoSiguiente(cfg, cuenta, hasta) {
   const nuevaHasta = diaCorteEfectivo(cuenta, hastaBase);
   return { desde: nuevaDesde, hasta: nuevaHasta };
 }
- 
+
 function gastosEnPeriodo(all, cuenta, desde, hasta) {
   return all.filter(g => {
     if (g.cuenta !== cuenta) return false;
@@ -554,7 +560,7 @@ function gastosEnPeriodo(all, cuenta, desde, hasta) {
     return fd >= desde && fd <= hasta;
   });
 }
- 
+
 function renderCortes() {
   const all = [...gastos, ...historico];
   const hoy = new Date();
@@ -576,7 +582,7 @@ function renderCortes() {
     </div>`;
   }).join('');
 }
- 
+
 function openCorteTarjeta(cuenta) {
   const cfg = getCortesConfig()[cuenta];
   const all = [...gastos,...historico];
@@ -584,10 +590,10 @@ function openCorteTarjeta(cuenta) {
   let { desde: dActual, hasta: hActual } = getPeriodoActual(cfg, cuenta);
   let curDesde = dActual, curHasta = hActual;
   const body = document.getElementById('modal-corte-body');
- 
+
   const isActual  = () => fmtD(curDesde) === fmtD(dActual);
   const isFuturo  = () => curDesde > dActual;
- 
+
   function render() {
     const gp = gastosEnPeriodo(all, cuenta, curDesde, curHasta);
     const total = gp.reduce((s,g)=>s+g.cantidad,0);
@@ -599,12 +605,12 @@ function openCorteTarjeta(cuenta) {
         : `Período activo · ${diasR===0?'Corte hoy':diasR+' días para corte'}`)
       : isFuturo() ? 'Período futuro' : 'Período anterior';
     const labelColor = esActual && vencida ? '#d97706' : esActual ? '#0d9488' : '#94a3b8';
- 
+
     // Excepción activa para este período
     const excActiva = excepciones.find(e =>
       e.Cuenta === cuenta && e.FechaOriginal === fmtD(curHasta)
     );
- 
+
     body.innerHTML = `
       <h2 style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <span style="width:12px;height:12px;border-radius:50%;background:${cfg.color};display:inline-block;flex-shrink:0"></span>${cuenta}
@@ -618,24 +624,24 @@ function openCorteTarjeta(cuenta) {
         </div>
         <button onclick="window._nextP()" ${isFuturo()?'disabled':''} style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:13px;cursor:pointer;color:${isFuturo()?'#cbd5e1':'#1e293b'}">›</button>
       </div>
- 
+
       ${excActiva ? `<div style="background:rgba(255,159,67,.15);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:var(--orange)">
         ⚠️ Excepción activa: corte movido al <strong>${excActiva.FechaExcepcion}</strong>${excActiva.Nota?' — '+excActiva.Nota:''}
         <button onclick="eliminarExcepcion('${cuenta}','${fmtD(curHasta)}')" style="float:right;background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">Eliminar</button>
       </div>` : ''}
- 
+
       <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:10px;text-align:center">
         <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Total del período</div>
         <div style="font-size:24px;font-weight:500;color:${total>0?'#e24b4a':'#94a3b8'}">${fmt(total)}</div>
         <div style="font-size:11px;color:var(--text2);margin-top:2px">${gp.length} gasto${gp.length!==1?'s':''}</div>
       </div>
- 
+
       ${esActual && vencida ? `<button onclick="window._nuevoPeriodo()" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:white;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:10px">✂️ Registrar corte y abrir nuevo período</button>` : ''}
- 
+
       <button onclick="window._openExc()" style="width:100%;padding:8px;border-radius:8px;border:1px dashed #e2e8f0;background:transparent;color:var(--text2);font-size:12px;cursor:pointer;margin-bottom:10px">
         📅 Ajustar fecha de corte por día inhábil
       </button>
- 
+
       ${gp.length
         ? gp.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).map(g=>`
           <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
@@ -651,7 +657,7 @@ function openCorteTarjeta(cuenta) {
         <button class="mbtn sec" onclick="closeModal('modal-corte-tarjeta')">Cerrar</button>
       </div>`;
   }
- 
+
   window._prevP = () => {
     const ant = periodoAnterior(cfg, cuenta, curDesde);
     curDesde = ant.desde; curHasta = ant.hasta; render();
@@ -680,11 +686,11 @@ function openCorteTarjeta(cuenta) {
     openModal('modal-excepcion');
   };
   window._eliminarExc = (cta, fo) => eliminarExcepcion(cta, fo);
- 
+
   render();
   openModal('modal-corte-tarjeta');
 }
- 
+
 async function guardarExcepcion() {
   const nuevaFecha = document.getElementById('exc-fecha-nueva').value;
   const nota       = document.getElementById('exc-nota').value;
@@ -705,18 +711,18 @@ async function guardarExcepcion() {
   // Reabrir el modal del tarjeta con datos actualizados
   openCorteTarjeta(window._excCuenta);
 }
- 
+
 async function eliminarExcepcion(cuenta, fechaOrig) {
   excepciones = excepciones.filter(e => !(e.Cuenta===cuenta && e.FechaOriginal===fechaOrig));
   await saveData({ excepciones: true });
   showToast('Excepción eliminada');
   openCorteTarjeta(cuenta);
 }
- 
+
 // ── Ahorros ───────────────────────────────────────────────────
 const saldoCuenta = c => c.movimientos.reduce((s,m) =>
   (m.tipo==='abono'||m.tipo==='traspaso-in') ? s+m.cantidad : s-m.cantidad, 0);
- 
+
 function renderAhorros() {
   const el = document.getElementById('ahorros-list');
   if (!cuentasAhorro.length) {
@@ -725,11 +731,11 @@ function renderAhorros() {
     el.innerHTML = '<div class="empty">Sin cuentas de ahorro.<br>Crea tu primera cuenta.</div>';
     return;
   }
- 
+
   // Total general: solo cuentas que no están excluidas
   const totGeneral = cuentasAhorro.filter(c=>!c.excluirTotal).reduce((s,c)=>s+saldoCuenta(c),0);
   document.getElementById('ahorro-big').textContent = fmt(totGeneral);
- 
+
   // Agrupar cuentas por grupo
   const grupos = {};
   cuentasAhorro.forEach(c => {
@@ -738,7 +744,7 @@ function renderAhorros() {
     grupos[g].cuentas.push(c);
     grupos[g].total += saldoCuenta(c);
   });
- 
+
   // Subtotales: mostrar todos los grupos que no sean "General",
   // y también "General" si alguna cuenta está excluida del total
   const hayExcluidas = cuentasAhorro.some(c=>c.excluirTotal);
@@ -752,7 +758,7 @@ function renderAhorros() {
       <span style="font-size:13px;font-weight:500;color:${esExcluido?'#64748b':'#7c3aed'}">${fmt(g.total)}</span>
     </div>`;
   }).join('');
- 
+
   // Renderizar tarjetas agrupadas
   const tieneOtras = cuentasAhorro.length > 1;
   let html = '';
@@ -801,7 +807,7 @@ function renderAhorros() {
   });
   el.innerHTML = html;
 }
- 
+
 function openMovAhorro(id, tipo) {
   movCuentaId = id; movMode = tipo;
   const c = cuentasAhorro.find(x=>x.id===id);
@@ -812,7 +818,7 @@ function openMovAhorro(id, tipo) {
   document.getElementById('ahorro-nota').value     = '';
   openModal('modal-ahorro');
 }
- 
+
 async function confirmarMovAhorro() {
   const cantidad = parseFloat(document.getElementById('ahorro-cantidad').value);
   if (!cantidad||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
@@ -821,12 +827,13 @@ async function confirmarMovAhorro() {
   if (!c) return;
   if (movMode==='retiro' && cantidad>saldoCuenta(c)) { showToast('Saldo insuficiente'); return; }
   c.movimientos.push({ tipo: movMode, cantidad, nota, fecha: today() });
-  await saveData({ ahorros: true });
+  saveLocal();
+  saveAhorroIndividual(c);
   closeModal('modal-ahorro');
   showToast(movMode==='abono'?'Abono registrado ✓':'Retiro registrado ✓');
   renderAhorros(); renderMenu();
 }
- 
+
 function openTraspaso(origenId) {
   traspasoOrigenId = origenId;
   const origen = cuentasAhorro.find(x=>x.id===origenId);
@@ -858,7 +865,7 @@ function openTraspaso(origenId) {
     </div>`;
   openModal('modal-traspaso');
 }
- 
+
 async function confirmarTraspaso() {
   const cantidad   = parseFloat(document.getElementById('traspaso-cantidad').value);
   if (!cantidad||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
@@ -871,14 +878,16 @@ async function confirmarTraspaso() {
   const f = today();
   origen.movimientos.push({ tipo:'traspaso-out', cantidad, nota, destino:destinoId, fecha:f });
   destino.movimientos.push({ tipo:'traspaso-in',  cantidad, nota, origen:traspasoOrigenId, fecha:f });
-  await saveData({ ahorros: true });
+  saveLocal();
+  saveAhorroIndividual(origen);
+  saveAhorroIndividual(destino);
   closeModal('modal-traspaso');
   showToast(`Traspasado ${fmt(cantidad)} a ${destino.nombre} ✓`);
   renderAhorros(); renderMenu();
 }
- 
+
 let _editAhorroId = null;
- 
+
 function openNuevaCuenta() {
   _editAhorroId = null;
   document.getElementById('nc-modal-title').textContent = 'Nueva cuenta de ahorro';
@@ -890,7 +899,7 @@ function openNuevaCuenta() {
   document.getElementById('nc-excluir').checked     = false;
   openModal('modal-nueva-cuenta');
 }
- 
+
 function editarCuentaAhorro(id) {
   const c = cuentasAhorro.find(x=>x.id===id);
   if (!c) return;
@@ -904,19 +913,20 @@ function editarCuentaAhorro(id) {
   document.getElementById('nc-excluir').checked     = !!c.excluirTotal;
   openModal('modal-nueva-cuenta');
 }
- 
+
 async function crearCuentaAhorro() {
   const nombre      = document.getElementById('nc-nombre').value.trim();
   if (!nombre) { showToast('Ingresa un nombre'); return; }
   const meta        = parseFloat(document.getElementById('nc-meta').value) || 0;
   const grupo       = document.getElementById('nc-grupo').value.trim() || 'General';
   const excluirTotal = document.getElementById('nc-excluir').checked;
- 
+
   if (_editAhorroId !== null) {
     // Editar existente
     const c = cuentasAhorro.find(x=>x.id===_editAhorroId);
     if (c) { c.nombre=nombre; c.meta=meta; c.grupo=grupo; c.excluirTotal=excluirTotal; }
-    await saveData({ ahorros: true });
+    saveLocal();
+    saveAhorroIndividual(cuentasAhorro.find(x=>x.id===_editAhorroId));
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta actualizada ✓');
   } else {
@@ -925,22 +935,25 @@ async function crearCuentaAhorro() {
     const movimientos  = saldoInicial > 0
       ? [{ tipo:'abono', cantidad: saldoInicial, nota:'Saldo inicial', fecha: today() }]
       : [];
-    cuentasAhorro.push({ id: nextAhorroId++, nombre, meta, grupo, excluirTotal, movimientos });
-    await saveData({ ahorros: true });
+    const nueva = { id: nextAhorroId++, nombre, meta, grupo, excluirTotal, movimientos };
+    cuentasAhorro.push(nueva);
+    saveLocal();
+    saveAhorroIndividual(nueva);
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta creada ✓');
   }
   renderAhorros(); renderMenu();
 }
- 
+
 async function eliminarCuenta(id) {
   if (!confirm('¿Eliminar esta cuenta de ahorro?')) return;
   cuentasAhorro = cuentasAhorro.filter(x=>x.id!==id);
-  await saveData({ ahorros: true });
+  saveLocal();
+  if (usingSheets) apiPost('deleteAhorroCuenta', { id }).catch(()=>{});
   showToast('Cuenta eliminada');
   renderAhorros(); renderMenu();
 }
- 
+
 // ── Histórico ─────────────────────────────────────────────────
 function renderHistorico() {
   const el = document.getElementById('historico-list');
@@ -966,7 +979,7 @@ function renderHistorico() {
     </div>`;
   }).join('');
 }
- 
+
 // ── Formulario nuevo gasto ────────────────────────────────────
 function setAb(v){
   abonado=v;
@@ -990,7 +1003,7 @@ function setDescAhorro(v){
   document.getElementById('desc-si').className ='tog'+(v?' sel-si':'');
   document.getElementById('ahorro-selector-wrap').style.display = v ? 'block' : 'none';
 }
- 
+
 // Actualiza selector de cuentas de ahorro en el form
 function refreshAhorroSelector() {
   const sel = document.getElementById('f-ahorro-cuenta');
@@ -999,11 +1012,11 @@ function refreshAhorroSelector() {
     `<option value="${c.id}">${c.nombre} (${fmt(saldoCuenta(c))})</option>`
   ).join('');
 }
- 
+
 async function guardarGasto() {
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
   if (!cantidad||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
- 
+
   // Verificar saldo si se descuenta de ahorro
   let ahorroSelId = null, ahorroSelNombre = '';
   if (descontarAhorro) {
@@ -1014,7 +1027,7 @@ async function guardarGasto() {
     if (cantidad > saldoCuenta(ca)) { showToast(`Saldo insuficiente en ${ca.nombre}`); return; }
     ahorroSelNombre = ca.nombre;
   }
- 
+
   const isEditing = !!editingId;
   const gasto = {
     id:          editingId || nextId++,
@@ -1027,14 +1040,14 @@ async function guardarGasto() {
     semana:      getWeek(new Date()),
     ahorroDesc:  descontarAhorro ? ahorroSelNombre : '',
   };
- 
+
   if (isEditing) {
     const idx = gastos.findIndex(x=>x.id===editingId);
     if (idx>=0) gastos[idx] = gasto;
   } else {
     gastos.push(gasto);
   }
- 
+
   // Descontar del ahorro si aplica
   if (descontarAhorro && ahorroSelId && !isEditing) {
     const ca = cuentasAhorro.find(x=>x.id===ahorroSelId);
@@ -1049,16 +1062,16 @@ async function guardarGasto() {
   } else {
     saveLocal();
   }
- 
+
   // Sync Sheets
   if (usingSheets) {
     apiPost(isEditing?'updateGasto':'addGasto', gastoToSheets(gasto)).catch(()=>{});
   }
- 
+
   resetForm(); editingId=null; showTab('gastos');
   showToast('Gasto guardado ✓');
 }
- 
+
 function resetForm() {
   document.getElementById('f-cantidad').value    = '';
   document.getElementById('f-comentarios-input').value = ''; document.getElementById('comentario-dropdown').style.display='none';
@@ -1070,7 +1083,7 @@ function cancelForm() {
   editingId=null; resetForm();
   showTab(gastos.length?'gastos':'menu');
 }
- 
+
 // ── Detalle / Editar / Eliminar ───────────────────────────────
 function openDetail(id) {
   const g = gastos.find(x=>x.id===id); if(!g) return;
@@ -1101,7 +1114,7 @@ function openDetail(id) {
     </div>`;
   openModal('modal-detail');
 }
- 
+
 function editar(id) {
   closeModal('modal-detail');
   const g = gastos.find(x=>x.id===id); if(!g) return;
@@ -1119,7 +1132,7 @@ function editar(id) {
   document.getElementById('tab-nuevo').classList.add('active');
   document.getElementById('topbar-title').textContent='Editar Gasto';
 }
- 
+
 async function eliminar(id) {
   gastos = gastos.filter(x=>x.id!==id);
   saveLocal();
@@ -1128,13 +1141,13 @@ async function eliminar(id) {
   showToast('Gasto eliminado');
   renderGastos(); renderMenu();
 }
- 
+
 // ── Corte semanal ─────────────────────────────────────────────
 function openCorte() {
   document.getElementById('corte-count').textContent = gastos.length;
   openModal('modal-corte-sem');
 }
- 
+
 async function hacerCorte() {
   if (!gastos.length) { closeModal('modal-corte-sem'); showToast('No hay gastos que cortar'); return; }
   historico = [...gastos, ...historico];
@@ -1145,7 +1158,7 @@ async function hacerCorte() {
   showToast('¡Corte semanal realizado! ✓');
   renderMenu();
 }
- 
+
 // ── Exportar Excel ────────────────────────────────────────────
 function exportarExcel() {
   if (typeof XLSX==='undefined') { showToast('Cargando...'); return; }
@@ -1175,21 +1188,34 @@ function exportarExcel() {
   XLSX.writeFile(wb,`GastosSemanales_${today()}.xlsx`);
   showToast('Excel descargado ✓');
 }
- 
+
 // ── Helpers ───────────────────────────────────────────────────
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
- 
+
 function showToast(msg) {
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2500);
 }
- 
+
+
+// Actualiza UNA cuenta de ahorro en Sheets (no reescribe todo)
+async function saveAhorroIndividual(cuenta) {
+  if (!usingSheets) return;
+  try {
+    await apiPost('updateAhorroCuenta', {
+      id: cuenta.id, nombre: cuenta.nombre, meta: cuenta.meta,
+      grupo: cuenta.grupo || 'General', excluirTotal: cuenta.excluirTotal || false,
+      movimientos: cuenta.movimientos
+    });
+  } catch(e) { console.warn('saveAhorro error:', e); }
+}
+
 // ── Catálogos ─────────────────────────────────────────────────
 // Sub-tab activo: 'cuentas' | 'motivos'
 let catalogoTab = 'cuentas';
- 
+
 function renderCatalogos() {
   ['cuentas','motivos','comentarios'].forEach(t => {
     const btn = document.getElementById('ctab-'+t);
@@ -1202,9 +1228,9 @@ function renderCatalogos() {
   if (catalogoTab === 'motivos')    renderCatMotivos();
   if (catalogoTab === 'comentarios') renderCatComentarios();
 }
- 
+
 function setCatalogoTab(t) { catalogoTab = t; renderCatalogos(); }
- 
+
 // ── Catálogo de Cuentas ───────────────────────────────────────
 function renderCatCuentas() {
   const el = document.getElementById('cat-cuentas-list');
@@ -1223,7 +1249,7 @@ function renderCatCuentas() {
       </div>
     </div>`).join('');
 }
- 
+
 function nuevaCuenta_cat() {
   document.getElementById('cc-nombre').value    = '';
   document.getElementById('cc-color').value     = '#0d9488';
@@ -1234,7 +1260,7 @@ function nuevaCuenta_cat() {
   window._editCuentaIdx = null;
   openModal('modal-cat-cuenta');
 }
- 
+
 function editarCuenta(i) {
   const c = catalogoCuentas[i];
   document.getElementById('cc-nombre').value    = c.nombre;
@@ -1246,7 +1272,7 @@ function editarCuenta(i) {
   window._editCuentaIdx = i;
   openModal('modal-cat-cuenta');
 }
- 
+
 async function guardarCuenta_cat() {
   const nombre = document.getElementById('cc-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre de la cuenta'); return; }
@@ -1272,7 +1298,7 @@ async function guardarCuenta_cat() {
   // Actualizar selects del formulario de gastos
   actualizarSelectCuentas();
 }
- 
+
 async function eliminarCuenta_cat(i) {
   const c = catalogoCuentas[i];
   if (!confirm(`¿Eliminar la cuenta "${c.nombre}"? Los gastos existentes mantendrán el nombre.`)) return;
@@ -1282,14 +1308,14 @@ async function eliminarCuenta_cat(i) {
   renderCatCuentas();
   actualizarSelectCuentas();
 }
- 
+
 function actualizarSelectCuentas() {
   const sel = document.getElementById('f-cuenta');
   if (!sel) return;
   const cur = sel.value;
   sel.innerHTML = getCuentas().map(n => `<option${n===cur?' selected':''}>${n}</option>`).join('');
 }
- 
+
 // ── Catálogo de Motivos ───────────────────────────────────────
 function renderCatMotivos() {
   const el = document.getElementById('cat-motivos-list');
@@ -1301,21 +1327,21 @@ function renderCatMotivos() {
       <button onclick="eliminarMotivo(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
     </div>`).join('');
 }
- 
+
 function nuevoMotivo() {
   document.getElementById('cm-nombre').value = '';
   document.getElementById('cm-modal-title').textContent = 'Nuevo motivo';
   window._editMotivoIdx = null;
   openModal('modal-cat-motivo');
 }
- 
+
 function editarMotivo(i) {
   document.getElementById('cm-nombre').value = catalogoMotivos[i];
   document.getElementById('cm-modal-title').textContent = 'Editar motivo';
   window._editMotivoIdx = i;
   openModal('modal-cat-motivo');
 }
- 
+
 async function guardarMotivo_cat() {
   const nombre = document.getElementById('cm-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre del motivo'); return; }
@@ -1333,7 +1359,7 @@ async function guardarMotivo_cat() {
   renderCatMotivos();
   actualizarSelectMotivos();
 }
- 
+
 async function eliminarMotivo(i) {
   if (!confirm(`¿Eliminar el motivo "${catalogoMotivos[i]}"?`)) return;
   catalogoMotivos.splice(i, 1);
@@ -1342,14 +1368,14 @@ async function eliminarMotivo(i) {
   renderCatMotivos();
   actualizarSelectMotivos();
 }
- 
+
 function actualizarSelectMotivos() {
   const sel = document.getElementById('f-motivo');
   if (!sel) return;
   const cur = sel.value;
   sel.innerHTML = catalogoMotivos.map(m => `<option${m===cur?' selected':''}>${m}</option>`).join('');
 }
- 
+
 // El campo comentarios es un combo: dropdown + input libre
 function openComentarioDropdown() {
   const dropdown = document.getElementById('comentario-dropdown');
@@ -1365,20 +1391,20 @@ function openComentarioDropdown() {
   ).join('');
   dropdown.style.display = 'block';
 }
- 
+
 function seleccionarComentario(val) {
   document.getElementById('f-comentarios-input').value = val;
   document.getElementById('comentario-dropdown').style.display = 'none';
 }
- 
+
 function cerrarDropdownComentario(e) {
   const wrap = document.getElementById('comentario-wrap');
   if (wrap && !wrap.contains(e.target)) {
     document.getElementById('comentario-dropdown').style.display = 'none';
   }
 }
- 
- 
+
+
 // ── Catálogo de Comentarios ───────────────────────────────────
 function renderCatComentarios() {
   const el = document.getElementById('cat-comentarios-list');
@@ -1390,21 +1416,21 @@ function renderCatComentarios() {
       <button onclick="eliminarComentario(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
     </div>`).join('');
 }
- 
+
 function nuevoComentario() {
   document.getElementById('ccom-nombre').value = '';
   document.getElementById('ccom-modal-title').textContent = 'Nuevo comentario';
   window._editComentarioIdx = null;
   openModal('modal-cat-comentario');
 }
- 
+
 function editarComentario(i) {
   document.getElementById('ccom-nombre').value = catalogoComentarios[i];
   document.getElementById('ccom-modal-title').textContent = 'Editar comentario';
   window._editComentarioIdx = i;
   openModal('modal-cat-comentario');
 }
- 
+
 async function guardarComentario_cat() {
   const nombre = document.getElementById('ccom-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre del comentario'); return; }
@@ -1421,7 +1447,7 @@ async function guardarComentario_cat() {
   showToast('Comentario guardado ✓');
   renderCatComentarios();
 }
- 
+
 async function eliminarComentario(i) {
   if (!confirm(`¿Eliminar "${catalogoComentarios[i]}" del catálogo?`)) return;
   catalogoComentarios.splice(i, 1);
@@ -1429,7 +1455,18 @@ async function eliminarComentario(i) {
   showToast('Eliminado');
   renderCatComentarios();
 }
- 
+
+
+// ── Menú lateral (drawer) ─────────────────────────────────────
+function openDrawer() {
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+}
+
 // ── Ocultar/mostrar total ahorrado ───────────────────────────
 let ahorroVisible = true;
 function toggleAhorroVisible() {
@@ -1449,7 +1486,7 @@ function toggleAhorroVisible() {
     if (btn) btn.textContent = ahorroVisible ? '👁' : '🙈';
   });
 }
- 
+
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {

@@ -44,13 +44,15 @@ function doPost(e) {
   try {
     const { action, data } = JSON.parse(e.postData.contents);
     const map = {
-      addGasto:        () => addGasto(data),
-      updateGasto:     () => updateGasto(data),
-      deleteGasto:     () => deleteRow(SHEET.SEMANA, data.id),
-      hacerCorte:      () => hacerCorte(),
-      saveAhorros:     () => saveAhorros(data),
-      saveExcepciones: () => saveExcepciones(data),
-      saveCatalogos:   () => saveCatalogos(data),
+      addGasto:           () => addGasto(data),
+      updateGasto:        () => updateGasto(data),
+      deleteGasto:        () => deleteRow(SHEET.SEMANA, data.id),
+      hacerCorte:         () => hacerCorte(),
+      saveAhorros:        () => saveAhorros(data),
+      updateAhorroCuenta: () => updateAhorroCuenta(data),
+      deleteAhorroCuenta: () => deleteAhorroCuenta(data.id),
+      saveExcepciones:    () => saveExcepciones(data),
+      saveCatalogos:      () => saveCatalogos(data),
     };
     if (!map[action]) return json({ error: 'Accion no reconocida' });
     return json(map[action]());
@@ -193,6 +195,59 @@ function saveAhorros(data) {
   });
   return { ok: true };
 }
+
+function updateAhorroCuenta(data) {
+  // Actualiza o inserta UNA cuenta (upsert) sin tocar las demás
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const shC = getOrCreate(ss, SHEET.AH_CUENTAS, HDR_AH_C);
+  const shM = getOrCreate(ss, SHEET.AH_MOVS,    HDR_AH_M);
+
+  // Upsert en cuentas
+  const rowsC = shC.getDataRange().getValues();
+  let found = false;
+  for (let i = 1; i < rowsC.length; i++) {
+    if (String(rowsC[i][0]) === String(data.id)) {
+      shC.getRange(i+1,1,1,HDR_AH_C.length).setValues([[
+        data.id, data.nombre, data.meta||0,
+        data.grupo||'General', data.excluirTotal?'SI':'NO'
+      ]]);
+      found = true; break;
+    }
+  }
+  if (!found) {
+    shC.appendRow([data.id, data.nombre, data.meta||0,
+                   data.grupo||'General', data.excluirTotal?'SI':'NO']);
+  }
+
+  // Reemplazar movimientos de esta cuenta solamente
+  const rowsM = shM.getDataRange().getValues();
+  // Borrar filas de esta cuenta (de abajo hacia arriba)
+  for (let i = rowsM.length-1; i >= 1; i--) {
+    if (String(rowsM[i][0]) === String(data.id)) shM.deleteRow(i+1);
+  }
+  // Re-insertar movimientos
+  (data.movimientos||[]).forEach(m =>
+    shM.appendRow([data.id, m.tipo, m.cantidad, m.nota||'',
+                   String(m.fecha||'').slice(0,10), m.destino||'', m.origen||''])
+  );
+  return { ok: true };
+}
+
+function deleteAhorroCuenta(id) {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const shC = getOrCreate(ss, SHEET.AH_CUENTAS, HDR_AH_C);
+  const shM = getOrCreate(ss, SHEET.AH_MOVS,    HDR_AH_M);
+  const rowsC = shC.getDataRange().getValues();
+  for (let i = rowsC.length-1; i >= 1; i--) {
+    if (String(rowsC[i][0]) === String(id)) shC.deleteRow(i+1);
+  }
+  const rowsM = shM.getDataRange().getValues();
+  for (let i = rowsM.length-1; i >= 1; i--) {
+    if (String(rowsM[i][0]) === String(id)) shM.deleteRow(i+1);
+  }
+  return { ok: true };
+}
+
 
 // ── EXCEPCIONES DE CORTE ─────────────────────────────────────
 function readExcepciones(ss) {
