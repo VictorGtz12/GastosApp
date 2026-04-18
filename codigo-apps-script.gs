@@ -24,7 +24,7 @@ const SHEET = {
 
 const HDR_GASTO = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios',
                    'Abonado','Ignorar','Externo','Semana','AhorroDesc'];
-const HDR_AH_C  = ['ID','Nombre','Meta'];
+const HDR_AH_C  = ['ID','Nombre','Meta','Grupo','ExcluirTotal'];
 const HDR_AH_M  = ['AhorroID','Tipo','Cantidad','Nota','Fecha','Destino','Origen'];
 const HDR_EXC   = ['Cuenta','FechaOriginal','FechaExcepcion','Nota'];
 const HDR_CAT_C = ['Nombre','Color','TieneCorte','DiaCorte'];
@@ -82,6 +82,12 @@ function readGastos(ss, name) {
     o.Abonado  = o.Abonado  === true || o.Abonado  === 'SI';
     o.Ignorar  = o.Ignorar  === true || o.Ignorar  === 'SI';
     o.Externo  = o.Externo  || 'no';
+    // Normalizar fecha: quitar hora si viene como Date o ISO string
+    if (o.Fecha instanceof Date) {
+      o.Fecha = Utilities.formatDate(o.Fecha, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    } else if (o.Fecha && String(o.Fecha).includes('T')) {
+      o.Fecha = String(o.Fecha).slice(0, 10);
+    }
     return o;
   });
 }
@@ -130,6 +136,13 @@ function hacerCorte() {
 function gastoRow(d) {
   return HDR_GASTO.map(h => {
     if (h === 'Abonado' || h === 'Ignorar') return d[h] ? 'SI' : 'NO';
+    if (h === 'Fecha') {
+      // Siempre guardar fecha como string yyyy-MM-dd
+      const v = d[h];
+      if (!v) return '';
+      if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      return String(v).slice(0, 10);
+    }
     return d[h] !== undefined ? d[h] : '';
   });
 }
@@ -147,9 +160,11 @@ function readAhorros(ss) {
   }) : [];
   return rawC.slice(1).map(row => {
     const o = {}; hdrC.forEach((h, i) => o[h] = row[i]);
-    o.id     = Number(o.ID);
-    o.nombre = o.Nombre;
-    o.meta   = Number(o.Meta) || 0;
+    o.id           = Number(o.ID);
+    o.nombre       = o.Nombre;
+    o.meta         = Number(o.Meta) || 0;
+    o.grupo        = o.Grupo || 'General';
+    o.excluirTotal = o.ExcluirTotal === 'SI' || o.ExcluirTotal === true;
     o.movimientos = movs
       .filter(m => String(m.AhorroID) === String(o.ID))
       .map(m => ({
@@ -171,7 +186,7 @@ function saveAhorros(data) {
   shC.clearContents(); setHeaders(shC, HDR_AH_C);
   shM.clearContents(); setHeaders(shM, HDR_AH_M);
   (data.cuentas || []).forEach(c => {
-    shC.appendRow([c.id, c.nombre, c.meta || 0]);
+    shC.appendRow([c.id, c.nombre, c.meta || 0, c.grupo || 'General', c.excluirTotal ? 'SI' : 'NO']);
     (c.movimientos || []).forEach(m =>
       shM.appendRow([c.id, m.tipo, m.cantidad, m.nota||'', m.fecha, m.destino||'', m.origen||''])
     );

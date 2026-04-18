@@ -108,6 +108,10 @@
     .search-wrap{position:relative;margin-bottom:10px}
     .search-wrap input{width:100%;padding:10px 12px 10px 34px;border-radius:12px;border:1px solid var(--border2);background:var(--bg2);font-size:14px;color:var(--text)}
     .search-wrap input::placeholder{color:var(--text3)}
+    /* Dropdown de comentarios */
+    #comentario-dropdown{background:var(--bg2) !important;border:1px solid var(--border2) !important;border-radius:12px !important;box-shadow:0 8px 24px rgba(0,0,0,.5) !important}
+    #comentario-dropdown div{color:var(--text) !important;padding:10px 14px;cursor:pointer;font-size:14px}
+    #comentario-dropdown div:hover{background:var(--bg3) !important}
     .search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none}
     .filter-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
     .chip{padding:5px 12px;border-radius:20px;border:1px solid var(--border2);background:var(--bg2);font-size:11px;color:var(--text2);cursor:pointer;white-space:nowrap;transition:all .2s}
@@ -143,8 +147,10 @@
     .req{color:var(--red)}
     .field select,.field input[type=number],.field input[type=text],.field input[type=date],.field textarea{
       width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border2);
-      background:var(--bg3);font-size:16px;color:var(--text);font-family:inherit}
+      background:var(--bg3);font-size:16px;color:var(--text);font-family:inherit;-webkit-text-fill-color:var(--text)}
     .field select option{background:var(--bg2);color:var(--text)}
+    .field input::placeholder,.field textarea::placeholder{color:var(--text3)}
+    input[type=color]{cursor:pointer}
     .field textarea{resize:vertical;min-height:55px;font-size:13px}
     .toggle-group{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .toggle-group.three{grid-template-columns:1fr 1fr 1fr}
@@ -293,7 +299,6 @@
       </div>
       <div class="action-row">
         <button class="btn-teal" onclick="openCorte()">✂️ Corte semanal</button>
-        <button class="btn-outline" onclick="exportarExcel()">📥 Excel</button>
       </div>
     </div>
     <div class="card">
@@ -337,9 +342,9 @@
             oninput="openComentarioDropdown()"
             onfocus="openComentarioDropdown()"
             autocomplete="off"
-            style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #e2e8f0;background:white;font-size:16px;color:#1e293b;font-family:inherit">
+            style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border2);background:var(--bg3);font-size:16px;color:var(--text);font-family:inherit">
           <div id="comentario-dropdown"
-            style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow-y:auto;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.1)">
+            style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;max-height:200px;overflow-y:auto;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.6)">
           </div>
         </div>
       </div>
@@ -405,8 +410,11 @@
   <!-- AHORROS -->
   <div class="content" id="content-ahorros">
     <div style="background:var(--bg2);border-radius:14px;padding:16px;margin-bottom:14px;border:1px solid var(--border)">
-      <div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Total ahorrado</div>
-      <div style="font-size:22px;font-weight:500;color:#7c3aed" id="ahorro-big">$0.00</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:var(--text2)">Total ahorrado</span>
+        <button onclick="toggleAhorroVisible()" id="btn-eye-ahorro" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px;padding:0;line-height:1">👁</button>
+      </div>
+      <div style="font-size:26px;font-weight:700;color:var(--purple)" id="ahorro-big">$0.00</div>
       <div id="ahorro-grupos-totales" style="margin-top:8px"></div>
     </div>
     <div id="ahorros-list"></div>
@@ -468,7 +476,6 @@
     <p style="font-size:13px;color:#64748b;margin-bottom:4px">Se moverán <strong id="corte-count">0</strong> gastos al histórico y el contador se reiniciará a $0.</p>
     <div class="modal-actions">
       <button class="mbtn sec"    onclick="closeModal('modal-corte-sem')">Cancelar</button>
-      <button class="mbtn sec"    onclick="exportarExcel();closeModal('modal-corte-sem')" style="font-size:11px">📥 Excel</button>
       <button class="mbtn prim"   onclick="hacerCorte()">Hacer corte</button>
     </div>
   </div>

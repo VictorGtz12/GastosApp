@@ -213,11 +213,21 @@ async function saveData(opts = {}) {
   if (!usingSheets) return;
   try {
     const proms = [];
-    if (opts.ahorros)     proms.push(apiPost('saveAhorros', { cuentas: cuentasAhorro, nextId: nextAhorroId }));
+    // Ahorros: siempre full-replace (estructura compleja con movimientos)
+    if (opts.ahorros) proms.push(apiPost('saveAhorros', { cuentas: cuentasAhorro }));
     if (opts.excepciones) proms.push(apiPost('saveExcepciones', excepciones));
-    if (opts.catalogos)   proms.push(apiPost('saveCatalogos', { cuentas: catalogoCuentas, motivos: catalogoMotivos, comentarios: catalogoComentarios }));
+    // Catálogos: full-replace (listas simples, rápido)
+    if (opts.catalogos) proms.push(apiPost('saveCatalogos', {
+      cuentas: catalogoCuentas, motivos: catalogoMotivos, comentarios: catalogoComentarios
+    }));
     await Promise.all(proms);
   } catch(e) { console.warn('Sheets save error:', e); }
+}
+
+// Guarda un gasto individual en Sheets (add o update)
+async function saveGastoSheets(gasto, accion) {
+  if (!usingSheets) return;
+  try { await apiPost(accion, gastoToSheets(gasto)); } catch(e) {}
 }
 
 // Sincronización completa desde Sheets
@@ -269,29 +279,32 @@ async function syncFromSheets() {
 }
 
 async function loadData() {
-  // Siempre cargar local primero (instantáneo)
-  loadFromLocal();
+  if (usingSheets) {
+    // Sheets es la fuente de verdad — esperar antes de mostrar
+    const ok = await syncFromSheets();
+    if (!ok) {
+      // Sin conexión: fallback a local
+      loadFromLocal();
+      showToast('Sin conexión — usando datos locales');
+    }
+  } else {
+    loadFromLocal();
+  }
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'flex';
   showTab('menu');
-
-  // Luego sincronizar desde Sheets si está configurado
-  if (usingSheets) {
-    const ok = await syncFromSheets();
-    if (!ok) showToast('Sin conexión — usando datos locales');
-    else { renderMenu(); renderGastos(); }
-  }
 }
 
 // Refresh manual
 async function refreshData() {
   if (!usingSheets) { showToast('Conecta Google Sheets para sincronizar'); return; }
-  showToast('Sincronizando...');
+  setSyncDot(true);
   const ok = await syncFromSheets();
   if (ok) {
-    showToast('Datos actualizados ✓');
+    showToast('Actualizado ✓');
     const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
     showTab(tab);
+    actualizarSelectCuentas(); actualizarSelectMotivos();
   } else {
     showToast('Error de conexión');
   }
@@ -1398,6 +1411,19 @@ async function eliminarComentario(i) {
   await saveData({ catalogos: true });
   showToast('Eliminado');
   renderCatComentarios();
+}
+
+// ── Ocultar/mostrar total ahorrado ───────────────────────────
+let ahorroVisible = true;
+function toggleAhorroVisible() {
+  ahorroVisible = !ahorroVisible;
+  const blur = ahorroVisible ? '' : 'blur(8px)';
+  const btn = document.getElementById('btn-eye-ahorro');
+  ['ahorro-big','ahorro-grupos-totales','s-ahorro'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.filter = blur;
+  });
+  if (btn) btn.textContent = ahorroVisible ? '👁' : '🙈';
 }
 
 // ── Init ──────────────────────────────────────────────────────
