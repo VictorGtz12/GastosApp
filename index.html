@@ -286,7 +286,13 @@
       <div class="stat-card"><div class="stat-label">Total gastado</div><div class="stat-val red" id="s-total">$0.00</div></div>
       <div class="stat-card"><div class="stat-label">Disponible</div><div class="stat-val green" id="s-disp">$3,400.09</div></div>
       <div class="stat-card"><div class="stat-label">Por cobrar</div><div class="stat-val orange" id="s-ext">$0.00</div></div>
-      <div class="stat-card"><div class="stat-label">Total ahorrado</div><div class="stat-val purple" id="s-ahorro">$0.00</div></div>
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+          <div class="stat-label" style="margin-bottom:0">Total ahorrado</div>
+          <button onclick="toggleAhorroVisible()" id="btn-eye-menu" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;padding:0;line-height:1">👁</button>
+        </div>
+        <div class="stat-val purple" id="s-ahorro">$0.00</div>
+      </div>
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
