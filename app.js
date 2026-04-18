@@ -117,77 +117,73 @@ function gastoToSheets(g) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  ALMACENAMIENTO — IndexedDB (fuente de verdad, persiste todo)
-//  localStorage se usa solo como fallback de emergencia
+//  ALMACENAMIENTO — localStorage (simple, universal, sin bloqueos)
+//  IndexedDB causaba bloqueos en Safari/iPhone — volvemos a localStorage
+//  pero con una sola clave JSON para evitar el límite de 5MB por fragmento.
 // ════════════════════════════════════════════════════════════
-let _db = null;
 
-async function getDB() {
-  if (_db) return _db;
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('GastosSemanales', 2);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('datos')) db.createObjectStore('datos');
+function saveLocal() {
+  try {
+    const data = {
+      gastos, historico, nextId, nextAhorroId,
+      cuentasAhorro, excepciones,
+      catalogoCuentas, catalogoMotivos, catalogoComentarios
     };
-    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
-    req.onerror   = () => reject(req.error);
-  });
-}
-
-async function idbSet(key, value) {
-  try {
-    const db = await getDB();
-    return new Promise((res, rej) => {
-      const tx = db.transaction('datos', 'readwrite');
-      tx.objectStore('datos').put(value, key);
-      tx.oncomplete = () => res();
-      tx.onerror    = () => rej(tx.error);
-    });
-  } catch(e) { localStorage.setItem(key, JSON.stringify(value)); }
-}
-
-async function idbGet(key) {
-  try {
-    const db = await getDB();
-    return new Promise((res, rej) => {
-      const tx  = db.transaction('datos', 'readonly');
-      const req = tx.objectStore('datos').get(key);
-      req.onsuccess = () => res(req.result);
-      req.onerror   = () => rej(req.error);
-    });
+    localStorage.setItem('appData_v1', JSON.stringify(data));
   } catch(e) {
-    try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+    console.warn('saveLocal error:', e);
+    // Si falla por tamaño, guardar por partes
+    try {
+      localStorage.setItem('gastos',    JSON.stringify(gastos));
+      localStorage.setItem('historico', JSON.stringify(historico));
+      localStorage.setItem('ahorros',   JSON.stringify(cuentasAhorro));
+    } catch(e2) { console.error('saveLocal fallback error:', e2); }
   }
 }
 
-// Guarda TODO en IndexedDB de una vez
-async function saveLocal() {
-  const data = {
-    gastos, historico, nextId, nextAhorroId,
-    cuentasAhorro, excepciones,
-    catalogoCuentas, catalogoMotivos, catalogoComentarios
-  };
-  await idbSet('appData', data);
-}
-
-// Carga desde IndexedDB (también migra datos viejos de localStorage)
-async function loadFromLocal() {
-  const data = await idbGet('appData');
-  if (data) {
-    if (data.gastos)              gastos            = data.gastos.map(normGasto);
-    if (data.historico)           historico         = data.historico.map(normGasto);
-    if (data.nextId)              nextId            = data.nextId;
-    if (data.nextAhorroId)        nextAhorroId      = data.nextAhorroId;
-    if (data.excepciones)         excepciones       = data.excepciones;
-    if (data.catalogoCuentas)     catalogoCuentas   = data.catalogoCuentas;
-    if (data.catalogoMotivos)     catalogoMotivos   = data.catalogoMotivos;
-    if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
-    if (data.cuentasAhorro)       cuentasAhorro     = data.cuentasAhorro.map(normAhorro);
-  } else {
-    // Migrar desde localStorage si existe
-    migrateFromLocalStorage();
-  }
+function loadFromLocal() {
+  try {
+    // Intentar clave nueva primero
+    const raw = localStorage.getItem('appData_v1');
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data.gastos)              gastos              = data.gastos.map(normGasto);
+      if (data.historico)           historico           = data.historico.map(normGasto);
+      if (data.nextId)              nextId              = data.nextId;
+      if (data.nextAhorroId)        nextAhorroId        = data.nextAhorroId;
+      if (data.excepciones)         excepciones         = data.excepciones;
+      if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
+      if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
+      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
+      if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
+      return;
+    }
+    // Fallback: claves legacy separadas
+    const tryGet = (...keys) => {
+      for (const k of keys) { const v = localStorage.getItem(k); if (v !== null) return v; }
+      return null;
+    };
+    const g    = tryGet('gastos','gastos_v7','gastos_v6','gastos_v5','gastos_v4','gastos_v3');
+    const h    = tryGet('historico','historico_v7','historico_v6','historico_v5');
+    const n    = tryGet('nextId');
+    const a    = tryGet('ahorros','ahorros_v7','ahorros_v6','ahorros_v5');
+    const na   = tryGet('nextAhorroId');
+    const ex   = tryGet('excepciones');
+    const cc   = tryGet('catalogoCuentas');
+    const cm   = tryGet('catalogoMotivos');
+    const ccom = tryGet('catalogoComentarios');
+    if (g)    gastos              = JSON.parse(g).map(normGasto);
+    if (h)    historico           = JSON.parse(h).map(normGasto);
+    if (n)    nextId              = parseInt(n) || 1;
+    if (na)   nextAhorroId        = parseInt(na) || 1;
+    if (ex)   excepciones         = JSON.parse(ex);
+    if (cc)   catalogoCuentas     = JSON.parse(cc);
+    if (cm)   catalogoMotivos     = JSON.parse(cm);
+    if (ccom) catalogoComentarios = JSON.parse(ccom);
+    if (a)    cuentasAhorro       = JSON.parse(a).map(normAhorro);
+    // Migrar a clave nueva
+    if (g || h || a) saveLocal();
+  } catch(e) { console.error('loadFromLocal error:', e); }
 }
 
 function normGasto(x) {
@@ -208,7 +204,6 @@ function normGasto(x) {
 
 function normAhorro(c) {
   return {
-    ...c,
     id:           c.id || c.ID,
     nombre:       c.nombre || c.Nombre || '',
     meta:         Number(c.meta || c.Meta) || 0,
@@ -224,106 +219,14 @@ function normAhorro(c) {
     })),
   };
 }
-
-function migrateFromLocalStorage() {
-  // Un solo intento de migrar datos viejos de localStorage
-  const tryGet = (...keys) => {
-    for (const k of keys) { const v = localStorage.getItem(k); if (v) return v; }
-    return null;
-  };
-  const g  = tryGet('gastos','gastos_v7','gastos_v6','gastos_v5','gastos_v4','gastos_v3');
-  const h  = tryGet('historico','historico_v7','historico_v6','historico_v5');
-  const n  = tryGet('nextId');
-  const a  = tryGet('ahorros');
-  const na = tryGet('nextAhorroId');
-  const ex = tryGet('excepciones');
-  const cc = tryGet('catalogoCuentas');
-  const cm = tryGet('catalogoMotivos');
-  const ccom = tryGet('catalogoComentarios');
-  if (g)    try { gastos    = JSON.parse(g).map(normGasto); } catch(e) {}
-  if (h)    try { historico = JSON.parse(h).map(normGasto); } catch(e) {}
-  if (n)    nextId          = parseInt(n) || 1;
-  if (na)   nextAhorroId    = parseInt(na) || 1;
-  if (ex)   try { excepciones        = JSON.parse(ex); } catch(e) {}
-  if (cc)   try { catalogoCuentas    = JSON.parse(cc); } catch(e) {}
-  if (cm)   try { catalogoMotivos    = JSON.parse(cm); } catch(e) {}
-  if (ccom) try { catalogoComentarios = JSON.parse(ccom); } catch(e) {}
-  if (a)    try { cuentasAhorro = JSON.parse(a).map(normAhorro); } catch(e) {}
-  if (g || h || a) saveLocal(); // migrar a IndexedDB
+// ── saveData ─────────────────────────────────────────────────
+function saveData(opts = {}) {
+  saveLocal();
 }
 
-function loadFromLocal() {
-  try {
-    // Leer con claves actuales, y también buscar claves legacy de versiones anteriores
-    const tryGet = (...keys) => {
-      for (const k of keys) {
-        const v = localStorage.getItem(k);
-        if (v !== null) return v;
-      }
-      return null;
-    };
-
-    const g    = tryGet('gastos',   'gastos_v7','gastos_v6','gastos_v5','gastos_v4','gastos_v3');
-    const h    = tryGet('historico','historico_v7','historico_v6','historico_v5','historico_v4','historico_v3');
-    const n    = tryGet('nextId',   'nextId_v7','nextId_v6','nextId_v5','nextId_v4','nextId_v3');
-    const a    = tryGet('ahorros',  'ahorros_v7','ahorros_v6','ahorros_v5','ahorros_v4','ahorros_v3');
-    const na   = tryGet('nextAhorroId','nextAhorroId_v7','nextAhorroId_v6','nextAhorroId_v5');
-    const ex   = tryGet('excepciones');
-    const cc   = tryGet('catalogoCuentas');
-    const cm   = tryGet('catalogoMotivos');
-    const ccom = tryGet('catalogoComentarios');
-
-    // Normalizar gastos: asegurar que todos los campos existan
-    const normGasto = x => ({
-      id:          x.id || x.ID,
-      fecha:       String(x.fecha || x.Fecha || today()).slice(0,10),
-      cuenta:      x.cuenta || x.Cuenta || '',
-      motivo:      x.motivo || x.Motivo || '',
-      cantidad:    Number(x.cantidad || x.Cantidad) || 0,
-      comentarios: x.comentarios || x.Comentarios || '',
-      abonado:     x.abonado === true || x.Abonado === 'SI',
-      ignorar:     x.ignorar === true || x.Ignorar === 'SI',
-      externo:     x.externo || x.Externo || 'no',
-      semana:      x.semana || x.Semana || getWeek(new Date()),
-      ahorroDesc:  x.ahorroDesc || x.AhorroDesc || '',
-    });
-
-    if (g)    gastos     = JSON.parse(g).map(normGasto);
-    if (h)    historico  = JSON.parse(h).map(normGasto);
-    if (n)    nextId     = parseInt(n) || 1;
-    if (na)   nextAhorroId = parseInt(na) || 1;
-    if (ex)   excepciones = JSON.parse(ex);
-    if (cc)   catalogoCuentas = JSON.parse(cc);
-    if (cm)   catalogoMotivos = JSON.parse(cm);
-    if (ccom) catalogoComentarios = JSON.parse(ccom);
-
-    // Normalizar ahorros: asegurar campos nuevos (grupo, excluirTotal)
-    if (a) {
-      cuentasAhorro = JSON.parse(a).map(c => ({
-        ...c,
-        id:           c.id || c.ID,
-        nombre:       c.nombre || c.Nombre || '',
-        meta:         Number(c.meta || c.Meta) || 0,
-        grupo:        c.grupo || 'General',
-        excluirTotal: c.excluirTotal || false,
-        movimientos:  (c.movimientos || []),
-      }));
-    }
-
-    // Si venía de claves legacy, re-guardar con claves actuales
-    if (!localStorage.getItem('gastos') && g) saveLocal();
-
-  } catch(e) { console.error('loadFromLocal error:', e); }
-}
-
-// ── saveData: solo guarda en IndexedDB ───────────────────────
-async function saveData(opts = {}) {
-  await saveLocal();
-}
-
-// Carga datos y muestra la app (instantáneo desde IndexedDB)
-async function loadData() {
-  await loadFromLocal();
+// Carga datos y muestra la app
+function loadData() {
+  loadFromLocal();
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'flex';
   actualizarSelectCuentas();
@@ -836,7 +739,7 @@ async function confirmarMovAhorro() {
   if (!c) return;
   if (movMode==='retiro' && cantidad>saldoCuenta(c)) { showToast('Saldo insuficiente'); return; }
   c.movimientos.push({ tipo: movMode, cantidad, nota, fecha: today() });
-  await saveLocal();
+  saveLocal();
   closeModal('modal-ahorro');
   showToast(movMode==='abono'?'Abono registrado ✓':'Retiro registrado ✓');
   renderAhorros(); renderMenu();
@@ -886,7 +789,7 @@ async function confirmarTraspaso() {
   const f = today();
   origen.movimientos.push({ tipo:'traspaso-out', cantidad, nota, destino:destinoId, fecha:f });
   destino.movimientos.push({ tipo:'traspaso-in',  cantidad, nota, origen:traspasoOrigenId, fecha:f });
-  await saveLocal();
+  saveLocal();
   closeModal('modal-traspaso');
   showToast(`Traspasado ${fmt(cantidad)} a ${destino.nombre} ✓`);
   renderAhorros(); renderMenu();
@@ -931,7 +834,7 @@ async function crearCuentaAhorro() {
     // Editar existente
     const c = cuentasAhorro.find(x=>x.id===_editAhorroId);
     if (c) { c.nombre=nombre; c.meta=meta; c.grupo=grupo; c.excluirTotal=excluirTotal; }
-    await saveLocal();
+    saveLocal();
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta actualizada ✓');
   } else {
@@ -942,7 +845,7 @@ async function crearCuentaAhorro() {
       : [];
     const nueva = { id: nextAhorroId++, nombre, meta, grupo, excluirTotal, movimientos };
     cuentasAhorro.push(nueva);
-    await saveLocal();
+    saveLocal();
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta creada ✓');
   }
@@ -1243,7 +1146,7 @@ function importarBackup() {
       if (data.catalogoMotivos)     catalogoMotivos   = data.catalogoMotivos;
       if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
       if (data.cuentasAhorro)       cuentasAhorro     = data.cuentasAhorro.map(normAhorro);
-      await saveLocal();
+      saveLocal();
       actualizarSelectCuentas(); actualizarSelectMotivos();
       showTab('menu');
       showToast('Backup restaurado ✓');
@@ -1302,7 +1205,7 @@ async function importarDesdeSheets() {
       if (result.catalogos.motivos?.length)     catalogoMotivos     = result.catalogos.motivos;
       if (result.catalogos.comentarios?.length) catalogoComentarios = result.catalogos.comentarios;
     }
-    await saveLocal();
+    saveLocal();
     actualizarSelectCuentas(); actualizarSelectMotivos();
     showTab('menu');
     showToast(`Importado ${gastos.length} gastos + ${historico.length} histórico ✓`);
