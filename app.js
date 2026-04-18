@@ -1493,13 +1493,16 @@ function toggleAhorroVisible() {
 
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
-    loadData().then(() => {
-      actualizarSelectCuentas();
-      actualizarSelectMotivos();
-      // registro global para cerrar dropdown al tocar fuera
-      document.addEventListener('click', cerrarDropdownComentario);
-    });
-  }, 100);
+  try {
+    loadFromLocal();
+  } catch(e) {
+    console.error('Error cargando datos:', e);
+  }
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+  actualizarSelectCuentas();
+  actualizarSelectMotivos();
+  showTab('menu');
+  document.addEventListener('click', cerrarDropdownComentario);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 });
