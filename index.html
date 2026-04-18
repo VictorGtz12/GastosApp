@@ -293,6 +293,19 @@
     <div class="drawer-item" id="drawer-catalogos" onclick="closeDrawer();showTab('catalogos')">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10"/><circle cx="17" cy="17" r="3"/><path d="M19 19l2 2"/></svg>Catálogos
     </div>
+    <div class="drawer-header" style="margin-top:8px">Backup y datos</div>
+    <div class="drawer-item" onclick="closeDrawer();exportarBackup()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Backup JSON
+    </div>
+    <div class="drawer-item" onclick="closeDrawer();exportarBackupExcel()">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar Excel
+    </div>
+    <div class="drawer-item" onclick="closeDrawer();importarBackup()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restaurar backup
+    </div>
+    <div class="drawer-item" onclick="closeDrawer();importarDesdeSheets()">
+      <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M9 9l6 6M15 9l-6 6"/></svg>Importar de Sheets
+    </div>
   </div>
 
   <div class="tabs">

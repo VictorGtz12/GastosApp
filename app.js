@@ -3,7 +3,8 @@
 //  Cambia SCRIPT_URL por tu URL de Apps Script publicada
 // ════════════════════════════════════════════════════════════
 
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw3f5xddozgvhT0ZTMXpHuP7pOwxZPwtD_13lD7BNFCaRaCeZdnJhOIyBct-Y0oZrcM/exec';
+// Google Sheets ya no se usa como base de datos principal.
+// Usa el menú ☰ → Importar de Sheets para migrar datos.
 
 // ── Configuración ─────────────────────────────────────────────
 const PRESUPUESTO = 3400.09;
@@ -88,20 +89,7 @@ function getWeek(d) {
 }
 
 // ── Google Sheets API ─────────────────────────────────────────
-const usingSheets = SCRIPT_URL !== 'PEGA_AQUI_TU_URL_DE_APPS_SCRIPT';
 
-async function apiGet(action) {
-  const res = await fetch(`${SCRIPT_URL}?action=${action}`);
-  return res.json();
-}
-async function apiPost(action, data) {
-  const res = await fetch(SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify({ action, data }),
-    headers: { 'Content-Type': 'text/plain' }
-  });
-  return res.json();
-}
 
 // ── Normalización ────────────────────────────────────────────
 function normalizeGasto(row) {
@@ -128,19 +116,140 @@ function gastoToSheets(g) {
   };
 }
 
-// ── Almacenamiento local (caché offline) ──────────────────────
-function saveLocal() {
+// ════════════════════════════════════════════════════════════
+//  ALMACENAMIENTO — IndexedDB (fuente de verdad, persiste todo)
+//  localStorage se usa solo como fallback de emergencia
+// ════════════════════════════════════════════════════════════
+let _db = null;
+
+async function getDB() {
+  if (_db) return _db;
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('GastosSemanales', 2);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('datos')) db.createObjectStore('datos');
+    };
+    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function idbSet(key, value) {
   try {
-    localStorage.setItem('gastos', JSON.stringify(gastos));
-    localStorage.setItem('historico', JSON.stringify(historico));
-    localStorage.setItem('nextId', String(nextId));
-    localStorage.setItem('ahorros', JSON.stringify(cuentasAhorro));
-    localStorage.setItem('nextAhorroId', String(nextAhorroId));
-    localStorage.setItem('excepciones', JSON.stringify(excepciones));
-    localStorage.setItem('catalogoCuentas', JSON.stringify(catalogoCuentas));
-    localStorage.setItem('catalogoMotivos', JSON.stringify(catalogoMotivos));
-    localStorage.setItem('catalogoComentarios', JSON.stringify(catalogoComentarios));
-  } catch(e) { console.warn('localStorage lleno'); }
+    const db = await getDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('datos', 'readwrite');
+      tx.objectStore('datos').put(value, key);
+      tx.oncomplete = () => res();
+      tx.onerror    = () => rej(tx.error);
+    });
+  } catch(e) { localStorage.setItem(key, JSON.stringify(value)); }
+}
+
+async function idbGet(key) {
+  try {
+    const db = await getDB();
+    return new Promise((res, rej) => {
+      const tx  = db.transaction('datos', 'readonly');
+      const req = tx.objectStore('datos').get(key);
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+  } catch(e) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+  }
+}
+
+// Guarda TODO en IndexedDB de una vez
+async function saveLocal() {
+  const data = {
+    gastos, historico, nextId, nextAhorroId,
+    cuentasAhorro, excepciones,
+    catalogoCuentas, catalogoMotivos, catalogoComentarios
+  };
+  await idbSet('appData', data);
+}
+
+// Carga desde IndexedDB (también migra datos viejos de localStorage)
+async function loadFromLocal() {
+  const data = await idbGet('appData');
+  if (data) {
+    if (data.gastos)              gastos            = data.gastos.map(normGasto);
+    if (data.historico)           historico         = data.historico.map(normGasto);
+    if (data.nextId)              nextId            = data.nextId;
+    if (data.nextAhorroId)        nextAhorroId      = data.nextAhorroId;
+    if (data.excepciones)         excepciones       = data.excepciones;
+    if (data.catalogoCuentas)     catalogoCuentas   = data.catalogoCuentas;
+    if (data.catalogoMotivos)     catalogoMotivos   = data.catalogoMotivos;
+    if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
+    if (data.cuentasAhorro)       cuentasAhorro     = data.cuentasAhorro.map(normAhorro);
+  } else {
+    // Migrar desde localStorage si existe
+    migrateFromLocalStorage();
+  }
+}
+
+function normGasto(x) {
+  return {
+    id:          x.id || x.ID,
+    fecha:       String(x.fecha || x.Fecha || today()).slice(0,10),
+    cuenta:      x.cuenta || x.Cuenta || '',
+    motivo:      x.motivo || x.Motivo || '',
+    cantidad:    Number(x.cantidad || x.Cantidad) || 0,
+    comentarios: x.comentarios || x.Comentarios || '',
+    abonado:     x.abonado === true || x.Abonado === 'SI',
+    ignorar:     x.ignorar === true || x.Ignorar === 'SI',
+    externo:     x.externo || x.Externo || 'no',
+    semana:      x.semana || x.Semana || getWeek(new Date()),
+    ahorroDesc:  x.ahorroDesc || x.AhorroDesc || '',
+  };
+}
+
+function normAhorro(c) {
+  return {
+    ...c,
+    id:           c.id || c.ID,
+    nombre:       c.nombre || c.Nombre || '',
+    meta:         Number(c.meta || c.Meta) || 0,
+    grupo:        c.grupo || 'General',
+    excluirTotal: c.excluirTotal || false,
+    movimientos:  (c.movimientos || []).map(m => ({
+      tipo:     m.tipo || '',
+      cantidad: Number(m.cantidad) || 0,
+      nota:     m.nota || '',
+      fecha:    String(m.fecha || '').slice(0,10),
+      destino:  m.destino ? Number(m.destino) : undefined,
+      origen:   m.origen  ? Number(m.origen)  : undefined,
+    })),
+  };
+}
+
+function migrateFromLocalStorage() {
+  // Un solo intento de migrar datos viejos de localStorage
+  const tryGet = (...keys) => {
+    for (const k of keys) { const v = localStorage.getItem(k); if (v) return v; }
+    return null;
+  };
+  const g  = tryGet('gastos','gastos_v7','gastos_v6','gastos_v5','gastos_v4','gastos_v3');
+  const h  = tryGet('historico','historico_v7','historico_v6','historico_v5');
+  const n  = tryGet('nextId');
+  const a  = tryGet('ahorros');
+  const na = tryGet('nextAhorroId');
+  const ex = tryGet('excepciones');
+  const cc = tryGet('catalogoCuentas');
+  const cm = tryGet('catalogoMotivos');
+  const ccom = tryGet('catalogoComentarios');
+  if (g)    try { gastos    = JSON.parse(g).map(normGasto); } catch(e) {}
+  if (h)    try { historico = JSON.parse(h).map(normGasto); } catch(e) {}
+  if (n)    nextId          = parseInt(n) || 1;
+  if (na)   nextAhorroId    = parseInt(na) || 1;
+  if (ex)   try { excepciones        = JSON.parse(ex); } catch(e) {}
+  if (cc)   try { catalogoCuentas    = JSON.parse(cc); } catch(e) {}
+  if (cm)   try { catalogoMotivos    = JSON.parse(cm); } catch(e) {}
+  if (ccom) try { catalogoComentarios = JSON.parse(ccom); } catch(e) {}
+  if (a)    try { cuentasAhorro = JSON.parse(a).map(normAhorro); } catch(e) {}
+  if (g || h || a) saveLocal(); // migrar a IndexedDB
 }
 
 function loadFromLocal() {
@@ -207,101 +316,14 @@ function loadFromLocal() {
   } catch(e) { console.error('loadFromLocal error:', e); }
 }
 
-// ── saveData: guarda local Y en Sheets ───────────────────────
+// ── saveData: solo guarda en IndexedDB ───────────────────────
 async function saveData(opts = {}) {
-  saveLocal();
-  if (!usingSheets) return;
-  try {
-    const proms = [];
-    // Ahorros: siempre full-replace (estructura compleja con movimientos)
-    if (opts.ahorros) proms.push(apiPost('saveAhorros', { cuentas: cuentasAhorro }));
-    if (opts.excepciones) proms.push(apiPost('saveExcepciones', excepciones));
-    // Catálogos: full-replace (listas simples, rápido)
-    if (opts.catalogos) proms.push(apiPost('saveCatalogos', {
-      cuentas: catalogoCuentas, motivos: catalogoMotivos, comentarios: catalogoComentarios
-    }));
-    await Promise.all(proms);
-  } catch(e) { console.warn('Sheets save error:', e); }
+  await saveLocal();
 }
 
-// Guarda un gasto individual en Sheets (add o update)
-async function saveGastoSheets(gasto, accion) {
-  if (!usingSheets) return;
-  try { await apiPost(accion, gastoToSheets(gasto)); } catch(e) {}
-}
-
-// Sincronización completa desde Sheets
-// Parsea datos de Sheets y llena variables globales
-function applySheetData(result) {
-  gastos      = (result.semana    || []).map(normalizeGasto);
-  historico   = (result.historico || []).map(normalizeGasto);
-  excepciones = (result.excepciones || []);
-
-  if (result.ahorros && result.ahorros.length) {
-    cuentasAhorro = result.ahorros.map(c => ({
-      id:           Number(c.id || c.ID),
-      nombre:       c.nombre || c.Nombre || '',
-      meta:         Number(c.meta || c.Meta) || 0,
-      grupo:        c.grupo || c.Grupo || 'General',
-      excluirTotal: c.excluirTotal === true || c.excluirTotal === 'SI'
-                 || c.ExcluirTotal === true || c.ExcluirTotal === 'SI',
-      movimientos: (c.movimientos || []).map(m => ({
-        tipo:     m.tipo || m.Tipo || '',
-        cantidad: Number(m.cantidad || m.Cantidad) || 0,
-        nota:     m.nota || m.Nota || '',
-        fecha:    String(m.fecha || m.Fecha || '').slice(0,10),
-        destino:  m.destino || m.Destino ? Number(m.destino || m.Destino) : undefined,
-        origen:   m.origen  || m.Origen  ? Number(m.origen  || m.Origen)  : undefined,
-      }))
-    }));
-    const ids = cuentasAhorro.map(c => c.id).filter(Boolean);
-    nextAhorroId = ids.length ? Math.max(...ids) + 1 : 1;
-  }
-
-  const allIds = [...gastos, ...historico].map(g => Number(g.id)).filter(Boolean);
-  nextId = allIds.length ? Math.max(...allIds) + 1 : 1;
-
-  if (result.catalogos) {
-    if (result.catalogos.cuentas     && result.catalogos.cuentas.length)     catalogoCuentas     = result.catalogos.cuentas;
-    if (result.catalogos.motivos     && result.catalogos.motivos.length)     catalogoMotivos     = result.catalogos.motivos;
-    if (result.catalogos.comentarios && result.catalogos.comentarios.length) catalogoComentarios = result.catalogos.comentarios;
-  }
-}
-
-// Sheets SIEMPRE gana — borra local antes de aplicar
-async function syncFromSheets() {
-  setSyncDot(true);
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-    const res = await fetch(`${SCRIPT_URL}?action=getAll`, { signal: controller.signal });
-    clearTimeout(timer);
-    const result = await res.json();
-    if (result.error) throw new Error(result.error);
-
-    // Limpiar claves de datos antes de aplicar Sheets
-    ['gastos','historico','ahorros','excepciones'].forEach(k => localStorage.removeItem(k));
-    applySheetData(result);
-    saveLocal();
-    setSyncDot(false);
-    return true;
-  } catch(e) {
-    console.warn('syncFromSheets error:', e.message);
-    setSyncDot(false);
-    return false;
-  }
-}
-
+// Carga datos y muestra la app (instantáneo desde IndexedDB)
 async function loadData() {
-  if (usingSheets) {
-    const ok = await syncFromSheets();
-    if (!ok) {
-      loadFromLocal();
-      showToast('Sin conexión — mostrando caché local');
-    }
-  } else {
-    loadFromLocal();
-  }
+  await loadFromLocal();
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'flex';
   actualizarSelectCuentas();
@@ -309,28 +331,16 @@ async function loadData() {
   showTab('menu');
 }
 
-// Refresh manual — muestra loading, fuerza sync completo
-async function refreshData() {
-  if (!usingSheets) { showToast('Sin Google Sheets configurado'); return; }
-  document.getElementById('loading').style.display = 'flex';
-  const ok = await syncFromSheets();
-  document.getElementById('loading').style.display = 'none';
-  if (ok) {
-    actualizarSelectCuentas();
-    actualizarSelectMotivos();
-    const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
-    showTab(tab);
-    showToast('Sincronizado desde Sheets ✓');
-  } else {
-    showToast('Error al conectar con Sheets');
-  }
+// Botón Actualizar — solo refresca la vista (no hay red que esperar)
+function refreshData() {
+  const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+  showTab(tab);
+  actualizarSelectCuentas();
+  actualizarSelectMotivos();
+  showToast('Vista actualizada ✓');
 }
 
 
-function setSyncDot(on) {
-  const el = document.getElementById('sync-dot');
-  if (el) el.style.opacity = on ? '1' : '0';
-}
 
 // ── Navegación ────────────────────────────────────────────────
 const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos'];
@@ -483,7 +493,6 @@ async function marcarExterno(id, estado) {
   let g = gastos.find(x=>x.id===id) || historico.find(x=>x.id===id);
   if (g) g.externo = estado;
   saveLocal();
-  if (usingSheets) apiPost('updateGasto', gastoToSheets(g)).catch(()=>{});
   showToast(estado==='pagado'?'Marcado como cobrado ✓':'Marcado como pendiente');
   renderExternos(); renderMenu();
 }
@@ -705,7 +714,7 @@ async function guardarExcepcion() {
     FechaExcepcion: nuevaFecha,
     Nota: nota
   });
-  await saveData({ excepciones: true });
+  await saveData();
   closeModal('modal-excepcion');
   showToast('Fecha de corte ajustada ✓');
   // Reabrir el modal del tarjeta con datos actualizados
@@ -714,7 +723,7 @@ async function guardarExcepcion() {
 
 async function eliminarExcepcion(cuenta, fechaOrig) {
   excepciones = excepciones.filter(e => !(e.Cuenta===cuenta && e.FechaOriginal===fechaOrig));
-  await saveData({ excepciones: true });
+  await saveData();
   showToast('Excepción eliminada');
   openCorteTarjeta(cuenta);
 }
@@ -827,8 +836,7 @@ async function confirmarMovAhorro() {
   if (!c) return;
   if (movMode==='retiro' && cantidad>saldoCuenta(c)) { showToast('Saldo insuficiente'); return; }
   c.movimientos.push({ tipo: movMode, cantidad, nota, fecha: today() });
-  saveLocal();
-  saveAhorroIndividual(c);
+  await saveLocal();
   closeModal('modal-ahorro');
   showToast(movMode==='abono'?'Abono registrado ✓':'Retiro registrado ✓');
   renderAhorros(); renderMenu();
@@ -878,9 +886,7 @@ async function confirmarTraspaso() {
   const f = today();
   origen.movimientos.push({ tipo:'traspaso-out', cantidad, nota, destino:destinoId, fecha:f });
   destino.movimientos.push({ tipo:'traspaso-in',  cantidad, nota, origen:traspasoOrigenId, fecha:f });
-  saveLocal();
-  saveAhorroIndividual(origen);
-  saveAhorroIndividual(destino);
+  await saveLocal();
   closeModal('modal-traspaso');
   showToast(`Traspasado ${fmt(cantidad)} a ${destino.nombre} ✓`);
   renderAhorros(); renderMenu();
@@ -925,8 +931,7 @@ async function crearCuentaAhorro() {
     // Editar existente
     const c = cuentasAhorro.find(x=>x.id===_editAhorroId);
     if (c) { c.nombre=nombre; c.meta=meta; c.grupo=grupo; c.excluirTotal=excluirTotal; }
-    saveLocal();
-    saveAhorroIndividual(cuentasAhorro.find(x=>x.id===_editAhorroId));
+    await saveLocal();
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta actualizada ✓');
   } else {
@@ -937,8 +942,7 @@ async function crearCuentaAhorro() {
       : [];
     const nueva = { id: nextAhorroId++, nombre, meta, grupo, excluirTotal, movimientos };
     cuentasAhorro.push(nueva);
-    saveLocal();
-    saveAhorroIndividual(nueva);
+    await saveLocal();
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta creada ✓');
   }
@@ -949,7 +953,6 @@ async function eliminarCuenta(id) {
   if (!confirm('¿Eliminar esta cuenta de ahorro?')) return;
   cuentasAhorro = cuentasAhorro.filter(x=>x.id!==id);
   saveLocal();
-  if (usingSheets) apiPost('deleteAhorroCuenta', { id }).catch(()=>{});
   showToast('Cuenta eliminada');
   renderAhorros(); renderMenu();
 }
@@ -1057,16 +1060,12 @@ async function guardarGasto() {
         nota:`Gasto: ${gasto.motivo}`,
         fecha: today()
       });
-      await saveData({ ahorros: true });
+      await saveData();
     }
   } else {
     saveLocal();
   }
 
-  // Sync Sheets
-  if (usingSheets) {
-    apiPost(isEditing?'updateGasto':'addGasto', gastoToSheets(gasto)).catch(()=>{});
-  }
 
   resetForm(); editingId=null; showTab('gastos');
   showToast('Gasto guardado ✓');
@@ -1136,7 +1135,6 @@ function editar(id) {
 async function eliminar(id) {
   gastos = gastos.filter(x=>x.id!==id);
   saveLocal();
-  if (usingSheets) apiPost('deleteGasto',{id}).catch(()=>{});
   closeModal('modal-detail');
   showToast('Gasto eliminado');
   renderGastos(); renderMenu();
@@ -1153,7 +1151,6 @@ async function hacerCorte() {
   historico = [...gastos, ...historico];
   gastos = [];
   saveLocal();
-  if (usingSheets) apiPost('hacerCorte',{}).catch(()=>{});
   closeModal('modal-corte-sem');
   showToast('¡Corte semanal realizado! ✓');
   renderMenu();
@@ -1200,16 +1197,120 @@ function showToast(msg) {
 }
 
 
-// Actualiza UNA cuenta de ahorro en Sheets (no reescribe todo)
-async function saveAhorroIndividual(cuenta) {
-  if (!usingSheets) return;
+
+
+// ════════════════════════════════════════════════════════════
+//  BACKUP — Exportar / Importar / Migrar desde Sheets
+// ════════════════════════════════════════════════════════════
+
+// Exportar todo como archivo JSON de backup
+function exportarBackup() {
+  const data = {
+    version: 1, fecha: today(),
+    gastos, historico, nextId, nextAhorroId,
+    cuentasAhorro, excepciones,
+    catalogoCuentas, catalogoMotivos, catalogoComentarios
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `gastos_backup_${today()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Backup descargado ✓');
+}
+
+// Importar backup JSON
+function importarBackup() {
+  const input = document.createElement('input');
+  input.type  = 'file';
+  input.accept = '.json';
+  input.onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.gastos && !data.historico) throw new Error('Formato inválido');
+      if (!confirm('¿Reemplazar todos los datos con este backup?')) return;
+      if (data.gastos)              gastos            = data.gastos.map(normGasto);
+      if (data.historico)           historico         = data.historico.map(normGasto);
+      if (data.nextId)              nextId            = data.nextId;
+      if (data.nextAhorroId)        nextAhorroId      = data.nextAhorroId;
+      if (data.excepciones)         excepciones       = data.excepciones;
+      if (data.catalogoCuentas)     catalogoCuentas   = data.catalogoCuentas;
+      if (data.catalogoMotivos)     catalogoMotivos   = data.catalogoMotivos;
+      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
+      if (data.cuentasAhorro)       cuentasAhorro     = data.cuentasAhorro.map(normAhorro);
+      await saveLocal();
+      actualizarSelectCuentas(); actualizarSelectMotivos();
+      showTab('menu');
+      showToast('Backup restaurado ✓');
+    } catch(e) { showToast('Error al leer el archivo'); }
+  };
+  input.click();
+}
+
+// Exportar backup a Excel (además del JSON)
+function exportarBackupExcel() {
+  if (typeof XLSX === 'undefined') { showToast('Cargando...'); return; }
+  const wb  = XLSX.utils.book_new();
+  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Ignorar','Ahorro','Semana'];
+  const toR = g => [g.id,g.fecha,g.cuenta,g.motivo,g.cantidad,g.comentarios||'',
+    g.abonado?'SI':'NO',g.externo||'no',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana];
+  const ws1 = XLSX.utils.aoa_to_sheet([hdr,...gastos.map(toR)]);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Semana Actual');
+  const ws2 = XLSX.utils.aoa_to_sheet([hdr,...historico.map(toR)]);
+  XLSX.utils.book_append_sheet(wb, ws2, 'Historico');
+  const aRows = [];
+  cuentasAhorro.forEach(c => c.movimientos.forEach(m =>
+    aRows.push([c.nombre,saldoCuenta(c),c.meta||'',m.tipo,m.cantidad,m.nota||'',m.fecha])
+  ));
+  const ws3 = XLSX.utils.aoa_to_sheet([['Cuenta','Saldo','Meta','Tipo','Cantidad','Nota','Fecha'],...aRows]);
+  XLSX.utils.book_append_sheet(wb, ws3, 'Ahorros');
+  XLSX.writeFile(wb, `GastosSemanales_${today()}.xlsx`);
+  showToast('Excel descargado ✓');
+}
+
+// Importar desde Google Sheets (migración única)
+async function importarDesdeSheets() {
+  const url = prompt('Pega la URL de tu Apps Script para importar datos de Google Sheets:');
+  if (!url || !url.includes('script.google.com')) {
+    showToast('URL inválida'); return;
+  }
+  document.getElementById('loading').style.display = 'flex';
   try {
-    await apiPost('updateAhorroCuenta', {
-      id: cuenta.id, nombre: cuenta.nombre, meta: cuenta.meta,
-      grupo: cuenta.grupo || 'General', excluirTotal: cuenta.excluirTotal || false,
-      movimientos: cuenta.movimientos
-    });
-  } catch(e) { console.warn('saveAhorro error:', e); }
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20000);
+    const res    = await fetch(`${url}?action=getAll`, { signal: controller.signal });
+    const result = await res.json();
+    if (result.error) throw new Error(result.error);
+    // Aplicar datos de Sheets
+    if (result.semana)    gastos    = (result.semana   ||[]).map(normGasto);
+    if (result.historico) historico = (result.historico||[]).map(normGasto);
+    if (result.excepciones) excepciones = result.excepciones || [];
+    if (result.ahorros && result.ahorros.length) {
+      cuentasAhorro = result.ahorros.map(normAhorro);
+      const ids = cuentasAhorro.map(c=>c.id).filter(Boolean);
+      nextAhorroId = ids.length ? Math.max(...ids)+1 : 1;
+    }
+    const allIds = [...gastos,...historico].map(g=>Number(g.id)).filter(Boolean);
+    nextId = allIds.length ? Math.max(...allIds)+1 : 1;
+    if (result.catalogos) {
+      if (result.catalogos.cuentas?.length)     catalogoCuentas     = result.catalogos.cuentas;
+      if (result.catalogos.motivos?.length)     catalogoMotivos     = result.catalogos.motivos;
+      if (result.catalogos.comentarios?.length) catalogoComentarios = result.catalogos.comentarios;
+    }
+    await saveLocal();
+    actualizarSelectCuentas(); actualizarSelectMotivos();
+    showTab('menu');
+    showToast(`Importado ${gastos.length} gastos + ${historico.length} histórico ✓`);
+  } catch(e) {
+    showToast('Error al importar: ' + e.message);
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+  }
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
@@ -1291,7 +1392,7 @@ async function guardarCuenta_cat() {
     }
     catalogoCuentas.push(obj);
   }
-  await saveData({ catalogos: true });
+  await saveData();
   closeModal('modal-cat-cuenta');
   showToast('Cuenta guardada ✓');
   renderCatCuentas();
@@ -1303,7 +1404,7 @@ async function eliminarCuenta_cat(i) {
   const c = catalogoCuentas[i];
   if (!confirm(`¿Eliminar la cuenta "${c.nombre}"? Los gastos existentes mantendrán el nombre.`)) return;
   catalogoCuentas.splice(i, 1);
-  await saveData({ catalogos: true });
+  await saveData();
   showToast('Cuenta eliminada');
   renderCatCuentas();
   actualizarSelectCuentas();
@@ -1353,7 +1454,7 @@ async function guardarMotivo_cat() {
     }
     catalogoMotivos.push(nombre);
   }
-  await saveData({ catalogos: true });
+  await saveData();
   closeModal('modal-cat-motivo');
   showToast('Motivo guardado ✓');
   renderCatMotivos();
@@ -1363,7 +1464,7 @@ async function guardarMotivo_cat() {
 async function eliminarMotivo(i) {
   if (!confirm(`¿Eliminar el motivo "${catalogoMotivos[i]}"?`)) return;
   catalogoMotivos.splice(i, 1);
-  await saveData({ catalogos: true });
+  await saveData();
   showToast('Motivo eliminado');
   renderCatMotivos();
   actualizarSelectMotivos();
@@ -1442,7 +1543,7 @@ async function guardarComentario_cat() {
     }
     catalogoComentarios.push(nombre);
   }
-  await saveData({ catalogos: true });
+  await saveData();
   closeModal('modal-cat-comentario');
   showToast('Comentario guardado ✓');
   renderCatComentarios();
@@ -1451,7 +1552,7 @@ async function guardarComentario_cat() {
 async function eliminarComentario(i) {
   if (!confirm(`¿Eliminar "${catalogoComentarios[i]}" del catálogo?`)) return;
   catalogoComentarios.splice(i, 1);
-  await saveData({ catalogos: true });
+  await saveData();
   showToast('Eliminado');
   renderCatComentarios();
 }
