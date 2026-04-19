@@ -1185,30 +1185,21 @@ function editarDirecto(id) {
   document.getElementById('f-cantidad').value           = g.cantidad;
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); setDescAhorro(false);
-  TABS.forEach(t=>{
-    document.getElementById('content-'+t).classList.remove('active');
-    const te = document.getElementById('tab-'+t); if(te) te.classList.remove('active');
-  });
-  document.getElementById('content-nuevo').classList.add('active');
-  document.getElementById('topbar-title').textContent='Editar Gasto';
+  showTab('nuevo');
+  document.getElementById('topbar-title').textContent = 'Editar Gasto';
 }
 
 function editar(id) {
   closeModal('modal-detail');
   const g = gastos.find(x=>x.id===id); if(!g) return;
   editingId=id;
-  document.getElementById('f-cuenta').value      = g.cuenta;
-  document.getElementById('f-motivo').value       = g.motivo;
-  document.getElementById('f-cantidad').value     = g.cantidad;
-  document.getElementById('f-comentarios-input').value = g.comentarios||'';
+  document.getElementById('f-cuenta').value            = g.cuenta;
+  document.getElementById('f-motivo').value             = g.motivo;
+  document.getElementById('f-cantidad').value           = g.cantidad;
+  document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); setDescAhorro(false);
-  TABS.forEach(t=>{
-    document.getElementById('content-'+t).classList.remove('active');
-    document.getElementById('tab-'+t).classList.remove('active');
-  });
-  document.getElementById('content-nuevo').classList.add('active');
-  document.getElementById('tab-nuevo').classList.add('active');
-  document.getElementById('topbar-title').textContent='Editar Gasto';
+  showTab('nuevo');
+  document.getElementById('topbar-title').textContent = 'Editar Gasto';
 }
 
 function eliminar(id) {
