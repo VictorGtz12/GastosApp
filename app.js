@@ -951,7 +951,7 @@ function renderAhorros() {
     if (multiGrupo) {
       html += `<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
         <span style="font-size:10px;font-weight:500;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">${nombreGrupo}</span>
-        <span style="font-size:12px;font-weight:500;color:var(--purple)">${fmt(g.total)}</span>
+        <span class="ahorro-grupo-total" style="font-size:12px;font-weight:500;color:var(--purple)">${fmt(g.total)}</span>
       </div>`;
     }
     g.cuentas.forEach(c => {
@@ -2504,6 +2504,8 @@ function aplicarVisibilidadAhorros() {
   });
   // Saldos en cada tarjeta de ahorro (.ahorro-total)
   document.querySelectorAll('.ahorro-total').forEach(el => el.style.filter = blur);
+  // Totales de grupo en headers
+  document.querySelectorAll('.ahorro-grupo-total').forEach(el => el.style.filter = blur);
   // Movimientos en tarjetas
   document.querySelectorAll('.ahorro-mov-monto').forEach(el => el.style.filter = blur);
   // Stat card del Menú
