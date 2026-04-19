@@ -211,6 +211,32 @@ function saveData(opts = {}) {
 }
 
 // Configura la URL de Sheets
+// Botón Actualizar — sube primero, luego baja
+async function refreshData() {
+  if (!usingSheets()) {
+    loadFromLocal();
+    actualizarSelectCuentas(); actualizarSelectMotivos();
+    showTab(document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu');
+    showToast('Vista actualizada ✓');
+    return;
+  }
+  mostrarBannerActualizar();
+  showToast('Subiendo datos...');
+  const up = await uploadSnapshot();
+  if (!up) {
+    showToast('Sin conexión — datos guardados localmente');
+    mostrarEstadoSync(false);
+    return;
+  }
+  showToast('Descargando...');
+  const down = await downloadSnapshot();
+  actualizarSelectCuentas(); actualizarSelectMotivos();
+  const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+  showTab(tab);
+  mostrarEstadoSync(down);
+  showToast(down ? 'Sincronizado ✓' : 'Error al descargar');
+}
+
 function configurarSheets() {
   const url = prompt('Pega la URL de tu Apps Script (déjalo vacío para desactivar):', SCRIPT_URL);
   if (url === null) return;
