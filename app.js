@@ -279,8 +279,23 @@ function guardarGithubToken() {
   const token = (document.getElementById('input-github-token').value || '').trim();
   localStorage.setItem('githubToken', token);
   closeModal('modal-github-token');
-  showToast(token ? 'Token guardado ✓' : 'Sync desactivado');
-  if (token) setTimeout(() => refreshData(), 300);
+  if (!token) { showToast('Sync desactivado'); return; }
+  showToast('Conectando con GitHub...');
+  setTimeout(async () => {
+    // Intentar descargar primero — si GitHub tiene datos, esos ganan
+    const down = await downloadSnapshot();
+    if (down) {
+      actualizarSelectCuentas(); actualizarSelectMotivos();
+      showTab('menu');
+      mostrarEstadoSync(true);
+      showToast('Datos sincronizados desde GitHub ✓');
+    } else {
+      // GitHub vacío o error — subir datos locales
+      const up = await uploadSnapshot();
+      mostrarEstadoSync(up);
+      showToast(up ? 'Datos subidos a GitHub ✓' : 'Verifica que el token sea correcto');
+    }
+  }, 300);
 }
 
 function mostrarEstadoSync(ok) {
