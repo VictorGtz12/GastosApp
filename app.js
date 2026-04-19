@@ -489,6 +489,7 @@ function normGasto(x) {
     semana:       x.semana || x.Semana || getWeek(new Date()),
     ahorroDesc:   x.ahorroDesc || x.AhorroDesc || '',
     periodoCorte: x.periodoCorte || null,
+    updatedAt:    x.updatedAt || null,
   };
 }
 
@@ -622,6 +623,7 @@ function renderGastos() {
             : iE ? '<span class="badge ext">📤 Externo</span>'
             : iP ? '<span class="badge ext-paid">✅ Cobrado</span>'
             : `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`}
+          ${gastoPendienteSync(g) ? '<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);border:1px solid rgba(255,159,67,.3);padding:1px 6px;border-radius:6px;font-weight:600">⬆️ Sin sync</span>' : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
@@ -1221,6 +1223,7 @@ async function guardarGasto() {
     abonado, ignorar, externo,
     semana:       getWeek(new Date()),
     ahorroDesc:   descontarAhorro ? ahorroSelNombre : '',
+    updatedAt:    new Date().toISOString(),
     periodoCorte: calcularPeriodoCorte(document.getElementById('f-cuenta').value, document.getElementById('f-fecha')?.value || today()),
   };
 
@@ -2003,6 +2006,13 @@ function onAhorroTouchEnd(e, id) {
   touchDragId = null;
 }
 
+
+// ── Indicador de sync pendiente ───────────────────────────────
+function gastoPendienteSync(g) {
+  if (!usingGithub() || !g.updatedAt) return false;
+  const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
+  return new Date(g.updatedAt).getTime() > lastSync;
+}
 // ── Catálogos ─────────────────────────────────────────────────
 // Sub-tab activo: 'cuentas' | 'motivos'
 let catalogoTab = 'cuentas';
@@ -2348,6 +2358,9 @@ window.addEventListener('DOMContentLoaded', () => {
     downloadSnapshot().then(async ok => {
       // Siempre re-renderizar menú después del sync
       renderMenu();
+      // Quitar badges de sync en gastos si está visible
+      const tabAct = document.querySelector('.tab.active')?.id?.replace('tab-','');
+      if (tabAct === 'gastos') renderGastos();
       // Si hay cambios locales pendientes, subirlos automáticamente al arrancar
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
       const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
