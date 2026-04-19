@@ -1186,6 +1186,7 @@ function setDescAhorro(v){
   document.getElementById('desc-no').className ='tog'+(v?'':' sel-no');
   document.getElementById('desc-si').className ='tog'+(v?' sel-si':'');
   document.getElementById('ahorro-selector-wrap').style.display = v ? 'block' : 'none';
+  if (v) refreshAhorroSelector();
 }
 
 // Actualiza selector de cuentas de ahorro en el form
@@ -1331,7 +1332,10 @@ function editarDirecto(id) {
     setDescAhorro(true);
     setTimeout(() => {
       const sel = document.getElementById('f-ahorro-cuenta');
-      if (sel) { const opt = Array.from(sel.options).find(o => sel.options[o.index]?.text?.startsWith(g.ahorroDesc)); if(opt) sel.value = opt.value; }
+      if (sel) {
+        const ca = cuentasAhorro.find(c => c.nombre === g.ahorroDesc);
+        if (ca) sel.value = ca.id;
+      }
     }, 50);
   } else { setDescAhorro(false); }
   showTab('nuevo');
