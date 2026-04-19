@@ -254,6 +254,103 @@ function mostrarAvisoDesactualizado() {}
 
 
 
+// ════════════════════════════════════════════════════════════
+//  ALMACENAMIENTO LOCAL — localStorage
+// ════════════════════════════════════════════════════════════
+
+function saveLocal() {
+  try {
+    const data = {
+      gastos, historico, nextId, nextAhorroId,
+      cuentasAhorro, excepciones,
+      catalogoCuentas, catalogoMotivos, catalogoComentarios,
+      presupuesto: PRESUPUESTO,
+      recurrentes, nextRecId, deudas, nextDeudaId
+    };
+    localStorage.setItem('appData_v1', JSON.stringify(data));
+    localStorage.setItem('localModified', new Date().toISOString());
+  } catch(e) {
+    console.warn('saveLocal error:', e);
+    try {
+      localStorage.setItem('gastos',    JSON.stringify(gastos));
+      localStorage.setItem('historico', JSON.stringify(historico));
+      localStorage.setItem('ahorros',   JSON.stringify(cuentasAhorro));
+    } catch(e2) { console.error('saveLocal fallback error:', e2); }
+  }
+}
+
+function loadFromLocal() {
+  try {
+    const raw = localStorage.getItem('appData_v1');
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data.gastos)              gastos              = data.gastos.map(normGasto);
+      if (data.historico)           historico           = data.historico.map(normGasto);
+      if (data.nextId)              nextId              = data.nextId;
+      if (data.nextAhorroId)        nextAhorroId        = data.nextAhorroId;
+      if (data.excepciones)         excepciones         = data.excepciones;
+      if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
+      if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
+      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
+      if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
+      if (data.presupuesto)         PRESUPUESTO         = data.presupuesto;
+      if (data.recurrentes)         recurrentes         = data.recurrentes  || [];
+      if (data.nextRecId)           nextRecId           = data.nextRecId;
+      if (data.deudas)              deudas              = data.deudas       || [];
+      if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId;
+      return;
+    }
+    // Fallback: claves legacy
+    const tryGet = (...keys) => { for (const k of keys) { const v = localStorage.getItem(k); if (v !== null) return v; } return null; };
+    const g = tryGet('gastos','gastos_v7','gastos_v6','gastos_v5');
+    const h = tryGet('historico','historico_v7','historico_v6');
+    const a = tryGet('ahorros','ahorros_v7','ahorros_v6');
+    if (g) gastos    = JSON.parse(g).map(normGasto);
+    if (h) historico = JSON.parse(h).map(normGasto);
+    if (a) cuentasAhorro = JSON.parse(a).map(normAhorro);
+    if (g || h || a) saveLocal();
+  } catch(e) { console.error('loadFromLocal error:', e); }
+}
+
+function normGasto(x) {
+  let fecha = String(x.fecha || x.Fecha || today());
+  if (fecha.includes('T')) fecha = fecha.slice(0, 10);
+  return {
+    id:           x.id || x.ID,
+    fecha,
+    cuenta:       x.cuenta || x.Cuenta || '',
+    motivo:       x.motivo || x.Motivo || '',
+    cantidad:     Number(x.cantidad || x.Cantidad) || 0,
+    comentarios:  x.comentarios || x.Comentarios || '',
+    abonado:      x.abonado === true || x.Abonado === 'SI' || x.abonado === 'true',
+    ignorar:      x.ignorar === true || x.Ignorar === 'SI' || x.ignorar === 'true',
+    externo:      x.externo || x.Externo || 'no',
+    semana:       x.semana || x.Semana || getWeek(new Date()),
+    ahorroDesc:   x.ahorroDesc || x.AhorroDesc || '',
+    periodoCorte: x.periodoCorte || null,
+  };
+}
+
+function normAhorro(c) {
+  const excluir = c.excluirTotal === true || c.excluirTotal === 'SI' || c.excluirTotal === 'true';
+  return {
+    id:           c.id || c.ID,
+    nombre:       c.nombre || c.Nombre || '',
+    meta:         Number(c.meta || c.Meta) || 0,
+    grupo:        c.grupo || c.Grupo || 'General',
+    excluirTotal: excluir,
+    movimientos:  (c.movimientos || []).map(m => ({
+      tipo:     m.tipo || '',
+      cantidad: Number(m.cantidad) || 0,
+      nota:     m.nota || '',
+      fecha:    String(m.fecha || '').slice(0, 10),
+      destino:  m.destino ? Number(m.destino) : undefined,
+      origen:   m.origen  ? Number(m.origen)  : undefined,
+    })),
+  };
+}
+
+
 // ── Navegación ────────────────────────────────────────────────
 const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes'];
 
