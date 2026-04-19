@@ -602,6 +602,7 @@ function renderExternos() {
   if (extFilter === 'pendiente') list = pend;
   if (extFilter === 'pagado')    list = paid;
   list = list.sort((a,b) => (Number(b.id)||0) - (Number(a.id)||0) || String(b.fecha).localeCompare(String(a.fecha)));
+  const el = document.getElementById('externos-list');
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos externos en este filtro</div>'; return; }
   el.innerHTML = list.map(g => {
     const iP = g.externo === 'pagado';
