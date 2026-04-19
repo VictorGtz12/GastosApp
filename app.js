@@ -139,26 +139,33 @@ function applySheetData(result) {
 
 // Sync en segundo plano — no bloquea la UI
 async function syncSheetsBackground() {
-  if (!usingSheets()) return;
+  if (!usingSheets()) {
+    console.log('Sheets no configurado, SCRIPT_URL:', SCRIPT_URL);
+    return;
+  }
+  console.log('Sincronizando con Sheets...');
   try {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 15000);
-    const res    = await fetch(`${SCRIPT_URL}?action=getAll`, { signal: controller.signal });
+    const res = await fetch(`${SCRIPT_URL}?action=getAll`, {
+      signal: controller.signal,
+      redirect: 'follow'
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
     if (result.error) throw new Error(result.error);
+    console.log('Sheets sync OK — gastos:', result.semana?.length, 'histórico:', result.historico?.length);
     applySheetData(result);
     saveLocal();
-    // Refrescar vista actual silenciosamente
     actualizarSelectCuentas();
     actualizarSelectMotivos();
     const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
     showTab(tab);
-    // Actualizar timestamp de última sincronización
     localStorage.setItem('lastSync', new Date().toISOString());
     mostrarEstadoSync(true);
     return true;
   } catch(e) {
-    console.warn('Sync Sheets error:', e.message);
+    console.error('Sync Sheets error:', e.message);
     mostrarEstadoSync(false);
     return false;
   }
@@ -2045,6 +2052,7 @@ window.addEventListener('DOMContentLoaded', () => {
   mostrarBannerActualizar();
 
   // Sync en segundo plano con Sheets (no bloquea la UI)
+  console.log('usingSheets:', usingSheets(), '| URL:', SCRIPT_URL.slice(0,50)+'...');
   if (usingSheets()) {
     syncSheetsBackground().then(() => {
       ocultarBannerActualizar();
