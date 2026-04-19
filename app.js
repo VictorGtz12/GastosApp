@@ -269,19 +269,22 @@ async function refreshData() {
     showToast('Vista actualizada ✓'); return;
   }
   const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
-  // Ocultar banner inmediatamente al iniciar sync
   const bp = document.getElementById('banner-pendientes');
   if (bp) bp.style.display = 'none';
   mostrarBannerActualizar();
-  showToast('Subiendo datos...');
+  showToast('Sincronizando...');
   const up = await uploadSnapshot();
   if (!up) { showToast('Error al subir — revisa tu token'); mostrarEstadoSync(false); return; }
-  showToast('Descargando...');
-  const down = await downloadSnapshot();
+  // NO descargar después de subir — ya tenemos los datos correctos en local.
+  // Solo actualizamos los timestamps para que coincidan.
+  const ts = new Date().toISOString();
+  localStorage.setItem('lastSync', ts);
+  localStorage.setItem('localModified', ts);
   actualizarSelectCuentas(); actualizarSelectMotivos();
+  renderMenu();
   showTab(tabActual);
-  mostrarEstadoSync(down);
-  showToast(down ? 'Sincronizado ✓' : 'Error al descargar');
+  mostrarEstadoSync(true);
+  showToast('Sincronizado ✓');
 }
 
 function configurarGithub() {
@@ -2363,7 +2366,12 @@ window.addEventListener('DOMContentLoaded', () => {
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
       const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
       if (lm > ls + 3000) {
-        await uploadSnapshot();
+        const up = await uploadSnapshot();
+        if (up) {
+          const ts = new Date().toISOString();
+          localStorage.setItem('lastSync', ts);
+          localStorage.setItem('localModified', ts);
+        }
       }
       mostrarEstadoSync(true);
     });
