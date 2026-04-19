@@ -1338,6 +1338,32 @@ function eliminar(id) {
 }
 
 function confirmarEliminar() {
+  const gasto = gastos.find(x => x.id === window._eliminarId);
+  // Si el gasto tenía descuento de ahorro, eliminar el movimiento correspondiente
+  if (gasto?.ahorroDesc) {
+    const cuenta = cuentasAhorro.find(c => c.nombre === gasto.ahorroDesc);
+    if (cuenta) {
+      // Buscar el movimiento de retiro que coincida en fecha y cantidad
+      const idx = cuenta.movimientos.findIndex(m =>
+        m.tipo === 'retiro' &&
+        m.cantidad === gasto.cantidad &&
+        m.fecha === gasto.fecha &&
+        (m.nota || '').includes(gasto.motivo)
+      );
+      if (idx !== -1) {
+        cuenta.movimientos.splice(idx, 1);
+      }
+    }
+  }
+  // Si el gasto corresponde a un recurrente, limpiar ultimoPago
+  if (gasto) {
+    const rec = recurrentes.find(r => r.nombre === gasto.comentarios || r.nombre === gasto.motivo);
+    if (rec) {
+      const hoy = new Date();
+      const mesKey = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+      if (rec.ultimoPago === mesKey) rec.ultimoPago = null;
+    }
+  }
   gastos = gastos.filter(x => x.id !== window._eliminarId);
   saveLocal();
   closeModal('modal-confirm-eliminar');
@@ -1630,8 +1656,14 @@ function renderServicios() {
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
         ${recurrenteYaPagado(r)
-          ? `<div style="flex:1;padding:7px;border-radius:8px;background:rgba(34,211,165,.1);border:1px solid rgba(34,211,165,.3);color:var(--green);font-size:11px;font-weight:600;text-align:center">✅ Pagado este mes</div>`
-          : `<button onclick="registrarRecurrente(${i})" style="flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:11px;font-weight:600;cursor:pointer">✓ Registrar gasto</button>`
+          ? `<div style="display:flex;gap:6px;flex:1">
+               <div style="flex:1;padding:7px;border-radius:8px;background:rgba(34,211,165,.1);border:1px solid rgba(34,211,165,.3);color:var(--green);font-size:11px;font-weight:600;text-align:center">✅ Pagado este mes</div>
+               <button onclick="desmarcarPagado(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer" title="Desmarcar">↩️</button>
+             </div>`
+          : `<div style="display:flex;gap:6px;flex:1">
+               <button onclick="registrarRecurrente(${i})" style="flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:11px;font-weight:600;cursor:pointer">✓ Registrar gasto</button>
+               <button onclick="marcarPagadoManual(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(34,211,165,.3);background:transparent;color:var(--green);font-size:11px;cursor:pointer" title="Marcar como pagado sin registrar gasto">✅</button>
+             </div>`
         }
         <button onclick="editarRecurrente(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer">✏️</button>
         <button onclick="eliminarRecurrente(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(255,94,122,.3);background:transparent;color:var(--red);font-size:11px;cursor:pointer">🗑</button>
@@ -1648,23 +1680,27 @@ function recurrenteYaPagado(r) {
   return r.ultimoPago === mesKey;
 }
 
-function registrarRecurrente(i) {
+function marcarPagadoManual(i) {
   const r = recurrentes[i];
   if (!r) return;
-  // Marcar como pagado este mes
   const hoy = new Date();
   r.ultimoPago = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
   saveLocal();
-  // Pre-llenar formulario de nuevo gasto
-  showTab('nuevo');
-  setTimeout(() => {
-    document.getElementById('f-cuenta').value            = r.cuenta;
-    document.getElementById('f-motivo').value             = r.motivo;
-    document.getElementById('f-cantidad').value           = r.cantidad;
-    document.getElementById('f-comentarios-input').value  = r.nombre;
-    setAb(false); setIg(false); setExt('no');
-  }, 50);
+  renderServicios();
+  verificarRecurrentesProximos();
+  showToast(`${r.nombre} marcado como pagado ✓`);
 }
+
+function desmarcarPagado(i) {
+  const r = recurrentes[i];
+  if (!r) return;
+  r.ultimoPago = null;
+  saveLocal();
+  renderServicios();
+  verificarRecurrentesProximos();
+  showToast(`${r.nombre} desmarcado`);
+}
+
 
 function abrirNuevoRecurrente() {
   window._editRecIdx = null;
