@@ -240,9 +240,10 @@ async function downloadSnapshot() {
       const dlTs = new Date().toISOString();
       localStorage.setItem('lastSync', dlTs);
       localStorage.setItem('localModified', dlTs);
-      // Re-renderizar menú y selects con datos frescos
+      // Re-renderizar todo con datos frescos
       actualizarSelectCuentas();
       actualizarSelectMotivos();
+      renderMenu(); // siempre actualizar menú
       const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
       showTab(tabActual);
     }
