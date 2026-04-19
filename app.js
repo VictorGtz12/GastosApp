@@ -492,7 +492,9 @@ function showTab(tab) {
     catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas'
   };
   document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
-  if (tab === 'menu')      renderMenu();
+  if (tab === 'nuevo' && !editingId) {
+    const fe = document.getElementById('f-fecha'); if (fe && !fe.value) fe.value = today();
+  }
   if (tab === 'gastos')    renderGastos();
   if (tab === 'externos')  renderExternos();
   if (tab === 'cortes')    renderCortes();
@@ -1207,6 +1209,7 @@ function resetForm() {
   document.getElementById('f-comentarios-input').value = ''; document.getElementById('comentario-dropdown').style.display='none';
   document.getElementById('f-cuenta').selectedIndex = 0;
   document.getElementById('f-motivo').selectedIndex  = 0;
+  const fe = document.getElementById('f-fecha'); if (fe) fe.value = today();
   setAb(false); setIg(false); setExt('no'); setDescAhorro(false);
 }
 function cancelForm() {
@@ -2128,17 +2131,29 @@ function closeDrawer() {
 function aplicarTema(modo) {
   const root = document.documentElement;
   if (modo === 'claro') {
-    root.style.setProperty('--bg','#f0f2f5'); root.style.setProperty('--bg2','#ffffff');
-    root.style.setProperty('--bg3','#e8eaf0'); root.style.setProperty('--text','#0f1117');
-    root.style.setProperty('--text2','#4a5568'); root.style.setProperty('--text3','#718096');
-    root.style.setProperty('--border','rgba(0,0,0,.08)'); root.style.setProperty('--border2','rgba(0,0,0,.15)');
-    root.style.setProperty('--topbar1','#2d3748'); root.style.setProperty('--topbar2','#1a202c');
+    root.style.setProperty('--bg',      '#f0f2f5');
+    root.style.setProperty('--bg2',     '#ffffff');
+    root.style.setProperty('--bg3',     '#e8eaf0');
+    root.style.setProperty('--text',    '#1a1d27');
+    root.style.setProperty('--text2',   '#4a5568');
+    root.style.setProperty('--text3',   '#718096');
+    root.style.setProperty('--border',  'rgba(0,0,0,.1)');
+    root.style.setProperty('--border2', 'rgba(0,0,0,.18)');
+    root.style.setProperty('--topbar1', '#4c1d95');
+    root.style.setProperty('--topbar2', '#5b21b6');
+    document.body.style.background = '#f0f2f5';
   } else {
-    root.style.setProperty('--bg','#0f1117'); root.style.setProperty('--bg2','#1a1d27');
-    root.style.setProperty('--bg3','#22263a'); root.style.setProperty('--text','#f0f2ff');
-    root.style.setProperty('--text2','#8b92b0'); root.style.setProperty('--text3','#555d7a');
-    root.style.setProperty('--border','rgba(255,255,255,.07)'); root.style.setProperty('--border2','rgba(255,255,255,.12)');
-    root.style.setProperty('--topbar1','#1e1b4b'); root.style.setProperty('--topbar2','#2d1b6e');
+    root.style.setProperty('--bg',      '#0f1117');
+    root.style.setProperty('--bg2',     '#1a1d27');
+    root.style.setProperty('--bg3',     '#22263a');
+    root.style.setProperty('--text',    '#f0f2ff');
+    root.style.setProperty('--text2',   '#8b92b0');
+    root.style.setProperty('--text3',   '#555d7a');
+    root.style.setProperty('--border',  'rgba(255,255,255,.07)');
+    root.style.setProperty('--border2', 'rgba(255,255,255,.12)');
+    root.style.setProperty('--topbar1', '#1e1b4b');
+    root.style.setProperty('--topbar2', '#2d1b6e');
+    document.body.style.background = '#0f1117';
   }
   localStorage.setItem('tema', modo);
   const btn = document.getElementById('btn-tema');
