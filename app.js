@@ -978,7 +978,7 @@ function renderAhorros() {
           const pos=m.tipo==='abono'||m.tipo==='traspaso-in';
           return `<div class="mov-item">
             <span style="color:var(--text2)">${m.fecha}${label?' · '+label:''}</span>
-            <span class="${pos?'mov-pos':'mov-neg'}">${pos?'+':'-'}${fmt(m.cantidad)}</span>
+            <span class="${pos?'mov-pos':'mov-neg'} ahorro-mov-monto">${pos?'+':'-'}${fmt(m.cantidad)}</span>
           </div>`;
         }).join('')}</div>`:''}
         <div class="ahorro-btns">
@@ -992,9 +992,9 @@ function renderAhorros() {
     });
   });
   el.innerHTML = html;
-}
-
-function openMovAhorro(id, tipo) {
+  // Aplicar visibilidad después de renderizar tarjetas
+  aplicarVisibilidadAhorros();
+}(id, tipo) {
   movCuentaId = id; movMode = tipo;
   const c = cuentasAhorro.find(x=>x.id===id);
   document.getElementById('modal-ahorro-title').textContent = (tipo==='abono'?'Abonar a ':'Retirar de ')+c.nombre;
@@ -1581,6 +1581,7 @@ function renderServicios() {
   // Verificar cuáles cobran hoy o en los próximos 3 días
   const proximos = recurrentes.filter(r => {
     if (!r.activo) return false;
+    if (recurrenteYaPagado(r)) return false; // ya pagado este mes
     const diff = r.dia - hoy.getDate();
     return diff >= 0 && diff <= 3;
   });
@@ -1610,7 +1611,7 @@ function renderServicios() {
 
   el.innerHTML = recurrentes.map((r,i) => {
     const diff = r.dia - hoy.getDate();
-    const proxEst = diff < 0 ? `en ${30+diff} días (próx. mes)` : diff===0 ? '¡Hoy!' : diff===1 ? 'Mañana' : `en ${diff} días`;
+    const proxEst = recurrenteYaPagado(r) ? '✅ Pagado este mes' : diff < 0 ? `en ${30+diff} días (próx. mes)` : diff===0 ? '¡Hoy!' : diff===1 ? 'Mañana' : `en ${diff} días`;
     return `<div style="background:var(--bg2);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:10px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="display:flex;align-items:center;gap:8px">
@@ -1626,7 +1627,10 @@ function renderServicios() {
         </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
-        <button onclick="registrarRecurrente(${i})" style="flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:11px;font-weight:600;cursor:pointer">✓ Registrar gasto</button>
+        ${recurrenteYaPagado(r)
+          ? `<div style="flex:1;padding:7px;border-radius:8px;background:rgba(34,211,165,.1);border:1px solid rgba(34,211,165,.3);color:var(--green);font-size:11px;font-weight:600;text-align:center">✅ Pagado este mes</div>`
+          : `<button onclick="registrarRecurrente(${i})" style="flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:11px;font-weight:600;cursor:pointer">✓ Registrar gasto</button>`
+        }
         <button onclick="editarRecurrente(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer">✏️</button>
         <button onclick="eliminarRecurrente(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(255,94,122,.3);background:transparent;color:var(--red);font-size:11px;cursor:pointer">🗑</button>
       </div>
@@ -1634,16 +1638,28 @@ function renderServicios() {
   }).join('');
 }
 
+
+// ── Verificar si recurrente ya fue pagado este mes ────────────
+function recurrenteYaPagado(r) {
+  const hoy = new Date();
+  const mesKey = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+  return r.ultimoPago === mesKey;
+}
+
 function registrarRecurrente(i) {
   const r = recurrentes[i];
   if (!r) return;
+  // Marcar como pagado este mes
+  const hoy = new Date();
+  r.ultimoPago = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+  saveLocal();
   // Pre-llenar formulario de nuevo gasto
   showTab('nuevo');
   setTimeout(() => {
-    document.getElementById('f-cuenta').value           = r.cuenta;
-    document.getElementById('f-motivo').value            = r.motivo;
-    document.getElementById('f-cantidad').value          = r.cantidad;
-    document.getElementById('f-comentarios-input').value = r.nombre;
+    document.getElementById('f-cuenta').value            = r.cuenta;
+    document.getElementById('f-motivo').value             = r.motivo;
+    document.getElementById('f-cantidad').value           = r.cantidad;
+    document.getElementById('f-comentarios-input').value  = r.nombre;
     setAb(false); setIg(false); setExt('no');
   }, 50);
 }
@@ -1829,7 +1845,7 @@ function eliminarDeuda(i) {
 // Verificar deudas y recurrentes próximos (llamado desde renderMenu)
 function verificarRecurrentesProximos() {
   const hoy = new Date();
-  const alertas = recurrentes.filter(r => r.activo && r.dia >= hoy.getDate() && r.dia - hoy.getDate() <= 3);
+  const alertas = recurrentes.filter(r => r.activo && !recurrenteYaPagado(r) && r.dia >= hoy.getDate() && r.dia - hoy.getDate() <= 3);
   const banner  = document.getElementById('banner-recurrentes');
   if (!banner) return;
   if (alertas.length) {
@@ -2377,16 +2393,24 @@ function toggleTema() {
 let ahorroVisible = true;
 function toggleAhorroVisible() {
   ahorroVisible = !ahorroVisible;
+  aplicarVisibilidadAhorros();
+}
+
+function aplicarVisibilidadAhorros() {
   const blur = ahorroVisible ? '' : 'blur(8px)';
-  // Elementos en pestaña Ahorros
+  // Total grande y grupos en pestaña Ahorros
   ['ahorro-big','ahorro-grupos-totales'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.filter = blur;
   });
+  // Saldos en cada tarjeta de ahorro (.ahorro-total)
+  document.querySelectorAll('.ahorro-total').forEach(el => el.style.filter = blur);
+  // Movimientos en tarjetas
+  document.querySelectorAll('.ahorro-mov-monto').forEach(el => el.style.filter = blur);
   // Stat card del Menú
   const sAhorro = document.getElementById('s-ahorro');
   if (sAhorro) sAhorro.style.filter = blur;
-  // Botón ojito (puede estar en menú o en ahorros)
+  // Botones ojito
   ['btn-eye-ahorro','btn-eye-menu'].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.textContent = ahorroVisible ? '👁' : '🙈';
