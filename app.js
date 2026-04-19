@@ -198,11 +198,11 @@ async function uploadSnapshot() {
   try {
     const snap    = compressSnap(buildSnapshot());
     const content = btoa(unescape(encodeURIComponent(JSON.stringify(snap))));
+    // Siempre obtener SHA fresco antes de subir
     let sha = null;
-    try {
-      const get = await fetch(githubApiUrl(), { headers: githubHeaders() });
-      if (get.ok) { const d = await get.json(); sha = d.sha; }
-    } catch(e) {}
+    const getMeta = await fetch(githubApiUrl(), { headers: githubHeaders() });
+    if (getMeta.ok) { const d = await getMeta.json(); sha = d.sha; }
+    else if (getMeta.status !== 404) throw new Error(`GET HTTP ${getMeta.status}`);
     const res = await fetch(githubApiUrl(), {
       method: 'PUT', headers: githubHeaders(),
       body: JSON.stringify({
@@ -211,50 +211,48 @@ async function uploadSnapshot() {
       })
     });
     if (!res.ok) { const e = await res.json(); throw new Error(e.message||`HTTP ${res.status}`); }
-    const uploadData = await res.json();
-    if (uploadData.content?.sha) localStorage.setItem('githubSha', uploadData.content.sha);
-    const syncTs = new Date().toISOString();
-    localStorage.setItem('lastSync', syncTs);
-    localStorage.setItem('localModified', syncTs);
+    const result = await res.json();
+    // Guardar el SHA nuevo para que downloadSnapshot sepa que ya está actualizado
+    const newSha = result.content?.sha;
+    if (newSha) localStorage.setItem('githubSha', newSha);
+    const ts = new Date().toISOString();
+    localStorage.setItem('lastSync', ts);
+    localStorage.setItem('localModified', ts);
+    console.log('Upload OK — nuevo SHA:', newSha?.slice(0,8));
     return true;
   } catch(e) { console.warn('upload error:', e.message); return false; }
 }
 
 async function downloadSnapshot() {
   if (!usingGithub()) return false;
-  if (syncBloqueado) { console.log("download bloqueado durante guardado"); return false; }
+  if (syncBloqueado) return false;
   try {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 15000);
-    // Usar SHA para caché — solo descarga contenido si cambió
-    const metaRes = await fetch(`${githubApiUrl()}?ref=${GITHUB_BRANCH}`, {
+    const res = await fetch(githubApiUrl(), {
       headers: githubHeaders(), signal: controller.signal
     });
-    if (metaRes.status === 404) { console.log('datos.json no existe aún'); return false; }
-    if (!metaRes.ok) throw new Error(`HTTP ${metaRes.status}`);
-    const meta       = await metaRes.json();
-    const remoteSha  = meta.sha;
-    const cachedSha  = localStorage.getItem('githubSha');
-    // Si el SHA no cambió Y hay datos locales, usar caché
+    if (res.status === 404) { console.log('datos.json no existe aún'); return false; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const meta      = await res.json();
+    const remoteSha = meta.sha;
+    const cachedSha = localStorage.getItem('githubSha');
+    // Si el SHA coincide Y hay datos locales -> sin cambios remotos, no aplicar
     if (remoteSha && remoteSha === cachedSha && gastos.length > 0) {
-      console.log('GitHub sin cambios (SHA igual) — usando caché local');
+      console.log('Sin cambios remotos (SHA igual)');
       return true;
     }
-    // SHA diferente o sin datos locales — descargar contenido
+    // Hay cambios o no hay datos -> aplicar snapshot
     const decoded = decodeURIComponent(escape(atob(meta.content.replace(/\n/g,''))));
     const snap    = decompressSnap(JSON.parse(decoded));
     const ok      = applySnapshot(snap);
     if (ok) {
       saveLocal();
       localStorage.setItem('githubSha', remoteSha);
-      const dlTs = new Date().toISOString();
-      localStorage.setItem('lastSync', dlTs);
-      localStorage.setItem('localModified', dlTs);
-      actualizarSelectCuentas();
-      actualizarSelectMotivos();
-      renderMenu();
-      const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
-      showTab(tabActual);
+      const ts = new Date().toISOString();
+      localStorage.setItem('lastSync', ts);
+      localStorage.setItem('localModified', ts);
+      console.log('Download OK — SHA:', remoteSha?.slice(0,8), 'gastos:', gastos.length);
     }
     return ok;
   } catch(e) { console.warn('download error:', e.message); return false; }
@@ -2391,15 +2389,15 @@ window.addEventListener('DOMContentLoaded', () => {
   // Sync con GitHub en segundo plano
   if (usingGithub()) {
     downloadSnapshot().then(async ok => {
-      // Siempre re-renderizar menú después del sync
+      // Re-renderizar siempre con los datos más frescos
+      actualizarSelectCuentas();
+      actualizarSelectMotivos();
       renderMenu();
       const tabAct = document.querySelector('.tab.active')?.id?.replace('tab-','');
       if (tabAct === 'gastos') renderGastos();
-      // Solo subir si hay cambios locales más nuevos que el último sync conocido
-      // Y solo si downloadSnapshot NO trajo datos nuevos (ok con SHA igual = sin cambios remotos)
+      // Solo subir si hay cambios locales reales (timestamps con valor)
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
       const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
-      // Si lm y ls son 0 (cache limpio), no hay nada que subir — GitHub ya tiene los datos
       if (lm > 0 && ls > 0 && lm > ls + 3000) {
         const up = await uploadSnapshot();
         if (up) {
