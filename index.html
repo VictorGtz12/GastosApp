@@ -430,17 +430,18 @@
 
   <!-- RECURRENTES Y DEUDAS -->
   <div class="content" id="content-recurrentes">
+    <!-- Tabs selector -->
     <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px">
       <button id="rtab-servicios" onclick="setRecTab('servicios')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:var(--accent);color:white">🔄 Servicios</button>
       <button id="rtab-deudas" onclick="setRecTab('deudas')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:transparent;color:var(--text2)">💳 Meses sin int.</button>
     </div>
+    <!-- Panel servicios -->
     <div id="rec-panel-servicios">
-      <div id="banner-rec-tab" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px">
-        <div style="font-size:10px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">⚠️ Cobran pronto</div>
-      </div>
+      <div id="banner-rec-tab" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px"></div>
       <div id="rec-servicios-list"></div>
       <button onclick="abrirNuevoRecurrente()" style="width:100%;padding:13px;border-radius:12px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px;font-weight:500">+ Agregar servicio recurrente</button>
     </div>
+    <!-- Panel deudas -->
     <div id="rec-panel-deudas" style="display:none">
       <div id="rec-deudas-list"></div>
       <button onclick="abrirNuevaDeuda()" style="width:100%;padding:13px;border-radius:12px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px;font-weight:500">+ Agregar compra a meses</button>
