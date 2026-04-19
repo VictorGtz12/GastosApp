@@ -223,8 +223,12 @@ async function downloadSnapshot() {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 15000);
     const res = await fetch(`${githubApiUrl()}?ref=${GITHUB_BRANCH}&t=${Date.now()}`, {
-      headers: {...githubHeaders(), 'Cache-Control':'no-cache'}, signal: controller.signal
+      headers: githubHeaders(), signal: controller.signal
     });
+    if (res.status === 404) {
+      console.log('datos.json no existe aún — primera vez, sube primero');
+      return false;
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data    = await res.json();
     const decoded = decodeURIComponent(escape(atob(data.content.replace(/\n/g,''))));
@@ -310,11 +314,7 @@ function iniciarAutoSync() {
 
 // Configura la URL de Sheets
 function configurarSheets() {
-  const url = prompt('Pega la URL de tu Apps Script (déjalo vacío para desactivar):', SCRIPT_URL);
-  if (url === null) return;
-  if (url && !url.includes('script.google.com')) { showToast('URL inválida'); return; }
-  localStorage.setItem('sheetsUrl', url || '');
-  location.reload();
+  // configurarSheets reemplazado por configurarGithub
 }
 
 // Mostrar estado de sync en topbar
@@ -2163,7 +2163,7 @@ window.addEventListener('DOMContentLoaded', () => {
   mostrarBannerActualizar();
 
   // Al abrir: descarga snapshot de Sheets en segundo plano (no sube)
-  console.log('usingSheets:', usingSheets(), '| URL:', SCRIPT_URL.slice(0,50)+'...');
+  console.log('usingGithub:', usingGithub());
   mostrarBannerActualizar();
   if (usingSheets()) {
     downloadSnapshot().then(ok => {
