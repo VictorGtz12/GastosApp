@@ -303,3 +303,35 @@ function iniciarAutoSync() {
     }
   }, 5 * 60 * 1000);
 }
+
+
+
+// ── Init ──────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  try { loadFromLocal(); } catch(e) { console.error('Error cargando datos:', e); }
+  document.getElementById('loading').style.display  = 'none';
+  document.getElementById('main-app').style.display = 'block';
+  actualizarSelectCuentas();
+  actualizarSelectMotivos();
+  // Inicializar fecha de hoy en el formulario
+  const fechaEl = document.getElementById('f-fecha');
+  if (fechaEl) fechaEl.value = new Date().toISOString().slice(0,10);
+  showTab('menu');
+  document.addEventListener('click', cerrarDropdownComentario);
+  aplicarTema(localStorage.getItem('tema') || 'oscuro');
+  iniciarAutoSync();
+  mostrarBannerActualizar();
+  // Descarga snapshot de GitHub en segundo plano
+  if (usingGithub()) {
+    downloadSnapshot().then(ok => {
+      if (ok) {
+        actualizarSelectCuentas(); actualizarSelectMotivos();
+        const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+        showTab(tabActual);
+      }
+      mostrarEstadoSync(ok);
+    });
+  } else {
+    mostrarEstadoSync(false);
+  }
+});
