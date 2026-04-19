@@ -1230,19 +1230,38 @@ async function guardarGasto() {
 
   if (isEditing) {
     const idx = gastos.findIndex(x=>x.id===editingId);
-    if (idx>=0) gastos[idx] = gasto;
+    const gastoAnterior = idx >= 0 ? gastos[idx] : null;
+
+    // Si el gasto anterior tenía descuento de ahorro, revertir ese movimiento
+    if (gastoAnterior?.ahorroDesc) {
+      const cuentaAnterior = cuentasAhorro.find(c => c.nombre === gastoAnterior.ahorroDesc);
+      if (cuentaAnterior) {
+        // Buscar por gastoId primero (más confiable), luego por coincidencia de datos
+        const movIdx = cuentaAnterior.movimientos.findIndex(m =>
+          m.tipo === 'retiro' && (
+            m.gastoId === gastoAnterior.id ||
+            (m.cantidad === gastoAnterior.cantidad &&
+             m.fecha === gastoAnterior.fecha &&
+             (m.nota || '').includes(gastoAnterior.motivo))
+          )
+        );
+        if (movIdx !== -1) cuentaAnterior.movimientos.splice(movIdx, 1);
+      }
+    }
+    if (idx >= 0) gastos[idx] = gasto;
   } else {
     gastos.push(gasto);
   }
 
-  // Descontar del ahorro si aplica
-  if (descontarAhorro && ahorroSelId && !isEditing) {
+  // Descontar del ahorro si aplica (nuevo o edición con ahorro)
+  if (descontarAhorro && ahorroSelId) {
     const ca = cuentasAhorro.find(x=>x.id===ahorroSelId);
     if (ca) {
       ca.movimientos.push({
         tipo:'retiro', cantidad,
         nota:`Gasto: ${gasto.motivo}`,
-        fecha: gasto.fecha
+        fecha: gasto.fecha,
+        gastoId: gasto.id  // guardar referencia al gasto
       });
     }
   }
@@ -1305,25 +1324,41 @@ function editarDirecto(id) {
   document.getElementById('f-motivo').value             = g.motivo;
   document.getElementById('f-cantidad').value           = g.cantidad;
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
-  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); setDescAhorro(false);
-  TABS.forEach(t=>{
-    document.getElementById('content-'+t).classList.remove('active');
-    const te = document.getElementById('tab-'+t); if(te) te.classList.remove('active');
-  });
-  document.getElementById('content-nuevo').classList.add('active');
-  document.getElementById('topbar-title').textContent='Editar Gasto';
+  const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
+  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no');
+  // Restaurar estado de descuento de ahorro
+  if (g.ahorroDesc) {
+    setDescAhorro(true);
+    setTimeout(() => {
+      const sel = document.getElementById('f-ahorro-cuenta');
+      if (sel) { const opt = Array.from(sel.options).find(o => sel.options[o.index]?.text?.startsWith(g.ahorroDesc)); if(opt) sel.value = opt.value; }
+    }, 50);
+  } else { setDescAhorro(false); }
+  showTab('nuevo');
+  document.getElementById('topbar-title').textContent = 'Editar Gasto';
 }
 
 function editar(id) {
   closeModal('modal-detail');
   const g = gastos.find(x=>x.id===id); if(!g) return;
   editingId=id;
-  document.getElementById('f-cuenta').value      = g.cuenta;
-  document.getElementById('f-motivo').value       = g.motivo;
-  document.getElementById('f-cantidad').value     = g.cantidad;
-  document.getElementById('f-comentarios-input').value = g.comentarios||'';
+  document.getElementById('f-cuenta').value            = g.cuenta;
+  document.getElementById('f-motivo').value             = g.motivo;
+  document.getElementById('f-cantidad').value           = g.cantidad;
+  document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
-  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); setDescAhorro(false);
+  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no');
+  // Restaurar estado de descuento de ahorro
+  if (g.ahorroDesc) {
+    setDescAhorro(true);
+    setTimeout(() => {
+      const sel = document.getElementById('f-ahorro-cuenta');
+      if (sel) {
+        const ca = cuentasAhorro.find(c => c.nombre === g.ahorroDesc);
+        if (ca) sel.value = ca.id;
+      }
+    }, 50);
+  } else { setDescAhorro(false); }
   showTab('nuevo');
   document.getElementById('topbar-title').textContent = 'Editar Gasto';
 }
@@ -1347,10 +1382,12 @@ function confirmarEliminar() {
     if (cuenta) {
       // Buscar el movimiento de retiro que coincida en fecha y cantidad
       const idx = cuenta.movimientos.findIndex(m =>
-        m.tipo === 'retiro' &&
-        m.cantidad === gasto.cantidad &&
-        m.fecha === gasto.fecha &&
-        (m.nota || '').includes(gasto.motivo)
+        m.tipo === 'retiro' && (
+          m.gastoId === gasto.id ||
+          (m.cantidad === gasto.cantidad &&
+           m.fecha === gasto.fecha &&
+           (m.nota || '').includes(gasto.motivo))
+        )
       );
       if (idx !== -1) {
         cuenta.movimientos.splice(idx, 1);
