@@ -83,6 +83,7 @@ let nextRecId = 1;
 // { id, nombre, cuenta, total, cuota, mesesTotal, mesesPagados, diaCorte, fechaInicio }
 let deudas = [];
 let nextDeudaId = 1;
+let nextMovId = 1;
 
 // ── Utilidades ────────────────────────────────────────────────
 const fmt = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -169,7 +170,7 @@ function buildSnapshot() {
     version:2, savedAt:new Date().toISOString(),
     gastos, historico, nextId, cuentasAhorro, nextAhorroId,
     excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios,
-    recurrentes, nextRecId, deudas, nextDeudaId, presupuesto:PRESUPUESTO,
+    recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
   };
 }
 
@@ -188,6 +189,7 @@ function applySnapshot(snap) {
   if (snap.nextRecId)           nextRecId           = snap.nextRecId;
   if (snap.deudas)              deudas              = snap.deudas;
   if (snap.nextDeudaId)         nextDeudaId         = snap.nextDeudaId;
+  if (snap.nextMovId)           nextMovId           = snap.nextMovId || 1;
   if (snap.presupuesto)         PRESUPUESTO         = snap.presupuesto;
   return true;
 }
@@ -407,7 +409,7 @@ function saveLocal() {
       cuentasAhorro, excepciones,
       catalogoCuentas, catalogoMotivos, catalogoComentarios,
       presupuesto: PRESUPUESTO,
-      recurrentes, nextRecId, deudas, nextDeudaId
+      recurrentes, nextRecId, deudas, nextDeudaId, nextMovId
     };
     localStorage.setItem('appData_v1', JSON.stringify(data));
     const ts = new Date().toISOString();
@@ -456,6 +458,7 @@ function loadFromLocal() {
       if (data.nextRecId)           nextRecId           = data.nextRecId;
       if (data.deudas)              deudas              = data.deudas       || [];
       if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId;
+      if (data.nextMovId)           nextMovId           = data.nextMovId || 1;
       return;
     }
     // Fallback: claves legacy
@@ -999,19 +1002,24 @@ function renderAhorros() {
   aplicarVisibilidadAhorros();
 }
 
+
+function nuevoMov(campos) {
+  return { ...campos, movId: nextMovId++ };
+}
+
 function verHistorialAhorro(id) {
   const c = cuentasAhorro.find(x => x.id === id);
   if (!c) return;
-  const movs = [...c.movimientos].reverse(); // más reciente primero
   const saldoFinal = saldoCuenta(c);
 
-  // Calcular saldo acumulado por movimiento
+  // Ordenar por movId (orden de creación), calcular saldo acumulado
+  const ordenados = [...c.movimientos].sort((a,b) => (a.movId||0) - (b.movId||0));
   let saldoAcum = 0;
-  const movsConSaldo = [...c.movimientos].map(m => {
+  const movsConSaldo = ordenados.map(m => {
     const pos = m.tipo === 'abono' || m.tipo === 'traspaso-in';
     saldoAcum += pos ? m.cantidad : -m.cantidad;
     return { ...m, saldoAcum };
-  }).reverse();
+  }).reverse(); // mostrar más reciente primero
 
   const tipoLabel = m => {
     if (m.tipo === 'abono')       return { label:'Abono',    color:'var(--green)' };
@@ -1062,7 +1070,7 @@ async function confirmarMovAhorro() {
   const c = cuentasAhorro.find(x=>x.id===movCuentaId);
   if (!c) return;
   if (movMode==='retiro' && cantidad>saldoCuenta(c)) { showToast('Saldo insuficiente'); return; }
-  c.movimientos.push({ tipo: movMode, cantidad, nota, fecha: today() });
+  c.movimientos.push(nuevoMov({ tipo: movMode, cantidad, nota, fecha: today() }));
   saveLocal();
   closeModal('modal-ahorro');
   showToast(movMode==='abono'?'Abono registrado ✓':'Retiro registrado ✓');
@@ -1111,8 +1119,8 @@ async function confirmarTraspaso() {
   if (!origen||!destino) return;
   if (cantidad > saldoCuenta(origen)) { showToast('Saldo insuficiente'); return; }
   const f = today();
-  origen.movimientos.push({ tipo:'traspaso-out', cantidad, nota, destino:destinoId, fecha:f });
-  destino.movimientos.push({ tipo:'traspaso-in',  cantidad, nota, origen:traspasoOrigenId, fecha:f });
+  origen.movimientos.push(nuevoMov({ tipo:'traspaso-out', cantidad, nota, destino:destinoId, fecha:f }));
+  destino.movimientos.push(nuevoMov({ tipo:'traspaso-in', cantidad, nota, origen:traspasoOrigenId, fecha:f }));
   saveLocal();
   closeModal('modal-traspaso');
   showToast(`Traspasado ${fmt(cantidad)} a ${destino.nombre} ✓`);
