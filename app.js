@@ -265,12 +265,14 @@ function saveLocal() {
     const data = {
       gastos, historico, nextId, nextAhorroId,
       cuentasAhorro, excepciones,
-      catalogoCuentas, catalogoMotivos, catalogoComentarios
+      catalogoCuentas, catalogoMotivos, catalogoComentarios,
+      presupuesto: PRESUPUESTO,
+      recurrentes, nextRecId, deudas, nextDeudaId
     };
     localStorage.setItem('appData_v1', JSON.stringify(data));
+    localStorage.setItem('localModified', new Date().toISOString());
   } catch(e) {
     console.warn('saveLocal error:', e);
-    // Si falla por tamaño, guardar por partes
     try {
       localStorage.setItem('gastos',    JSON.stringify(gastos));
       localStorage.setItem('historico', JSON.stringify(historico));
@@ -414,12 +416,21 @@ function loadData() {
   showTab('menu');
 }
 
-// Botón Actualizar — jala de Sheets si está configurado
+// Botón Actualizar — sube cambios locales primero, luego jala Sheets
 async function refreshData() {
   if (usingSheets()) {
+    const localMod  = new Date(localStorage.getItem('localModified') || 0).getTime();
+    const lastSync  = new Date(localStorage.getItem('lastSync')       || 0).getTime();
+    const hayLocales = localMod > lastSync + 3000; // cambios locales más recientes de 3s
+
+    if (hayLocales) {
+      showToast('Subiendo cambios locales...');
+      // Subir todos los datos locales a Sheets antes de jalar
+      await subirTodoASheets();
+    }
     showToast('Sincronizando...');
     const ok = await syncSheetsBackground();
-    showToast(ok ? 'Sincronizado con Sheets ✓' : 'Sin conexión — datos locales');
+    showToast(ok ? 'Sincronizado ✓' : 'Sin conexión — datos locales');
   } else {
     loadFromLocal();
     actualizarSelectCuentas();
@@ -427,6 +438,27 @@ async function refreshData() {
     const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
     showTab(tab);
     showToast('Vista actualizada ✓');
+  }
+}
+
+// Sube TODO el estado local a Sheets de una sola pasada
+async function subirTodoASheets() {
+  if (!usingSheets()) return;
+  try {
+    // Subir gastos de semana actual completos
+    await apiPost('reemplazarSemana', { gastos: gastos.map(gastoToSheets) });
+    // Subir ahorros
+    await apiPost('saveAhorros', { cuentas: cuentasAhorro });
+    // Subir meta completa
+    await apiPost('saveMeta', {
+      excepciones,
+      catalogos: { cuentas: catalogoCuentas, motivos: catalogoMotivos, comentarios: catalogoComentarios },
+      recurrentes, deudas, nextRecId, nextDeudaId, presupuesto: PRESUPUESTO,
+      lastModified: new Date().toISOString()
+    });
+    localStorage.setItem('lastSync', new Date().toISOString());
+  } catch(e) {
+    console.warn('subirTodoASheets error:', e.message);
   }
 }
 
@@ -677,12 +709,11 @@ function renderCortes() {
     const key    = getPeriodoActualKey(cuenta);
     const hasta  = key ? key.split('|')[1] : null;
     const desde  = key ? periodoDesde(key) : null;
-    const gp     = all.filter(g => g.cuenta === cuenta && (g.periodoCorte === key ||
-      // fallback para gastos sin periodoCorte: comparar fecha
-      (!g.periodoCorte && hasta && desde &&
-        String(g.fecha).slice(0,10) >= desde &&
-        String(g.fecha).slice(0,10) <= hasta)
-    ));
+    // Usar gastosEnPeriodo que ya maneja fechas correctamente
+    const gp = hasta && desde ? gastosEnPeriodo(all, cuenta,
+      new Date(desde + 'T00:00:00'),
+      new Date(hasta + 'T23:59:59')
+    ) : [];
     const total  = gp.reduce((s,g) => s+g.cantidad, 0);
     const diasR  = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
     const vencida = diasR < 0;
@@ -738,13 +769,10 @@ function openCorteTarjeta(cuenta) {
     const diasR = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
     const vencida = esActual && diasR < 0;
 
-    const gp = all.filter(g => g.cuenta === cuenta &&
-      (g.periodoCorte === key || g._periodoTemp === key ||
-        (!g.periodoCorte && !g._periodoTemp && hasta && desde &&
-          String(g.fecha).slice(0,10) >= desde &&
-          String(g.fecha).slice(0,10) <= hasta)
-      )
-    );
+    const gp = hasta && desde ? gastosEnPeriodo(all, cuenta,
+      new Date(desde + 'T00:00:00'),
+      new Date(hasta + 'T23:59:59')
+    ) : [];
     const total = gp.reduce((s,g) => s+g.cantidad, 0);
 
     const label = esActual

@@ -58,6 +58,7 @@ function doPost(e) {
       saveExcepciones:    () => saveExcepciones(data),
       saveCatalogos:      () => saveCatalogos(data),
       saveMeta:           () => saveMeta(data),
+      reemplazarSemana:   () => reemplazarSemana(data),
     };
     if (!map[action]) return json({ error: 'Accion no reconocida' });
     return json(map[action]());
@@ -393,4 +394,24 @@ function getLastModified() {
   const ss   = SpreadsheetApp.getActiveSpreadsheet();
   const meta = readMeta(ss);
   return { lastModified: meta.lastModified || null };
+}
+
+// ── REEMPLAZAR SEMANA COMPLETA ────────────────────────────────
+// Borra todos los gastos de Semana y los reescribe con los datos locales
+function reemplazarSemana(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = getOrCreate(ss, SHEET.SEMANA, HDR_GASTO);
+  // Limpiar y re-escribir headers
+  sh.clearContents();
+  setHeaders(sh, HDR_GASTO);
+  // Insertar todos los gastos
+  const gastos = data.gastos || [];
+  gastos.forEach(g => {
+    sh.appendRow([
+      g.ID, g.Fecha, g.Cuenta, g.Motivo, g.Cantidad,
+      g.Comentarios||'', g.Abonado?'SI':'NO', g.Ignorar?'SI':'NO',
+      g.Externo||'no', g.Semana||'', g.AhorroDesc||''
+    ]);
+  });
+  return { ok: true, count: gastos.length };
 }
