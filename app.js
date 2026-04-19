@@ -164,6 +164,7 @@ async function syncSheetsBackground() {
     saveLocal();
     // Guardar el lastModified que viene de Sheets
     if (result.lastModified) localStorage.setItem('lastModified', result.lastModified);
+    const prevSync = localStorage.getItem('lastSync');
     localStorage.setItem('lastSync', new Date().toISOString());
     actualizarSelectCuentas();
     actualizarSelectMotivos();
@@ -2114,18 +2115,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // Mostrar banner de recordatorio de actualizar
   mostrarBannerActualizar();
 
-  // Sync en segundo plano con Sheets (no bloquea la UI)
+  // Sync en segundo plano con Sheets al abrir
   console.log('usingSheets:', usingSheets(), '| URL:', SCRIPT_URL.slice(0,50)+'...');
   if (usingSheets()) {
-    // Primero revisar si hay cambios en Sheets antes de aplicar
-    verificarDesactualizado().then(desact => {
-      if (desact) {
-        mostrarAvisoDesactualizado();
-      }
-      // Sync en segundo plano siempre
-      syncSheetsBackground().then(() => {
-        ocultarBannerActualizar();
-      });
+    syncSheetsBackground().then(() => {
+      ocultarBannerActualizar();
     });
   }
 });
