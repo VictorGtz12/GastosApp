@@ -37,6 +37,7 @@
     /* Content */
     .content{flex:1;padding:14px;display:none;max-width:480px;width:100%;box-sizing:border-box}
     .content.active{display:block}
+    #content-recurrentes.active{display:flex}
     /* Stats */
     .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
     .stat-card{background:var(--bg2);border-radius:14px;padding:14px;border:1px solid var(--border);position:relative;overflow:hidden}
@@ -430,8 +431,8 @@
 </div>
 
   <!-- RECURRENTES Y DEUDAS -->
-  <div class="content" id="content-recurrentes">
-    <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px">
+  <div class="content" id="content-recurrentes" style="display:none;flex-direction:column">
+    <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px;flex-shrink:0">
       <button id="rtab-servicios" onclick="setRecTab('servicios')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:var(--accent);color:white">🔄 Servicios</button>
       <button id="rtab-deudas" onclick="setRecTab('deudas')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:transparent;color:var(--text2)">💳 Meses sin int.</button>
     </div>

@@ -220,6 +220,7 @@ async function refreshData() {
     showToast('Vista actualizada ✓');
     return;
   }
+  const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
   mostrarBannerActualizar();
   showToast('Subiendo datos...');
   const up = await uploadSnapshot();
@@ -231,8 +232,7 @@ async function refreshData() {
   showToast('Descargando...');
   const down = await downloadSnapshot();
   actualizarSelectCuentas(); actualizarSelectMotivos();
-  const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
-  showTab(tab);
+  showTab(tabActual);
   mostrarEstadoSync(down);
   showToast(down ? 'Sincronizado ✓' : 'Error al descargar');
 }
@@ -316,6 +316,8 @@ function saveLocal() {
     };
     localStorage.setItem('appData_v1', JSON.stringify(data));
     localStorage.setItem('localModified', new Date().toISOString());
+    // Actualizar indicador en topbar inmediatamente
+    verificarPendientes();
   } catch(e) {
     console.warn('saveLocal error:', e);
     try {
