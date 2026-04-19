@@ -396,6 +396,14 @@ function normAhorro(c) {
 }
 
 
+
+// ── Helper seguro para getElementById ─────────────────────────
+function el(id) {
+  const e = document.getElementById(id);
+  if (!e) console.warn('Elemento no encontrado:', id);
+  return e;
+}
+
 // ── Navegación ────────────────────────────────────────────────
 const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes'];
 // Tabs con elemento visual en la barra de navegación
@@ -468,6 +476,7 @@ function renderMenu() {
   verificarCortesProximos();
   verificarRecurrentesProximos();
   verificarPendientes();
+  renderGraficaCortes();
 }
 
 // ── Gastos ────────────────────────────────────────────────────
@@ -1096,7 +1105,7 @@ async function guardarGasto() {
   const isEditing = !!editingId;
   const gasto = {
     id:           editingId || nextId++,
-    fecha:        today(),
+    fecha:        document.getElementById('f-fecha')?.value || today(),
     cuenta:       document.getElementById('f-cuenta').value,
     motivo:       document.getElementById('f-motivo').value,
     cantidad,
@@ -1104,7 +1113,7 @@ async function guardarGasto() {
     abonado, ignorar, externo,
     semana:       getWeek(new Date()),
     ahorroDesc:   descontarAhorro ? ahorroSelNombre : '',
-    periodoCorte: calcularPeriodoCorte(document.getElementById('f-cuenta').value, today()),
+    periodoCorte: calcularPeriodoCorte(document.getElementById('f-cuenta').value, document.getElementById('f-fecha')?.value || today()),
   };
 
   if (isEditing) {
@@ -1136,6 +1145,7 @@ async function guardarGasto() {
 
 function resetForm() {
   document.getElementById('f-cantidad').value    = '';
+  const fechaEl = document.getElementById('f-fecha'); if (fechaEl) fechaEl.value = today();
   document.getElementById('f-comentarios-input').value = ''; document.getElementById('comentario-dropdown').style.display='none';
   document.getElementById('f-cuenta').selectedIndex = 0;
   document.getElementById('f-motivo').selectedIndex  = 0;
@@ -1197,6 +1207,7 @@ function editar(id) {
   document.getElementById('f-motivo').value             = g.motivo;
   document.getElementById('f-cantidad').value           = g.cantidad;
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
+  const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
   setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); setDescAhorro(false);
   showTab('nuevo');
   document.getElementById('topbar-title').textContent = 'Editar Gasto';
@@ -1705,6 +1716,66 @@ function verificarRecurrentesProximos() {
 }
 
 
+
+// ── Sincronización automática ─────────────────────────────────
+function iniciarAutoSync() {
+  if (!usingSheets()) return;
+  setInterval(async () => {
+    const localMod = new Date(localStorage.getItem('localModified') || 0).getTime();
+    const lastSync = new Date(localStorage.getItem('lastSync')       || 0).getTime();
+    if (localMod > lastSync + 3000) {
+      const up = await uploadSnapshot();
+      if (up) {
+        localStorage.setItem('lastSync', new Date().toISOString());
+        localStorage.setItem('localModified', localStorage.getItem('lastSync'));
+        mostrarEstadoSync(true);
+      }
+    }
+  }, 5 * 60 * 1000); // cada 5 minutos
+}
+
+
+// ── Gráfica de últimos 6 cortes ───────────────────────────────
+function renderGraficaCortes() {
+  const el = document.getElementById('grafica-cortes');
+  if (!el) return;
+  const cfg = getCortesConfig();
+  const all = [...gastos, ...historico];
+
+  // Recopilar hasta 6 períodos únicos con sus totales
+  const periodos = {};
+  all.forEach(g => {
+    if (g.ignorar) return;
+    const key = g.periodoCorte || calcularPeriodoCorte(g.cuenta, g.fecha);
+    if (!key) return;
+    const [, hasta] = key.split('|');
+    if (!periodos[hasta]) periodos[hasta] = 0;
+    periodos[hasta] += g.cantidad;
+  });
+
+  const sorted = Object.entries(periodos)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, 6)
+    .reverse();
+
+  if (!sorted.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3);width:100%;text-align:center;padding:20px 0">Sin datos de cortes anteriores</div>';
+    return;
+  }
+
+  const max = Math.max(...sorted.map(([,v]) => v)) || 1;
+  el.innerHTML = sorted.map(([hasta, total]) => {
+    const pct  = Math.max(4, Math.round((total / max) * 100));
+    const mes  = new Date(hasta + 'T12:00:00').toLocaleDateString('es-MX', {month:'short', day:'numeric'});
+    const color = total > PRESUPUESTO * 0.9 ? 'var(--red)' : total > PRESUPUESTO * 0.6 ? 'var(--orange)' : 'var(--accent)';
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+      <div style="font-size:9px;color:var(--text2);font-weight:600">${fmt(total).replace('$','')}</div>
+      <div style="width:100%;height:${pct}%;background:${color};border-radius:4px 4px 0 0;min-height:4px;transition:height .3s"></div>
+      <div style="font-size:9px;color:var(--text3);white-space:nowrap">${mes}</div>
+    </div>`;
+  }).join('');
+}
+
 // ── Detección de datos desactualizados ───────────────────────
 
 
@@ -1975,6 +2046,39 @@ function closeDrawer() {
   document.getElementById('drawer-overlay').classList.remove('open');
 }
 
+
+// ── Modo oscuro / claro ───────────────────────────────────────
+function aplicarTema(modo) {
+  const root = document.documentElement;
+  if (modo === 'claro') {
+    root.style.setProperty('--bg',      '#f0f2f5');
+    root.style.setProperty('--bg2',     '#ffffff');
+    root.style.setProperty('--bg3',     '#e8eaf0');
+    root.style.setProperty('--text',    '#0f1117');
+    root.style.setProperty('--text2',   '#4a5568');
+    root.style.setProperty('--text3',   '#718096');
+    root.style.setProperty('--border',  'rgba(0,0,0,.08)');
+    root.style.setProperty('--border2', 'rgba(0,0,0,.15)');
+  } else {
+    root.style.setProperty('--bg',      '#0f1117');
+    root.style.setProperty('--bg2',     '#1a1d27');
+    root.style.setProperty('--bg3',     '#22263a');
+    root.style.setProperty('--text',    '#f0f2ff');
+    root.style.setProperty('--text2',   '#8b92b0');
+    root.style.setProperty('--text3',   '#555d7a');
+    root.style.setProperty('--border',  'rgba(255,255,255,.07)');
+    root.style.setProperty('--border2', 'rgba(255,255,255,.12)');
+  }
+  localStorage.setItem('tema', modo);
+  const btn = document.getElementById('btn-tema');
+  if (btn) btn.textContent = modo === 'claro' ? '🌙 Modo oscuro' : '☀️ Modo claro';
+}
+
+function toggleTema() {
+  const actual = localStorage.getItem('tema') || 'oscuro';
+  aplicarTema(actual === 'oscuro' ? 'claro' : 'oscuro');
+}
+
 // ── Ocultar/mostrar total ahorrado ───────────────────────────
 let ahorroVisible = true;
 function toggleAhorroVisible() {
@@ -2004,6 +2108,8 @@ window.addEventListener('DOMContentLoaded', () => {
   actualizarSelectMotivos();
   showTab('menu');
   document.addEventListener('click', cerrarDropdownComentario);
+  aplicarTema(localStorage.getItem('tema') || 'oscuro');
+  iniciarAutoSync();
   // Service worker desactivado
   // if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 
