@@ -6,6 +6,23 @@
       navigator.serviceWorker.getRegistrations().then(r => r.forEach(sw => sw.unregister()));
       caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
+    // Aplicar tema inmediatamente para evitar flash de colores
+    (function() {
+      const tema = localStorage.getItem('tema') || 'oscuro';
+      if (tema === 'claro') {
+        const r = document.documentElement.style;
+        r.setProperty('--bg',      '#f0f2f5');
+        r.setProperty('--bg2',     '#ffffff');
+        r.setProperty('--bg3',     '#e8eaf0');
+        r.setProperty('--text',    '#0f1117');
+        r.setProperty('--text2',   '#4a5568');
+        r.setProperty('--text3',   '#718096');
+        r.setProperty('--border',  'rgba(0,0,0,.08)');
+        r.setProperty('--border2', 'rgba(0,0,0,.15)');
+        r.setProperty('--topbar1', '#2d3748');
+        r.setProperty('--topbar2', '#1a202c');
+      }
+    })();
   </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
