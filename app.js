@@ -270,10 +270,17 @@ async function refreshData() {
 }
 
 function configurarGithub() {
-  const token = prompt('Pega tu GitHub Personal Access Token\n(Fine-grained token con permiso Contents: Read & Write)\n\nDéjalo vacío para desactivar:', getGithubToken());
-  if (token === null) return;
-  localStorage.setItem('githubToken', token.trim());
-  location.reload();
+  const input = document.getElementById('input-github-token');
+  if (input) input.value = getGithubToken();
+  openModal('modal-github-token');
+}
+
+function guardarGithubToken() {
+  const token = (document.getElementById('input-github-token').value || '').trim();
+  localStorage.setItem('githubToken', token);
+  closeModal('modal-github-token');
+  showToast(token ? 'Token guardado ✓' : 'Sync desactivado');
+  if (token) setTimeout(() => refreshData(), 300);
 }
 
 function mostrarEstadoSync(ok) {
