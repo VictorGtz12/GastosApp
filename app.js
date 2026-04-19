@@ -259,10 +259,10 @@ function saveData(opts = {}) { saveLocal(); }
 async function refreshData() {
   if (!usingGithub()) {
     loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
-    showTab(document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu');
+    showTab(tabActualGlobal);
     showToast('Vista actualizada ✓'); return;
   }
-  const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+  const tabActual = tabActualGlobal;
   const bp = document.getElementById('banner-pendientes');
   if (bp) bp.style.display = 'none';
   mostrarBannerActualizar();
@@ -512,8 +512,10 @@ function normAhorro(c) {
 
 // ── Navegación ────────────────────────────────────────────────
 const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes'];
+let tabActualGlobal = 'menu';
 
 function showTab(tab) {
+  tabActualGlobal = tab; // siempre actualizar el tab global
   TABS.forEach(t => {
     document.getElementById('content-' + t).classList.toggle('active', t === tab);
     const tabEl = document.getElementById('tab-' + t);
@@ -2479,7 +2481,7 @@ window.addEventListener('DOMContentLoaded', () => {
       actualizarSelectCuentas();
       actualizarSelectMotivos();
       renderMenu();
-      const tabAct = document.querySelector('.tab.active')?.id?.replace('tab-','');
+      const tabAct = tabActualGlobal;
       if (tabAct === 'gastos') renderGastos();
       // Solo subir si hay cambios locales reales (timestamps con valor)
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
