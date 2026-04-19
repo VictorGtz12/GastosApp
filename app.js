@@ -398,14 +398,13 @@ function normAhorro(c) {
 
 // ── Navegación ────────────────────────────────────────────────
 const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes'];
-// Tabs visibles en la barra de navegación
+// Tabs con elemento visual en la barra de navegación
 const VISIBLE_TABS = ['menu','gastos','externos','cortes','ahorros'];
 
 function showTab(tab) {
   TABS.forEach(t => {
     const contentEl = document.getElementById('content-' + t);
     if (contentEl) contentEl.classList.toggle('active', t === tab);
-    // Solo actualizar clase en tabs visibles
     if (VISIBLE_TABS.includes(t)) {
       const tabEl = document.getElementById('tab-' + t);
       if (tabEl) tabEl.classList.toggle('active', t === tab);
