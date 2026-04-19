@@ -248,17 +248,38 @@ function configurarSheets() {
 // Mostrar estado de sync en topbar
 function mostrarEstadoSync(ok) {
   const el   = document.getElementById('sync-status');
-  const last = localStorage.getItem('lastSync');
   if (!el) return;
   el.style.display = 'inline';
-  if (ok && last) {
-    const d = new Date(last);
+  el.style.cursor  = 'pointer';
+  el.onclick       = () => refreshData();
+
+  if (!usingSheets()) { el.textContent = ''; el.style.display = 'none'; return; }
+
+  const localMod = new Date(localStorage.getItem('localModified') || 0).getTime();
+  const lastSync = new Date(localStorage.getItem('lastSync')       || 0).getTime();
+  const hayPendientes = localMod > lastSync + 3000;
+
+  if (hayPendientes) {
+    el.textContent = '⬆️ Cambios sin subir';
+    el.style.color = 'var(--orange)';
+    // También mostrar banner en menú
+    const banner = document.getElementById('banner-pendientes');
+    if (banner) banner.style.display = 'flex';
+  } else if (ok && lastSync) {
+    const d = new Date(lastSync);
     el.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
     el.style.color = 'var(--green)';
+    const banner = document.getElementById('banner-pendientes');
+    if (banner) banner.style.display = 'none';
   } else {
-    el.textContent = usingSheets() ? '⚠️ Sin sync' : '';
+    el.textContent = '⚠️ Sin sync';
     el.style.color = 'var(--orange)';
   }
+}
+
+// Verificar pendientes al renderizar el menú
+function verificarPendientes() {
+  mostrarEstadoSync(true);
 }
 
 function mostrarBannerActualizar() {
@@ -443,6 +464,7 @@ function renderMenu() {
     '<div style="font-size:12px;color:var(--text2);padding:6px 0">Sin gastos esta semana</div>';
   verificarCortesProximos();
   verificarRecurrentesProximos();
+  verificarPendientes();
 }
 
 // ── Gastos ────────────────────────────────────────────────────

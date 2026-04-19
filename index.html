@@ -276,6 +276,15 @@
       <button onclick="refreshData()" style="padding:7px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Actualizar</button>
     </div>
 
+    <!-- Banner cambios pendientes de subir -->
+    <div id="banner-pendientes" style="display:none;background:rgba(255,159,67,.12);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--orange)">⬆️ Tienes cambios sin subir</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">Toca Sincronizar para guardar en Sheets</div>
+      </div>
+      <button onclick="refreshData()" style="padding:7px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Sincronizar</button>
+    </div>
+
     <!-- Banner cortes próximos -->
     <div id="banner-cortes" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px">
       <div style="font-size:10px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">⚠️ Cortes próximos</div>
@@ -591,6 +600,6 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="app.js?v=20260418"></script>
+<script src="app.js?v=20260419b"></script>
 </body>
 </html>
