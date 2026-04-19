@@ -212,6 +212,9 @@
     <div class="drawer-item" id="drawer-catalogos" onclick="closeDrawer();showTab('catalogos')">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10"/><circle cx="17" cy="17" r="3"/><path d="M19 19l2 2"/></svg>Catálogos
     </div>
+    <div class="drawer-item" id="drawer-recurrentes" onclick="closeDrawer();showTab('recurrentes')">
+      <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Recurrentes y Deudas
+    </div>
     <div class="drawer-header" style="margin-top:8px">Configuración</div>
     <div class="drawer-item" onclick="closeDrawer();abrirAjustes()">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Ajustes
@@ -259,6 +262,10 @@
     <!-- Banner cortes próximos -->
     <div id="banner-cortes" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px">
       <div style="font-size:10px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">⚠️ Cortes próximos</div>
+    </div>
+    <!-- Banner recurrentes próximos -->
+    <div id="banner-recurrentes" style="display:none;background:rgba(108,99,255,.1);border:1px solid rgba(108,99,255,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">💳 Cargos próximos</div>
     </div>
     <div class="stat-grid">
       <div class="stat-card"><div class="stat-label">Total gastado</div><div class="stat-val red" id="s-total">$0.00</div></div>
@@ -396,6 +403,23 @@
   </div>
 </div>
 
+  <!-- RECURRENTES Y DEUDAS -->
+  <div class="content" id="content-recurrentes">
+    <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px">
+      <button id="rtab-servicios" onclick="setRecTab('servicios')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:var(--accent);color:white">🔄 Servicios</button>
+      <button id="rtab-deudas"    onclick="setRecTab('deudas')"    style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:transparent;color:var(--text2)">💳 Meses sin int.</button>
+    </div>
+    <div id="rec-panel-servicios">
+      <div id="rec-servicios-list"></div>
+      <button onclick="abrirNuevoRecurrente()" style="width:100%;padding:13px;border-radius:12px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px;font-weight:500">+ Agregar servicio recurrente</button>
+    </div>
+    <div id="rec-panel-deudas" style="display:none">
+      <div id="rec-deudas-list"></div>
+      <button onclick="abrirNuevaDeuda()" style="width:100%;padding:13px;border-radius:12px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px;font-weight:500">+ Agregar compra a meses</button>
+    </div>
+  </div>
+  <div id="tab-recurrentes" style="display:none"></div>
+
 <!-- MODALES -->
 <div class="overlay" id="modal-corte-sem">
   <div class="modal">
@@ -483,6 +507,39 @@
 </div>
 
 <!-- MODAL: Confirmar eliminar -->
+<!-- MODAL: Nuevo servicio recurrente -->
+<div class="overlay" id="modal-rec-servicio">
+  <div class="modal">
+    <h2>🔄 Servicio recurrente</h2>
+    <div class="field"><label>Nombre <span class="req">*</span></label><input type="text" id="rec-nombre" placeholder="Ej. Netflix, Luz, Internet..."></div>
+    <div class="field"><label>Cuenta <span class="req">*</span></label><select id="rec-cuenta"></select></div>
+    <div class="field"><label>Motivo <span class="req">*</span></label><select id="rec-motivo"></select></div>
+    <div class="field"><label>Cantidad mensual <span class="req">*</span></label><input type="number" id="rec-cantidad" placeholder="0.00" step="0.01" min="0" inputmode="decimal"></div>
+    <div class="field"><label>Día del mes que cobra <span class="req">*</span></label><input type="number" id="rec-dia" placeholder="Ej. 15" min="1" max="31" inputmode="numeric"></div>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-rec-servicio')">Cancelar</button>
+      <button class="mbtn prim" onclick="guardarRecurrente()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Nueva deuda a meses -->
+<div class="overlay" id="modal-deuda">
+  <div class="modal">
+    <h2>💳 Compra a meses sin intereses</h2>
+    <div class="field"><label>Descripción <span class="req">*</span></label><input type="text" id="deuda-nombre" placeholder="Ej. iPhone, Laptop, Refri..."></div>
+    <div class="field"><label>Tarjeta <span class="req">*</span></label><select id="deuda-cuenta"></select></div>
+    <div class="field"><label>Total de la compra <span class="req">*</span></label><input type="number" id="deuda-total" placeholder="0.00" step="0.01" min="0" inputmode="decimal" oninput="calcularCuotaDeuda()"></div>
+    <div class="field"><label>Número de meses <span class="req">*</span></label><input type="number" id="deuda-meses" placeholder="Ej. 12" min="1" max="60" inputmode="numeric" oninput="calcularCuotaDeuda()"></div>
+    <div class="field"><label>Cuota mensual <span class="req">*</span></label><input type="number" id="deuda-cuota" placeholder="Se calcula automático" step="0.01" min="0" inputmode="decimal"></div>
+    <div class="field"><label>Día de corte de la tarjeta <span class="req">*</span></label><input type="number" id="deuda-dia" placeholder="Ej. 21" min="1" max="31" inputmode="numeric"></div>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-deuda')">Cancelar</button>
+      <button class="mbtn prim" onclick="guardarDeuda()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-confirm-eliminar">
   <div class="modal">
     <h2>🗑 Eliminar gasto</h2>

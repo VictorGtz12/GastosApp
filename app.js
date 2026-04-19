@@ -75,6 +75,16 @@ let movMode = 'abono';
 let movCuentaId = null;
 let traspasoOrigenId = null;
 
+// Recurrentes (servicios, plataformas con cargo fijo mensual)
+// { id, nombre, cuenta, motivo, cantidad, dia, activo, ultimoAviso }
+let recurrentes = [];
+let nextRecId = 1;
+
+// Deudas a meses sin intereses
+// { id, nombre, cuenta, total, cuota, mesesTotal, mesesPagados, diaCorte, fechaInicio }
+let deudas = [];
+let nextDeudaId = 1;
+
 // ── Utilidades ────────────────────────────────────────────────
 const fmt = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
@@ -254,7 +264,7 @@ function refreshData() {
 
 
 // ── Navegación ────────────────────────────────────────────────
-const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos'];
+const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes'];
 
 function showTab(tab) {
   TABS.forEach(t => {
@@ -279,8 +289,9 @@ function showTab(tab) {
   if (tab === 'externos')  renderExternos();
   if (tab === 'cortes')    renderCortes();
   if (tab === 'ahorros')   renderAhorros();
-  if (tab === 'historico') renderHistorico();
-  if (tab === 'catalogos') renderCatalogos();
+  if (tab === 'historico')   renderHistorico();
+  if (tab === 'catalogos')   renderCatalogos();
+  if (tab === 'recurrentes') renderRecurrentes();
 }
 
 // ── Menú ──────────────────────────────────────────────────────
@@ -316,6 +327,7 @@ function renderMenu() {
   document.getElementById('saldos-list').innerHTML = rows ||
     '<div style="font-size:12px;color:var(--text2);padding:6px 0">Sin gastos esta semana</div>';
   verificarCortesProximos();
+  verificarRecurrentesProximos();
 }
 
 // ── Gastos ────────────────────────────────────────────────────
@@ -1163,7 +1175,8 @@ function exportarBackup() {
     gastos, historico, nextId, nextAhorroId,
     cuentasAhorro, excepciones,
     catalogoCuentas, catalogoMotivos, catalogoComentarios,
-    presupuesto: PRESUPUESTO
+    presupuesto: PRESUPUESTO,
+    recurrentes, nextRecId, deudas, nextDeudaId
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -1314,6 +1327,301 @@ function guardarAjustes() {
   closeModal('modal-ajustes');
   renderMenu();
   showToast('Presupuesto actualizado ✓');
+}
+
+
+// ════════════════════════════════════════════════════════════
+//  RECURRENTES Y DEUDAS
+// ════════════════════════════════════════════════════════════
+
+let recTab = 'servicios'; // 'servicios' | 'deudas'
+
+function renderRecurrentes() {
+  const btnS = document.getElementById('rtab-servicios');
+  const btnD = document.getElementById('rtab-deudas');
+  if (btnS) { btnS.style.background = recTab==='servicios'?'var(--accent)':'transparent'; btnS.style.color = recTab==='servicios'?'white':'var(--text2)'; }
+  if (btnD) { btnD.style.background = recTab==='deudas'?'var(--accent)':'transparent'; btnD.style.color = recTab==='deudas'?'white':'var(--text2)'; }
+  const pS = document.getElementById('rec-panel-servicios');
+  const pD = document.getElementById('rec-panel-deudas');
+  if (pS) pS.style.display = recTab==='servicios'?'':'none';
+  if (pD) pD.style.display = recTab==='deudas'?'':'none';
+  if (recTab==='servicios') renderServicios();
+  else renderDeudas();
+}
+
+function setRecTab(t) { recTab = t; renderRecurrentes(); }
+
+// ── SERVICIOS RECURRENTES ─────────────────────────────────────
+function renderServicios() {
+  const hoy = new Date();
+  const el  = document.getElementById('rec-servicios-list');
+  if (!el) return;
+
+  // Verificar cuáles cobran hoy o en los próximos 3 días
+  const proximos = recurrentes.filter(r => {
+    if (!r.activo) return false;
+    const diff = r.dia - hoy.getDate();
+    return diff >= 0 && diff <= 3;
+  });
+
+  // Banner aviso
+  const banner = document.getElementById('banner-recurrentes');
+  if (banner) {
+    if (proximos.length) {
+      banner.style.display = 'block';
+      banner.innerHTML = proximos.map(r => {
+        const diff = r.dia - hoy.getDate();
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
+          <span style="font-size:12px;color:var(--text)">💳 ${r.nombre}</span>
+          <span style="font-size:12px;font-weight:600;color:${diff===0?'var(--red)':'var(--orange)'}">${diff===0?'¡Hoy!':diff===1?'Mañana':diff+' días'} · ${fmt(r.cantidad)}</span>
+        </div>`;
+      }).join('');
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
+  if (!recurrentes.length) {
+    el.innerHTML = '<div class="empty">Sin servicios registrados.<br>Agrega Netflix, luz, agua...</div>';
+    return;
+  }
+
+  el.innerHTML = recurrentes.map((r,i) => {
+    const diff = r.dia - hoy.getDate();
+    const proxEst = diff < 0 ? `en ${30+diff} días (próx. mes)` : diff===0 ? '¡Hoy!' : diff===1 ? 'Mañana' : `en ${diff} días`;
+    return `<div style="background:var(--bg2);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:18px">${getMotivoIcon(r.motivo)}</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:var(--text)">${r.nombre}</div>
+            <div style="font-size:11px;color:var(--text2)">${r.cuenta} · ${r.motivo} · Día ${r.dia} de cada mes</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:15px;font-weight:700;color:var(--text)">${fmt(r.cantidad)}</div>
+          <div style="font-size:10px;color:${diff>=0&&diff<=3?'var(--orange)':'var(--text2)'}">${proxEst}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button onclick="registrarRecurrente(${i})" style="flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:11px;font-weight:600;cursor:pointer">✓ Registrar gasto</button>
+        <button onclick="editarRecurrente(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer">✏️</button>
+        <button onclick="eliminarRecurrente(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(255,94,122,.3);background:transparent;color:var(--red);font-size:11px;cursor:pointer">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function registrarRecurrente(i) {
+  const r = recurrentes[i];
+  if (!r) return;
+  // Pre-llenar formulario de nuevo gasto
+  showTab('nuevo');
+  setTimeout(() => {
+    document.getElementById('f-cuenta').value           = r.cuenta;
+    document.getElementById('f-motivo').value            = r.motivo;
+    document.getElementById('f-cantidad').value          = r.cantidad;
+    document.getElementById('f-comentarios-input').value = r.nombre;
+    setAb(false); setIg(false); setExt('no');
+  }, 50);
+}
+
+function abrirNuevoRecurrente() {
+  window._editRecIdx = null;
+  document.getElementById('rec-nombre').value    = '';
+  // Poblar selects
+  const rCta = document.getElementById('rec-cuenta');
+  rCta.innerHTML = getCuentas().map(n=>`<option>${n}</option>`).join('');
+  rCta.value = getCuentas()[0] || '';
+  const rMot = document.getElementById('rec-motivo');
+  rMot.innerHTML = catalogoMotivos.map(m=>`<option>${m}</option>`).join('');
+  document.getElementById('rec-motivo').value    = catalogoMotivos[0] || '';
+  document.getElementById('rec-cantidad').value  = '';
+  document.getElementById('rec-dia').value       = '';
+  openModal('modal-rec-servicio');
+}
+
+function editarRecurrente(i) {
+  const r = recurrentes[i];
+  window._editRecIdx = i;
+  const rCta2 = document.getElementById('rec-cuenta');
+  rCta2.innerHTML = getCuentas().map(n=>`<option>${n}</option>`).join('');
+  const rMot2 = document.getElementById('rec-motivo');
+  rMot2.innerHTML = catalogoMotivos.map(m=>`<option>${m}</option>`).join('');
+  document.getElementById('rec-nombre').value    = r.nombre;
+  document.getElementById('rec-cuenta').value    = r.cuenta;
+  document.getElementById('rec-motivo').value    = r.motivo;
+  document.getElementById('rec-cantidad').value  = r.cantidad;
+  document.getElementById('rec-dia').value       = r.dia;
+  openModal('modal-rec-servicio');
+}
+
+function guardarRecurrente() {
+  const nombre   = document.getElementById('rec-nombre').value.trim();
+  const cuenta   = document.getElementById('rec-cuenta').value;
+  const motivo   = document.getElementById('rec-motivo').value;
+  const cantidad = parseFloat(document.getElementById('rec-cantidad').value);
+  const dia      = parseInt(document.getElementById('rec-dia').value);
+  if (!nombre || !cantidad || !dia || dia<1 || dia>31) { showToast('Completa todos los campos'); return; }
+  const obj = { id: 0, nombre, cuenta, motivo, cantidad, dia, activo: true };
+  if (window._editRecIdx !== null) {
+    obj.id = recurrentes[window._editRecIdx].id;
+    recurrentes[window._editRecIdx] = obj;
+  } else {
+    obj.id = nextRecId++;
+    recurrentes.push(obj);
+  }
+  saveLocal();
+  closeModal('modal-rec-servicio');
+  showToast('Servicio guardado ✓');
+  renderServicios();
+}
+
+function eliminarRecurrente(i) {
+  if (!confirm(`¿Eliminar "${recurrentes[i].nombre}"?`)) return;
+  recurrentes.splice(i, 1);
+  saveLocal();
+  renderServicios();
+  showToast('Servicio eliminado');
+}
+
+// ── DEUDAS A MESES SIN INTERESES ─────────────────────────────
+function renderDeudas() {
+  const el = document.getElementById('rec-deudas-list');
+  if (!el) return;
+  if (!deudas.length) {
+    el.innerHTML = '<div class="empty">Sin deudas registradas.<br>Agrega tus compras a meses.</div>';
+    return;
+  }
+  el.innerHTML = deudas.map((d,i) => {
+    const pagados  = d.mesesPagados || 0;
+    const restante = d.mesesTotal - pagados;
+    const saldoPend = restante * d.cuota;
+    const pct = Math.round(pagados / d.mesesTotal * 100);
+    return `<div style="background:var(--bg2);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${d.nombre}</div>
+          <div style="font-size:11px;color:var(--text2)">${d.cuenta} · Día ${d.diaCorte} · ${fmt(d.cuota)}/mes</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:15px;font-weight:700;color:var(--red)">${fmt(saldoPend)}</div>
+          <div style="font-size:10px;color:var(--text2)">${pagados}/${d.mesesTotal} meses</div>
+        </div>
+      </div>
+      <div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:8px">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:3px"></div>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${pct}% pagado · ${restante} ${restante===1?'mes':'meses'} restante${restante===1?'':'s'}</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="registrarPagoDeuda(${i})" style="flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:11px;font-weight:600;cursor:pointer">✓ Registrar pago del mes</button>
+        <button onclick="editarDeuda(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer">✏️</button>
+        <button onclick="eliminarDeuda(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(255,94,122,.3);background:transparent;color:var(--red);font-size:11px;cursor:pointer">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function registrarPagoDeuda(i) {
+  const d = deudas[i];
+  if (!d) return;
+  if (d.mesesPagados >= d.mesesTotal) { showToast('Esta deuda ya está liquidada ✓'); return; }
+  // Pre-llenar formulario con la cuota
+  showTab('nuevo');
+  setTimeout(() => {
+    document.getElementById('f-cuenta').value           = d.cuenta;
+    document.getElementById('f-motivo').value            = 'Otros';
+    document.getElementById('f-cantidad').value          = d.cuota;
+    document.getElementById('f-comentarios-input').value = `${d.nombre} (${d.mesesPagados+1}/${d.mesesTotal})`;
+    setAb(false); setIg(false); setExt('no');
+  }, 50);
+  // Incrementar meses pagados
+  deudas[i].mesesPagados = (d.mesesPagados || 0) + 1;
+  if (deudas[i].mesesPagados >= d.mesesTotal) showToast(`¡${d.nombre} liquidada! 🎉`);
+  saveLocal();
+}
+
+function abrirNuevaDeuda() {
+  window._editDeudaIdx = null;
+  ['deuda-nombre','deuda-cuenta','deuda-total','deuda-cuota','deuda-meses','deuda-dia'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const dCta = document.getElementById('deuda-cuenta');
+  dCta.innerHTML = getCuentas().map(n=>`<option>${n}</option>`).join('');
+  dCta.value = getCuentas()[0] || '';
+  openModal('modal-deuda');
+}
+
+function editarDeuda(i) {
+  const d = deudas[i];
+  window._editDeudaIdx = i;
+  const dCta2 = document.getElementById('deuda-cuenta');
+  dCta2.innerHTML = getCuentas().map(n=>`<option>${n}</option>`).join('');
+  document.getElementById('deuda-nombre').value  = d.nombre;
+  document.getElementById('deuda-cuenta').value  = d.cuenta;
+  document.getElementById('deuda-total').value   = d.total;
+  document.getElementById('deuda-cuota').value   = d.cuota;
+  document.getElementById('deuda-meses').value   = d.mesesTotal;
+  document.getElementById('deuda-dia').value     = d.diaCorte;
+  openModal('modal-deuda');
+}
+
+function calcularCuotaDeuda() {
+  const total = parseFloat(document.getElementById('deuda-total').value) || 0;
+  const meses = parseInt(document.getElementById('deuda-meses').value)   || 0;
+  if (total && meses) document.getElementById('deuda-cuota').value = (total/meses).toFixed(2);
+}
+
+function guardarDeuda() {
+  const nombre  = document.getElementById('deuda-nombre').value.trim();
+  const cuenta  = document.getElementById('deuda-cuenta').value;
+  const total   = parseFloat(document.getElementById('deuda-total').value);
+  const cuota   = parseFloat(document.getElementById('deuda-cuota').value);
+  const meses   = parseInt(document.getElementById('deuda-meses').value);
+  const dia     = parseInt(document.getElementById('deuda-dia').value);
+  if (!nombre||!total||!cuota||!meses||!dia) { showToast('Completa todos los campos'); return; }
+  const obj = { nombre, cuenta, total, cuota, mesesTotal: meses, mesesPagados: 0, diaCorte: dia, fechaInicio: today() };
+  if (window._editDeudaIdx !== null) {
+    obj.mesesPagados = deudas[window._editDeudaIdx].mesesPagados;
+    obj.id = deudas[window._editDeudaIdx].id;
+    deudas[window._editDeudaIdx] = obj;
+  } else {
+    obj.id = nextDeudaId++;
+    deudas.push(obj);
+  }
+  saveLocal();
+  closeModal('modal-deuda');
+  showToast('Deuda guardada ✓');
+  renderDeudas();
+}
+
+function eliminarDeuda(i) {
+  if (!confirm(`¿Eliminar deuda "${deudas[i].nombre}"?`)) return;
+  deudas.splice(i, 1);
+  saveLocal();
+  renderDeudas();
+  showToast('Deuda eliminada');
+}
+
+// Verificar deudas y recurrentes próximos (llamado desde renderMenu)
+function verificarRecurrentesProximos() {
+  const hoy = new Date();
+  const alertas = recurrentes.filter(r => r.activo && r.dia >= hoy.getDate() && r.dia - hoy.getDate() <= 3);
+  const banner  = document.getElementById('banner-recurrentes');
+  if (!banner) return;
+  if (alertas.length) {
+    banner.style.display = 'block';
+    banner.innerHTML = alertas.map(r => {
+      const diff = r.dia - hoy.getDate();
+      return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px;color:var(--text)">💳 ${r.nombre}</span>
+        <span style="font-size:12px;font-weight:600;color:${diff===0?'var(--red)':'var(--orange)'}">${diff===0?'¡Hoy!':diff+'d'} · ${fmt(r.cantidad)}</span>
+      </div>`;
+    }).join('');
+  } else {
+    banner.style.display = 'none';
+  }
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
