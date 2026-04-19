@@ -235,12 +235,12 @@ async function downloadSnapshot() {
     const meta       = await metaRes.json();
     const remoteSha  = meta.sha;
     const cachedSha  = localStorage.getItem('githubSha');
-    // Si el SHA no cambió, no hace falta descargar el contenido
-    if (remoteSha && remoteSha === cachedSha) {
+    // Si el SHA no cambió Y hay datos locales, usar caché
+    if (remoteSha && remoteSha === cachedSha && gastos.length > 0) {
       console.log('GitHub sin cambios (SHA igual) — usando caché local');
       return true;
     }
-    // SHA diferente — descargar contenido
+    // SHA diferente o sin datos locales — descargar contenido
     const decoded = decodeURIComponent(escape(atob(meta.content.replace(/\n/g,''))));
     const snap    = decompressSnap(JSON.parse(decoded));
     const ok      = applySnapshot(snap);
@@ -2393,13 +2393,14 @@ window.addEventListener('DOMContentLoaded', () => {
     downloadSnapshot().then(async ok => {
       // Siempre re-renderizar menú después del sync
       renderMenu();
-      // Quitar badges de sync en gastos si está visible
       const tabAct = document.querySelector('.tab.active')?.id?.replace('tab-','');
       if (tabAct === 'gastos') renderGastos();
-      // Si hay cambios locales pendientes, subirlos automáticamente al arrancar
+      // Solo subir si hay cambios locales más nuevos que el último sync conocido
+      // Y solo si downloadSnapshot NO trajo datos nuevos (ok con SHA igual = sin cambios remotos)
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
       const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
-      if (lm > ls + 3000) {
+      // Si lm y ls son 0 (cache limpio), no hay nada que subir — GitHub ya tiene los datos
+      if (lm > 0 && ls > 0 && lm > ls + 3000) {
         const up = await uploadSnapshot();
         if (up) {
           const ts = new Date().toISOString();
