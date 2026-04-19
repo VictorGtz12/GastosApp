@@ -2326,10 +2326,16 @@ window.addEventListener('DOMContentLoaded', () => {
   mostrarBannerActualizar();
   // Sync con GitHub en segundo plano
   if (usingGithub()) {
-    downloadSnapshot().then(ok => {
-      // Siempre re-renderizar menú después del sync (con o sin cambios)
+    downloadSnapshot().then(async ok => {
+      // Siempre re-renderizar menú después del sync
       renderMenu();
-      mostrarEstadoSync(ok);
+      // Si hay cambios locales pendientes, subirlos automáticamente al arrancar
+      const lm = new Date(localStorage.getItem('localModified')||0).getTime();
+      const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
+      if (lm > ls + 3000) {
+        await uploadSnapshot();
+      }
+      mostrarEstadoSync(true);
     });
   } else {
     mostrarEstadoSync(false);
