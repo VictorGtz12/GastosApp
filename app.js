@@ -1426,9 +1426,12 @@ function verificarCortesProximos() {
   const cfg = getCortesConfig();
   const hoy = new Date();
   const alertas = [];
-  Object.entries(cfg).forEach(([cuenta, c]) => {
-    const { hasta } = getPeriodoActual(c, cuenta);
-    const dias = Math.ceil((hasta - hoy) / 864e5);
+  Object.entries(cfg).forEach(([cuenta]) => {
+    const key  = getPeriodoActualKey(cuenta);
+    if (!key) return;
+    const hasta = key.split('|')[1];
+    if (!hasta) return;
+    const dias = Math.ceil((new Date(hasta + 'T12:00:00') - hoy) / 864e5);
     if (dias >= 0 && dias <= 3) {
       alertas.push({ cuenta, dias, hasta });
     }
