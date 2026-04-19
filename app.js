@@ -99,6 +99,110 @@ function getWeek(d) {
 }
 
 // ── Google Sheets API ─────────────────────────────────────────
+// Pega tu URL de Apps Script aquí para sincronización multi-dispositivo
+const SCRIPT_URL = localStorage.getItem('sheetsUrl') || '';
+const usingSheets = () => !!SCRIPT_URL;
+
+async function apiGet(action) {
+  const res = await fetch(`${SCRIPT_URL}?action=${action}`);
+  return res.json();
+}
+async function apiPost(action, data) {
+  const res = await fetch(SCRIPT_URL, {
+    method: 'POST',
+    body: JSON.stringify({ action, data }),
+    headers: { 'Content-Type': 'text/plain' }
+  });
+  return res.json();
+}
+
+// Aplica datos de Sheets sobre el estado actual
+function applySheetData(result) {
+  if (!result) return;
+  if (result.semana)    gastos    = (result.semana    || []).map(normalizeGasto);
+  if (result.historico) historico = (result.historico || []).map(normalizeGasto);
+  if (result.excepciones) excepciones = result.excepciones || [];
+  if (result.ahorros && result.ahorros.length) {
+    cuentasAhorro = result.ahorros.map(normAhorro);
+    const ids = cuentasAhorro.map(c=>c.id).filter(Boolean);
+    nextAhorroId = ids.length ? Math.max(...ids)+1 : 1;
+  }
+  const allIds = [...gastos,...historico].map(g=>Number(g.id)).filter(Boolean);
+  nextId = allIds.length ? Math.max(...allIds)+1 : 1;
+  if (result.catalogos) {
+    if (result.catalogos.cuentas?.length)     catalogoCuentas     = result.catalogos.cuentas;
+    if (result.catalogos.motivos?.length)     catalogoMotivos     = result.catalogos.motivos;
+    if (result.catalogos.comentarios?.length) catalogoComentarios = result.catalogos.comentarios.map(c=>typeof c==='string'?c:(c.nombre||''));
+  }
+}
+
+// Sync en segundo plano — no bloquea la UI
+async function syncSheetsBackground() {
+  if (!usingSheets()) return;
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 15000);
+    const res    = await fetch(`${SCRIPT_URL}?action=getAll`, { signal: controller.signal });
+    const result = await res.json();
+    if (result.error) throw new Error(result.error);
+    applySheetData(result);
+    saveLocal();
+    // Refrescar vista actual silenciosamente
+    actualizarSelectCuentas();
+    actualizarSelectMotivos();
+    const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+    showTab(tab);
+    // Actualizar timestamp de última sincronización
+    localStorage.setItem('lastSync', new Date().toISOString());
+    mostrarEstadoSync(true);
+    return true;
+  } catch(e) {
+    console.warn('Sync Sheets error:', e.message);
+    mostrarEstadoSync(false);
+    return false;
+  }
+}
+
+function mostrarEstadoSync(ok) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  const last = localStorage.getItem('lastSync');
+  if (ok && last) {
+    const d = new Date(last);
+    el.textContent = `Sincronizado ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
+    el.style.color = 'var(--green)';
+  } else if (!ok) {
+    el.textContent = 'Sin conexión con Sheets';
+    el.style.color = 'var(--orange)';
+  }
+}
+
+// Guarda gasto en Sheets en segundo plano
+function saveGastoSheets(gasto, accion) {
+  if (!usingSheets()) return;
+  const row = {
+    ID: gasto.id, Fecha: gasto.fecha, Cuenta: gasto.cuenta, Motivo: gasto.motivo,
+    Cantidad: gasto.cantidad, Comentarios: gasto.comentarios||'',
+    Abonado: gasto.abonado, Ignorar: gasto.ignorar, Externo: gasto.externo,
+    Semana: gasto.semana, AhorroDesc: gasto.ahorroDesc||''
+  };
+  apiPost(accion, row).catch(()=>{});
+}
+
+// Guarda ahorros en Sheets en segundo plano
+function saveAhorrosSheets() {
+  if (!usingSheets()) return;
+  apiPost('saveAhorros', { cuentas: cuentasAhorro }).catch(()=>{});
+}
+
+// Configura la URL de Sheets
+function configurarSheets() {
+  const url = prompt('Pega la URL de tu Apps Script (déjalo vacío para desactivar):', SCRIPT_URL);
+  if (url === null) return;
+  if (url && !url.includes('script.google.com')) { showToast('URL inválida'); return; }
+  localStorage.setItem('sheetsUrl', url || '');
+  location.reload();
+}
 
 
 // ── Normalización ────────────────────────────────────────────
@@ -201,15 +305,18 @@ function loadFromLocal() {
 }
 
 function normGasto(x) {
+  // Normalizar fecha: quitar hora si viene con T
+  let fecha = String(x.fecha || x.Fecha || today());
+  if (fecha.includes('T')) fecha = fecha.slice(0, 10);
   return {
     id:          x.id || x.ID,
-    fecha:       String(x.fecha || x.Fecha || today()).slice(0,10),
+    fecha,
     cuenta:      x.cuenta || x.Cuenta || '',
     motivo:      x.motivo || x.Motivo || '',
     cantidad:    Number(x.cantidad || x.Cantidad) || 0,
     comentarios: x.comentarios || x.Comentarios || '',
-    abonado:     x.abonado === true || x.Abonado === 'SI',
-    ignorar:     x.ignorar === true || x.Ignorar === 'SI',
+    abonado:     x.abonado === true  || x.Abonado === 'SI'  || x.abonado === 'true',
+    ignorar:     x.ignorar === true  || x.Ignorar === 'SI'  || x.ignorar === 'true',
     externo:     x.externo || x.Externo || 'no',
     semana:      x.semana || x.Semana || getWeek(new Date()),
     ahorroDesc:  x.ahorroDesc || x.AhorroDesc || '',
@@ -217,17 +324,19 @@ function normGasto(x) {
 }
 
 function normAhorro(c) {
+  // excluirTotal: comparar estrictamente — el string "false" NO debe ser true
+  const excluir = c.excluirTotal === true || c.excluirTotal === 'SI' || c.excluirTotal === 'true';
   return {
     id:           c.id || c.ID,
     nombre:       c.nombre || c.Nombre || '',
     meta:         Number(c.meta || c.Meta) || 0,
-    grupo:        c.grupo || 'General',
-    excluirTotal: c.excluirTotal || false,
+    grupo:        c.grupo || c.Grupo || 'General',
+    excluirTotal: excluir,
     movimientos:  (c.movimientos || []).map(m => ({
       tipo:     m.tipo || '',
       cantidad: Number(m.cantidad) || 0,
       nota:     m.nota || '',
-      fecha:    String(m.fecha || '').slice(0,10),
+      fecha:    String(m.fecha || '').slice(0, 10),
       destino:  m.destino ? Number(m.destino) : undefined,
       origen:   m.origen  ? Number(m.origen)  : undefined,
     })),
@@ -236,6 +345,9 @@ function normAhorro(c) {
 // ── saveData ─────────────────────────────────────────────────
 function saveData(opts = {}) {
   saveLocal();
+  // Sincronizar con Sheets en segundo plano si está configurado
+  if (usingSheets() && opts.gasto)   saveGastoSheets(opts.gasto, opts.accion || 'addGasto');
+  if (usingSheets() && opts.ahorros) saveAhorrosSheets();
 }
 
 // Carga datos y muestra la app
@@ -248,17 +360,20 @@ function loadData() {
   showTab('menu');
 }
 
-// Botón Actualizar — solo refresca la vista (no hay red que esperar)
-function refreshData() {
-  loadFromLocal(); // recargar datos frescos
-  actualizarSelectCuentas();
-  actualizarSelectMotivos();
-  renderMenu();
-  renderCortes();
-  // Re-renderizar la pestaña activa
-  const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
-  showTab(tab);
-  showToast('Vista actualizada ✓');
+// Botón Actualizar — jala de Sheets si está configurado
+async function refreshData() {
+  if (usingSheets()) {
+    showToast('Sincronizando...');
+    const ok = await syncSheetsBackground();
+    showToast(ok ? 'Sincronizado con Sheets ✓' : 'Sin conexión — datos locales');
+  } else {
+    loadFromLocal();
+    actualizarSelectCuentas();
+    actualizarSelectMotivos();
+    const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+    showTab(tab);
+    showToast('Vista actualizada ✓');
+  }
 }
 
 
@@ -273,7 +388,7 @@ function showTab(tab) {
     if (tabEl) tabEl.classList.toggle('active', t === tab);
   });
   // Marcar activo en drawer
-  ['historico','catalogos'].forEach(t => {
+  ['historico','catalogos','recurrentes'].forEach(t => {
     const el = document.getElementById('drawer-' + t);
     if (el) el.classList.toggle('active-item', t === tab);
   });
@@ -281,9 +396,10 @@ function showTab(tab) {
     menu:'Gastos Semanales', gastos:'Mis Gastos',
     nuevo: editingId ? 'Editar Gasto' : 'Nuevo Gasto',
     externos:'Externos', cortes:'Cortes por Tarjeta',
-    ahorros:'Mis Ahorros', historico:'Historial', catalogos:'Catálogos'
+    ahorros:'Mis Ahorros', historico:'Historial',
+    catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas'
   };
-  document.getElementById('topbar-title').textContent = titles[tab];
+  document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
   if (tab === 'menu')      renderMenu();
   if (tab === 'gastos')    renderGastos();
   if (tab === 'externos')  renderExternos();
@@ -502,8 +618,9 @@ function periodoSiguiente(cfg, cuenta, hasta) {
 function gastosEnPeriodo(all, cuenta, desde, hasta) {
   return all.filter(g => {
     if (g.cuenta !== cuenta) return false;
-    // En cortes: NO filtramos por ignorar — se muestra todo
-    const fd = new Date(String(g.fecha) + 'T12:00:00');
+    // Normalizar fecha: quitar hora si viene con T antes de comparar
+    const fechaStr = String(g.fecha || '').slice(0, 10);
+    const fd = new Date(fechaStr + 'T12:00:00');
     return fd >= desde && fd <= hasta;
   });
 }
@@ -1364,20 +1481,21 @@ function renderServicios() {
     return diff >= 0 && diff <= 3;
   });
 
-  // Banner aviso
-  const banner = document.getElementById('banner-recurrentes');
-  if (banner) {
+  // Banner dentro de la pestaña recurrentes
+  const bannerTab = document.getElementById('banner-rec-tab');
+  if (bannerTab) {
     if (proximos.length) {
-      banner.style.display = 'block';
-      banner.innerHTML = proximos.map(r => {
-        const diff = r.dia - hoy.getDate();
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
-          <span style="font-size:12px;color:var(--text)">💳 ${r.nombre}</span>
-          <span style="font-size:12px;font-weight:600;color:${diff===0?'var(--red)':'var(--orange)'}">${diff===0?'¡Hoy!':diff===1?'Mañana':diff+' días'} · ${fmt(r.cantidad)}</span>
-        </div>`;
-      }).join('');
+      bannerTab.style.display = 'block';
+      bannerTab.innerHTML = '<div style="font-size:10px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">⚠️ Cobran pronto</div>' +
+        proximos.map(r => {
+          const diff = r.dia - hoy.getDate();
+          return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:12px;color:var(--text)">${r.nombre}</span>
+            <span style="font-size:12px;font-weight:600;color:${diff===0?'var(--red)':'var(--orange)'}">${diff===0?'¡Hoy!':diff===1?'Mañana':diff+' días'} · ${fmt(r.cantidad)}</span>
+          </div>`;
+        }).join('');
     } else {
-      banner.style.display = 'none';
+      bannerTab.style.display = 'none';
     }
   }
 
@@ -1913,11 +2031,7 @@ function toggleAhorroVisible() {
 
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  try {
-    loadFromLocal();
-  } catch(e) {
-    console.error('Error cargando datos:', e);
-  }
+  try { loadFromLocal(); } catch(e) { console.error('Error cargando datos:', e); }
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'flex';
   actualizarSelectCuentas();
@@ -1925,4 +2039,40 @@ window.addEventListener('DOMContentLoaded', () => {
   showTab('menu');
   document.addEventListener('click', cerrarDropdownComentario);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+
+  // Mostrar banner de recordatorio de actualizar
+  mostrarBannerActualizar();
+
+  // Sync en segundo plano con Sheets (no bloquea la UI)
+  if (usingSheets()) {
+    syncSheetsBackground().then(() => {
+      ocultarBannerActualizar();
+    });
+  }
 });
+
+function mostrarBannerActualizar() {
+  const banner = document.getElementById('banner-actualizar');
+  if (!banner) return;
+  const last = localStorage.getItem('lastSync');
+  if (usingSheets()) {
+    // Si tiene Sheets: mostrar "sincronizando..." y ocultar al terminar
+    banner.style.display = 'flex';
+    banner.innerHTML = `<span style="font-size:12px;color:var(--text2)">🔄 Sincronizando datos...</span>`;
+  } else {
+    // Sin Sheets: recordatorio de hacer backup
+    const lastBackup = localStorage.getItem('lastBackup');
+    if (!lastBackup) {
+      banner.style.display = 'flex';
+      banner.innerHTML = `<span style="font-size:12px;color:var(--text2)">💾 Sin backup reciente —</span>
+        <button onclick="exportarBackup();ocultarBannerActualizar()" style="font-size:12px;color:var(--accent2);background:none;border:none;cursor:pointer;font-weight:600;padding:0 4px">Hacer backup</button>
+        <button onclick="ocultarBannerActualizar()" style="font-size:12px;color:var(--text3);background:none;border:none;cursor:pointer;margin-left:4px">✕</button>`;
+    }
+  }
+}
+
+function ocultarBannerActualizar() {
+  const banner = document.getElementById('banner-actualizar');
+  if (banner) banner.style.display = 'none';
+  mostrarEstadoSync(true);
+}
