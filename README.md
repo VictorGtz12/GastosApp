@@ -1,126 +1,209 @@
-# Gastos Semanales — App Web
+# 💳 Gastos Semanales
 
-Control de gastos semanales con tarjetas, ahorros, externos y catálogos.
-
----
-
-## Archivos del proyecto
-
-| Archivo                  | Descripción                                        |
-|--------------------------|----------------------------------------------------|
-| `index.html`             | App completa (estructura + estilos)                |
-| `app.js`                 | Toda la lógica, datos y exportación Excel          |
-| `codigo-apps-script.gs`  | Backend para Google Sheets (base de datos)         |
-| `manifest.json`          | Para instalar como app en iPhone/Android           |
-| `sw.js`                  | Service worker (funciona sin internet)             |
+App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
 ---
 
-## Configuración inicial (Google Sheets)
+## ✨ Funcionalidades
 
-### Paso 1 — Crear el Google Sheet
-Ve a sheets.google.com y crea una hoja nueva.
-
-### Paso 2 — Pegar el Apps Script
-- Extensiones → Apps Script
-- Borra todo → pega el contenido de `codigo-apps-script.gs`
-- Guarda con Ctrl+S
-
-### Paso 3 — Publicar como API
-- Implementar → Nueva implementación
-- Tipo: Aplicación web
-- Ejecutar como: Yo / Acceso: Cualquier persona
-- Copia la URL generada
-
-### Paso 4 — Conectar la app
-En `app.js` línea 7, cambia:
-  const SCRIPT_URL = 'PEGA_AQUI_TU_URL_DE_APPS_SCRIPT';
-por tu URL real.
+- Registro de gastos por cuenta, motivo y fecha
+- Presupuesto semanal con barra de progreso
+- Cortes por tarjeta con períodos configurables
+- Cuentas de ahorro con abonos, retiros y traspasos
+- Servicios recurrentes con recordatorio de pago
+- Gastos externos (por cobrar / cobrados)
+- Historial y resumen mensual
+- Búsqueda global
+- Sincronización con GitHub (multi-dispositivo)
+- Modo oscuro / claro
+- Exportar a Excel y backup JSON
 
 ---
 
-## Opciones de hospedaje
+## 🚀 Instalación
 
-### Netlify (más fácil)
-1. app.netlify.com/drop → arrastra la carpeta completa
-2. Obtienes URL pública al instante
+### Opción A — GitHub Pages (recomendada, gratis)
 
-### GitHub Pages
-1. Crea repo público en github.com
-2. Sube todos los archivos
-3. Settings → Pages → Branch: main
+#### 1. Crea un repositorio en GitHub
 
-### iPhone — agregar al home screen
-1. Abre la URL en Safari
-2. Botón compartir → "Agregar a pantalla de inicio"
-3. Se instala como app nativa sin App Store
+1. Ve a [github.com](https://github.com) e inicia sesión (o crea una cuenta gratis)
+2. Clic en **+** → **New repository**
+3. Configura:
+   - **Repository name**: `GastosApp`
+   - **Visibility**: `Public` ⚠️ (requerido para GitHub Pages gratis)
+4. Clic en **Create repository**
 
----
+#### 2. Sube los archivos
 
-## Funcionalidades
+Desde la página del repo recién creado:
+1. Clic en **uploading an existing file**
+2. Arrastra o selecciona todos los archivos:
+   - `index.html`
+   - `app.js`
+   - `manifest.json`
+   - `sw.js`
+   - `icon-192.png`
+   - `icon-512.png`
+3. Clic en **Commit changes**
 
-**Gastos**
-- Registro por cuenta y motivo
-- Presupuesto semanal ($3,400.09)
-- Campos: Abonado, Externo, Ignorar (excluye del presupuesto)
-- Descontar directamente de una cuenta de ahorro
-- Corte semanal → mueve al historial
+#### 3. Activa GitHub Pages
 
-**Externos**
-- Vista separada de gastos del trabajo
-- Marcar como cobrado / pendiente
-- Total por cobrar visible en el menú
-
-**Cortes por Tarjeta**
-- Período activo con días restantes
-- Navegación ilimitada hacia atrás
-- Ajustar fecha por días inhábiles (excepción por período)
-- Botón para registrar nuevo período cuando vence
-
-**Ahorros**
-- Múltiples cuentas con meta
-- Abonar, retirar, traspasar entre cuentas
-- Saldo inicial al crear
-- Historial de movimientos
-
-**Catálogos**
-- Gestión de cuentas: nombre, color, día de corte
-- Gestión de motivos: agregar, editar, eliminar
-- Los selectores del formulario se actualizan en tiempo real
-
-**General**
-- Botón Actualizar para sincronizar sin recargar
-- Exportar Excel (Semana, Histórico, Externos, Ahorros)
-- Funciona sin internet (datos locales como caché)
-- Todo se guarda en Google Sheets automáticamente
+1. Ve a **Settings** en tu repo
+2. Menú izquierdo → **Pages**
+3. **Source**: `Deploy from a branch`
+4. **Branch**: `main` / `/ (root)`
+5. Clic en **Save**
+6. En 1-2 minutos tu app estará en:
+   ```
+   https://TU_USUARIO.github.io/GastosApp/
+   ```
 
 ---
 
-## Pestañas de Google Sheets generadas
+### Opción B — Netlify (más fácil, sin cuenta de GitHub)
 
-| Pestaña                | Contenido                        |
-|------------------------|----------------------------------|
-| Semana                 | Gastos de la semana actual       |
-| Historico              | Gastos de semanas anteriores     |
-| Ahorros_Cuentas        | Cuentas de ahorro                |
-| Ahorros_Movimientos    | Movimientos de cada cuenta       |
-| ExcepcionesCorte       | Fechas de corte ajustadas        |
-| Catalogo_Cuentas       | Catálogo de cuentas              |
-| Catalogo_Motivos       | Catálogo de motivos              |
+1. Ve a [app.netlify.com/drop](https://app.netlify.com/drop)
+2. Arrastra la carpeta completa del proyecto
+3. Obtienes una URL pública al instante
 
 ---
 
-## Configuración de cortes (predeterminada)
+### Opción C — Servidor propio o local
 
-| Tarjeta     | Día de corte |
-|-------------|-------------|
-| Banamex     | 3           |
-| Santander   | 4           |
-| HSBC        | 9           |
-| Amex        | 13          |
-| BBVA        | 21          |
-| MercadoPago | 21          |
-| Banorte     | 22          |
-| Débito      | Sin corte   |
+1. Copia todos los archivos a cualquier servidor web o carpeta local
+2. Abre `index.html` en el navegador
+3. La sincronización con GitHub funciona desde cualquier origen
 
-Puedes modificar estos días en Catálogos → Cuentas dentro de la app.
+---
+
+## 📱 Instalar como app en el celular
+
+### iPhone — Safari
+1. Abre la URL en **Safari** (no funciona con Chrome en iPhone)
+2. Toca el botón compartir **(□↑)**
+3. Selecciona **"Agregar a pantalla de inicio"**
+4. Toca **Agregar**
+
+### Android — Chrome
+1. Abre la URL en **Chrome**
+2. Toca el menú **(⋮)** → **"Agregar a pantalla de inicio"**
+3. O acepta el banner de instalación que aparece automáticamente
+
+---
+
+## 🔑 Sincronización con GitHub
+
+La sincronización permite usar la app en múltiples dispositivos con los mismos datos.
+
+### Paso 1 — Crear Personal Access Token
+
+1. En GitHub: foto de perfil → **Settings**
+2. Menú izquierdo → **Developer settings** → **Personal access tokens** → **Fine-grained tokens**
+3. Clic en **Generate new token**
+4. Configura:
+   - **Token name**: `GastosApp`
+   - **Expiration**: la duración que prefieras
+   - **Repository access**: `Only select repositories` → selecciona `GastosApp`
+   - **Permissions** → **Contents**: `Read and Write`
+5. Clic en **Generate token**
+6. **Copia el token** (empieza con `github_pat_...`) — solo se muestra una vez
+
+### Paso 2 — Configurar en la app
+
+1. En la app: **☰** → **GitHub Sync** → **Configurar token**
+2. Pega tu token → **Guardar**
+3. La app sincroniza automáticamente:
+   - Si GitHub tiene datos → los descarga
+   - Si GitHub está vacío → sube tus datos locales
+
+### Paso 3 — Otros dispositivos
+
+Repite el Paso 2 en cada dispositivo adicional. Los datos de GitHub tienen prioridad al configurar por primera vez.
+
+### Cómo funciona el sync
+
+| Evento | Acción |
+|--------|--------|
+| Abrir la app | Descarga cambios de GitHub en segundo plano |
+| Guardar un gasto | Aparece `⬆️ Sin subir` en el topbar |
+| Sincronizar ahora | Sube todos los cambios a GitHub |
+| Auto-sync | Cada 5 minutos sube cambios pendientes |
+| Sin internet | Guarda local, sube al reconectarse |
+
+---
+
+## ⚙️ Personalización inicial
+
+### Cambiar propietario del repositorio
+En `app.js` edita las líneas al inicio del archivo:
+```javascript
+const GITHUB_OWNER  = 'TU_USUARIO_GITHUB';
+const GITHUB_REPO   = 'TU_REPO';
+```
+
+### Cambiar presupuesto semanal
+En la app: **☰ → Ajustes → Presupuesto semanal**
+
+### Configurar cuentas y días de corte
+En la app: **☰ → Catálogos → Cuentas**
+
+### Cuentas y cortes predeterminados
+
+| Cuenta      | Día de corte |
+|-------------|:------------:|
+| Banamex     | 3            |
+| Santander   | 4            |
+| HSBC        | 12           |
+| Amex        | 13           |
+| BBVA        | 21           |
+| MercadoPago | 21           |
+| Banorte     | 25           |
+| Débito      | Sin corte    |
+
+---
+
+## 📁 Archivos del proyecto
+
+| Archivo          | Descripción                                |
+|------------------|--------------------------------------------|
+| `index.html`     | Estructura, estilos y modales de la app    |
+| `app.js`         | Toda la lógica y funcionalidades           |
+| `manifest.json`  | Configuración PWA para instalar como app   |
+| `sw.js`          | Service worker (funcionalidad offline)     |
+| `icon-192.png`   | Ícono 192×192 px                           |
+| `icon-512.png`   | Ícono 512×512 px                           |
+
+---
+
+## 💾 Respaldo de datos
+
+**Backup manual:** `☰ → Backup JSON` — descarga archivo `.json` con todos tus datos
+
+**Restaurar:** `☰ → Restaurar backup JSON` — carga un archivo de backup
+
+**Historial en GitHub:** cada sync guarda un commit en tu repo. Para ver versiones anteriores: repo → archivo `datos.json` → **History**
+
+**Exportar a Excel:** `☰ → Exportar Excel` — genera `.xlsx` con todas las pestañas
+
+---
+
+## ⚠️ Seguridad
+
+- El token de GitHub vive en `localStorage` de cada dispositivo — no se sube al código
+- Si limpias el caché del navegador, necesitas volver a pegar el token
+- El archivo `datos.json` en tu repo contiene todos tus datos — no compartas el repo con personas no autorizadas
+- **Nunca** pongas el token directamente en el código fuente si el repo es público
+
+---
+
+## 🛠️ Tecnologías utilizadas
+
+- HTML + CSS + JavaScript puro (sin frameworks ni dependencias)
+- `localStorage` para almacenamiento local
+- GitHub API para sincronización
+- SheetJS para exportación a Excel
+- Web App Manifest + Service Worker (PWA)
+
+---
+
+*Versión 2.1*
