@@ -222,6 +222,7 @@ async function uploadSnapshot() {
 
 async function downloadSnapshot() {
   if (!usingGithub()) return false;
+  if (syncBloqueado) { console.log("download bloqueado durante guardado"); return false; }
   try {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 15000);
@@ -348,6 +349,7 @@ function verificarPendientes()        { mostrarEstadoSync(true); }
 function iniciarAutoSync() {
   if (!usingGithub()) return;
   setInterval(async () => {
+    if (syncBloqueado) return;
     const lm = new Date(localStorage.getItem('localModified')||0).getTime();
     const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
     if (lm > ls + 3000) {
@@ -584,8 +586,8 @@ function renderMenu() {
 function renderGastos() {
   const q = (document.getElementById('search-in').value || '').toLowerCase();
   let list = gastos.filter(g => {
-    if (activeFilter === 'pendiente') return !g.abonado && !g.ignorar && g.externo === 'no';
-    if (activeFilter === 'abonado')   return g.abonado  && !g.ignorar && g.externo === 'no';
+    if (activeFilter === 'pendiente') return !g.abonado;
+    if (activeFilter === 'abonado')   return g.abonado;
     if (activeFilter === 'ignorar')   return g.ignorar;
     if (activeFilter === 'externo')   return g.externo !== 'no';
     return true;
@@ -960,7 +962,7 @@ function renderAhorros() {
         ondragstart="onAhorroDragStart(event,${c.id})" ondragend="onAhorroDragEnd(event)"
         ondragover="onAhorroDragOver(event)" ondragleave="onAhorroDragLeave(event)" ondrop="onAhorroDrop(event,${c.id})"
         ontouchstart="onAhorroTouchStart(event,${c.id})" ontouchmove="onAhorroTouchMove(event)" ontouchend="onAhorroTouchEnd(event,${c.id})"
-        style="cursor:grab;touch-action:none">
+        style="cursor:${dragModeActivo?'grab':'default'};touch-action:${dragModeActivo?'none':'auto'}">
         <div class="ahorro-header">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span class="ahorro-nombre">🐷 ${c.nombre}</span>
@@ -1193,8 +1195,9 @@ function refreshAhorroSelector() {
 }
 
 async function guardarGasto() {
+  syncBloqueado = true; // bloquear sync durante guardado
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
-  if (!cantidad||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!cantidad||cantidad<=0) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
 
   // Verificar saldo si se descuenta de ahorro
   let ahorroSelId = null, ahorroSelNombre = '';
@@ -1244,6 +1247,7 @@ async function guardarGasto() {
   }
 
 
+  syncBloqueado = false; // liberar sync
   resetForm(); editingId=null; showTab('gastos');
   showToast('Gasto guardado ✓');
 }
@@ -1906,6 +1910,20 @@ function ocultarAvisoDesactualizado() {
 
 // ── Drag & Drop para reordenar ahorros ───────────────────────
 let dragSrcId = null;
+let syncBloqueado = false;
+let dragModeActivo = false; // bloquea download durante guardar
+
+
+function toggleDragMode() {
+  dragModeActivo = !dragModeActivo;
+  const btn = document.getElementById('btn-drag-mode');
+  if (btn) {
+    btn.textContent = dragModeActivo ? '✅ Reordenando — toca para salir' : '↕️ Reordenar cuentas';
+    btn.style.background = dragModeActivo ? 'var(--accent)' : 'var(--bg3)';
+    btn.style.color = dragModeActivo ? 'white' : 'var(--text2)';
+  }
+  renderAhorros();
+}
 
 function onAhorroDragStart(e, id) {
   dragSrcId = id;
@@ -1946,6 +1964,7 @@ let touchDragId = null;
 let touchClone  = null;
 
 function onAhorroTouchStart(e, id) {
+  if (!dragModeActivo) return;
   touchDragId = id;
   const card = e.currentTarget;
   touchClone = card.cloneNode(true);
