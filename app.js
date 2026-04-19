@@ -88,7 +88,15 @@ let nextDeudaId = 1;
 // ── Utilidades ────────────────────────────────────────────────
 const fmt = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
-const fmtD = d => d instanceof Date ? d.toISOString().slice(0, 10) : d;
+const fmtD = d => {
+  if (!d) return '';
+  if (typeof d === 'string') return d.slice(0,10);
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0,10);
+  }
+  return String(d).slice(0,10);
+};
 
 function getWeek(d) {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -613,6 +621,7 @@ function calcularPeriodoCorte(cuenta, fechaGasto) {
   if (!cfg) return null; // cuenta sin corte (débito)
 
   const fecha = new Date(String(fechaGasto).slice(0,10) + 'T12:00:00');
+  if (isNaN(fecha.getTime())) return null; // fecha inválida
   const dia   = cfg.dia;
 
   // El período cierra el día "dia" de cada mes
@@ -710,7 +719,9 @@ function openCorteTarjeta(cuenta) {
   // Gastos sin periodoCorte — asignar dinámicamente
   const sinClave = all.filter(g => g.cuenta === cuenta && !g.periodoCorte);
   sinClave.forEach(g => {
-    const k = calcularPeriodoCorte(cuenta, g.fecha);
+    const fechaNorm = String(g.fecha || '').slice(0,10);
+    if (!fechaNorm) return;
+    const k = calcularPeriodoCorte(cuenta, fechaNorm);
     if (k && !keysConGastos.includes(k)) keysConGastos.push(k);
     g._periodoTemp = k;
   });
