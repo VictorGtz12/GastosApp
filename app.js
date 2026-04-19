@@ -235,9 +235,9 @@ function normalizeGasto(row) {
     externo:      row.Externo || row.externo || 'no',
     semana:       row.Semana || row.semana || getWeek(new Date()),
     ahorroDesc:   row.AhorroDesc || row.ahorroDesc || '',
-    periodoCorte: row.periodoCorte || null,
   };
-}(g) {
+}
+function gastoToSheets(g) {
   return {
     ID: g.id, Fecha: g.fecha, Cuenta: g.cuenta, Motivo: g.motivo,
     Cantidad: g.cantidad, Comentarios: g.comentarios || '',
