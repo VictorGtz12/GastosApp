@@ -994,7 +994,9 @@ function renderAhorros() {
   el.innerHTML = html;
   // Aplicar visibilidad después de renderizar tarjetas
   aplicarVisibilidadAhorros();
-}(id, tipo) {
+}
+
+function openMovAhorro(id, tipo) {
   movCuentaId = id; movMode = tipo;
   const c = cuentasAhorro.find(x=>x.id===id);
   document.getElementById('modal-ahorro-title').textContent = (tipo==='abono'?'Abonar a ':'Retirar de ')+c.nombre;
