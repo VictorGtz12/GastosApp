@@ -38,7 +38,8 @@ const HDR_CAT_COM = ['Comentario'];
 function doGet(e) {
   try {
     const a = (e.parameter || {}).action || 'getAll';
-    if (a === 'getAll') return json(getAllData());
+    if (a === 'getAll')          return json(getAllData());
+    if (a === 'getLastModified') return json(getLastModified());
     return json({ error: 'Accion no reconocida' });
   } catch (err) { return json({ error: err.message }); }
 }
@@ -371,6 +372,7 @@ function saveMeta(data) {
     ['presupuesto',  JSON.stringify(data.presupuesto   || 3400.09)],
     ['nextRecId',    JSON.stringify(data.nextRecId     || 1)],
     ['nextDeudaId',  JSON.stringify(data.nextDeudaId   || 1)],
+    ['lastModified', JSON.stringify(data.lastModified || new Date().toISOString())],
   ];
   // También guardar excepciones aquí si vienen
   if (data.excepciones) entries.push(['excepciones', JSON.stringify(data.excepciones)]);
@@ -384,4 +386,11 @@ function saveMeta(data) {
   }
   entries.forEach(e => sh.appendRow(e));
   return { ok: true };
+}
+
+// ── LAST MODIFIED ─────────────────────────────────────────────
+function getLastModified() {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const meta = readMeta(ss);
+  return { lastModified: meta.lastModified || null };
 }

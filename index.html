@@ -266,6 +266,15 @@
 
   <!-- MENÚ -->
   <div class="content active" id="content-menu">
+    <!-- Banner datos desactualizados -->
+    <div id="banner-desactualizado" style="display:none;background:rgba(255,159,67,.12);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--orange)">⚠️ Hay cambios sin sincronizar</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">Otro dispositivo guardó datos más recientes</div>
+      </div>
+      <button onclick="refreshData()" style="padding:7px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Actualizar</button>
+    </div>
+
     <!-- Banner cortes próximos -->
     <div id="banner-cortes" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px">
       <div style="font-size:10px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">⚠️ Cortes próximos</div>

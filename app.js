@@ -162,12 +162,15 @@ async function syncSheetsBackground() {
     console.log('Sheets sync OK — gastos:', result.semana?.length, 'histórico:', result.historico?.length);
     applySheetData(result);
     saveLocal();
+    // Guardar el lastModified que viene de Sheets
+    if (result.lastModified) localStorage.setItem('lastModified', result.lastModified);
+    localStorage.setItem('lastSync', new Date().toISOString());
     actualizarSelectCuentas();
     actualizarSelectMotivos();
     const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
     showTab(tab);
-    localStorage.setItem('lastSync', new Date().toISOString());
     mostrarEstadoSync(true);
+    ocultarAvisoDesactualizado();
     return true;
   } catch(e) {
     console.error('Sync Sheets error:', e.message);
@@ -361,8 +364,8 @@ function saveData(opts = {}) {
   saveLocal();
   if (!usingSheets()) return;
   // Gastos individuales
-  if (opts.gasto)       saveGastoSheets(opts.gasto, opts.accion || 'addGasto');
-  if (opts.ahorros)     saveAhorrosSheets();
+  if (opts.gasto)       { saveGastoSheets(opts.gasto, opts.accion || 'addGasto'); marcarModificacion(); }
+  if (opts.ahorros)     { saveAhorrosSheets(); marcarModificacion(); }
   // Datos que se guardan como bloque completo
   if (opts.excepciones || opts.catalogos || opts.recurrentes || opts.deudas || opts.presupuesto) {
     saveMetaSheets();
@@ -372,6 +375,8 @@ function saveData(opts = {}) {
 // Guarda metadatos completos en Sheets (una sola llamada)
 function saveMetaSheets() {
   if (!usingSheets()) return;
+  const lastModified = new Date().toISOString();
+  localStorage.setItem('lastModified', lastModified);
   apiPost('saveMeta', {
     excepciones,
     catalogos: { cuentas: catalogoCuentas, motivos: catalogoMotivos, comentarios: catalogoComentarios },
@@ -379,8 +384,16 @@ function saveMetaSheets() {
     deudas,
     nextRecId,
     nextDeudaId,
-    presupuesto: PRESUPUESTO
+    presupuesto: PRESUPUESTO,
+    lastModified
   }).catch(e => console.warn('saveMeta error:', e));
+}
+
+// También guardar timestamp cuando se guarda un gasto o ahorro
+function marcarModificacion() {
+  const ts = new Date().toISOString();
+  localStorage.setItem('lastModified', ts);
+  if (usingSheets()) apiPost('saveMeta', { lastModified: ts }).catch(()=>{});
 }
 
 // Carga datos y muestra la app
@@ -1755,6 +1768,45 @@ function verificarRecurrentesProximos() {
   }
 }
 
+
+// ── Detección de datos desactualizados ───────────────────────
+async function verificarDesactualizado() {
+  if (!usingSheets()) return false;
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 5000);
+    const res    = await fetch(`${SCRIPT_URL}?action=getLastModified`, { signal: controller.signal, redirect: 'follow' });
+    const result = await res.json();
+    if (!result.lastModified) return false;
+    const remoto = new Date(result.lastModified).getTime();
+    const local  = new Date(localStorage.getItem('lastSync') || 0).getTime();
+    return remoto > local + 5000; // más de 5s de diferencia
+  } catch(e) {
+    return false;
+  }
+}
+
+function mostrarAvisoDesactualizado() {
+  const status = document.getElementById('sync-status');
+  if (status) {
+    status.style.display = 'inline';
+    status.textContent = '⚠️ Datos desactualizados';
+    status.style.color = 'var(--orange)';
+    status.style.cursor = 'pointer';
+    status.onclick = () => refreshData();
+  }
+  // Banner prominente en el menú
+  const banner = document.getElementById('banner-desactualizado');
+  if (banner) banner.style.display = 'flex';
+}
+
+function ocultarAvisoDesactualizado() {
+  const banner = document.getElementById('banner-desactualizado');
+  if (banner) banner.style.display = 'none';
+  const status = document.getElementById('sync-status');
+  if (status) status.style.cursor = '';
+}
+
 // ── Catálogos ─────────────────────────────────────────────────
 // Sub-tab activo: 'cuentas' | 'motivos'
 let catalogoTab = 'cuentas';
@@ -2062,8 +2114,15 @@ window.addEventListener('DOMContentLoaded', () => {
   // Sync en segundo plano con Sheets (no bloquea la UI)
   console.log('usingSheets:', usingSheets(), '| URL:', SCRIPT_URL.slice(0,50)+'...');
   if (usingSheets()) {
-    syncSheetsBackground().then(() => {
-      ocultarBannerActualizar();
+    // Primero revisar si hay cambios en Sheets antes de aplicar
+    verificarDesactualizado().then(desact => {
+      if (desact) {
+        mostrarAvisoDesactualizado();
+      }
+      // Sync en segundo plano siempre
+      syncSheetsBackground().then(() => {
+        ocultarBannerActualizar();
+      });
     });
   }
 });
