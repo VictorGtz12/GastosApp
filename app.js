@@ -963,11 +963,11 @@ function renderAhorros() {
       const pct = c.meta ? Math.min(100, Math.round(s/c.meta*100)) : 0;
       const ult = c.movimientos.slice(-3).reverse();
       const excluida = !!c.excluirTotal;
-      html += `<div class="ahorro-card" data-id="${c.id}" draggable="true"
+      html += `<div class="ahorro-card" data-id="${c.id}" draggable="${dragModeActivo}"
         ondragstart="onAhorroDragStart(event,${c.id})" ondragend="onAhorroDragEnd(event)"
         ondragover="onAhorroDragOver(event)" ondragleave="onAhorroDragLeave(event)" ondrop="onAhorroDrop(event,${c.id})"
         ontouchstart="onAhorroTouchStart(event,${c.id})" ontouchmove="onAhorroTouchMove(event)" ontouchend="onAhorroTouchEnd(event,${c.id})"
-        style="cursor:${dragModeActivo?'grab':'default'};touch-action:${dragModeActivo?'none':'auto'}">
+        style="cursor:${dragModeActivo?'grab':'default'};touch-action:${dragModeActivo?'none':'auto'};user-select:${dragModeActivo?'none':'auto'}">
         <div class="ahorro-header">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span class="ahorro-nombre">🐷 ${c.nombre}</span>
@@ -1950,6 +1950,7 @@ function toggleDragMode() {
 }
 
 function onAhorroDragStart(e, id) {
+  if (!dragModeActivo) { e.preventDefault(); return; }
   dragSrcId = id;
   e.dataTransfer.effectAllowed = 'move';
   e.currentTarget.style.opacity = '0.5';
