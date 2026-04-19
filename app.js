@@ -1415,7 +1415,7 @@ function showToast(msg) {
 // Exportar todo como archivo JSON de backup
 function exportarBackup() {
   const data = {
-    version: 1, fecha: today(),
+    version: 2, savedAt: new Date().toISOString(), fecha: today(),
     gastos, historico, nextId, nextAhorroId,
     cuentasAhorro, excepciones,
     catalogoCuentas, catalogoMotivos, catalogoComentarios,
@@ -1435,7 +1435,7 @@ function exportarBackup() {
 // Importar backup JSON
 function importarBackup() {
   const input = document.createElement('input');
-  input.type  = 'file';
+  input.type   = 'file';
   input.accept = '.json';
   input.onchange = async e => {
     const file = e.target.files[0];
@@ -1444,23 +1444,41 @@ function importarBackup() {
       const text = await file.text();
       const data = JSON.parse(text);
       if (!data.gastos && !data.historico) throw new Error('Formato inválido');
-      if (!confirm('¿Reemplazar todos los datos con este backup?')) return;
-      if (data.gastos)              gastos            = data.gastos.map(normGasto);
-      if (data.historico)           historico         = data.historico.map(normGasto);
-      if (data.nextId)              nextId            = data.nextId;
-      if (data.nextAhorroId)        nextAhorroId      = data.nextAhorroId;
-      if (data.excepciones)         excepciones       = data.excepciones;
-      if (data.catalogoCuentas)     catalogoCuentas   = data.catalogoCuentas;
-      if (data.catalogoMotivos)     catalogoMotivos   = data.catalogoMotivos;
-      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === "string" ? c : (c.nombre || c.Nombre || "")).filter(Boolean);
-      if (data.cuentasAhorro)       cuentasAhorro     = data.cuentasAhorro.map(normAhorro);
-      saveLocal();
-      actualizarSelectCuentas(); actualizarSelectMotivos();
-      showTab('menu');
-      showToast('Backup restaurado ✓');
-    } catch(e) { showToast('Error al leer el archivo'); }
+      // Guardar datos para confirmar en modal
+      window._backupPendiente = data;
+      // Mostrar modal de confirmación en vez de confirm()
+      const info = `${data.gastos?.length||0} gastos, ${data.historico?.length||0} historial, ${data.cuentasAhorro?.length||0} ahorros`;
+      document.getElementById('backup-confirm-info').textContent = info;
+      openModal('modal-backup-confirm');
+    } catch(e) { showToast('Error al leer el archivo: ' + e.message); }
   };
   input.click();
+}
+
+function confirmarRestaurarBackup() {
+  const data = window._backupPendiente;
+  if (!data) return;
+  if (data.gastos)              gastos              = data.gastos.map(normGasto);
+  if (data.historico)           historico           = data.historico.map(normGasto);
+  if (data.nextId)              nextId              = data.nextId;
+  if (data.nextAhorroId)        nextAhorroId        = data.nextAhorroId;
+  if (data.excepciones)         excepciones         = data.excepciones       || [];
+  if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
+  if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
+  if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
+  if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
+  if (data.recurrentes)         recurrentes         = data.recurrentes       || [];
+  if (data.nextRecId)           nextRecId           = data.nextRecId         || 1;
+  if (data.deudas)              deudas              = data.deudas            || [];
+  if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId       || 1;
+  if (data.presupuesto)         PRESUPUESTO         = data.presupuesto;
+  saveLocal();
+  actualizarSelectCuentas(); actualizarSelectMotivos();
+  closeModal('modal-backup-confirm');
+  window._backupPendiente = null;
+  showTab('menu');
+  renderMenu();
+  showToast('Backup restaurado ✓');
 }
 
 // Exportar backup a Excel (además del JSON)
@@ -1920,13 +1938,15 @@ let dragModeActivo = false; // bloquea download durante guardar
 
 function toggleDragMode() {
   dragModeActivo = !dragModeActivo;
+  renderAhorros();
+  // Actualizar botón DESPUÉS de renderAhorros (que no lo toca)
   const btn = document.getElementById('btn-drag-mode');
   if (btn) {
-    btn.textContent = dragModeActivo ? '✅ Reordenando — toca para salir' : '↕️ Reordenar cuentas';
+    btn.textContent   = dragModeActivo ? '✅ Reordenando — toca para salir' : '↕️ Reordenar cuentas';
     btn.style.background = dragModeActivo ? 'var(--accent)' : 'var(--bg3)';
-    btn.style.color = dragModeActivo ? 'white' : 'var(--text2)';
+    btn.style.color   = dragModeActivo ? 'white' : 'var(--text2)';
+    btn.style.border  = dragModeActivo ? 'none' : '1px solid var(--border2)';
   }
-  renderAhorros();
 }
 
 function onAhorroDragStart(e, id) {
@@ -2014,6 +2034,19 @@ function gastoPendienteSync(g) {
   const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
   return new Date(g.updatedAt).getTime() > lastSync;
 }
+
+// ── Modal de confirmación genérico (reemplaza confirm()) ──────
+function modalConfirmar(mensaje, onSi) {
+  document.getElementById('modal-confirmar-msg').textContent = mensaje;
+  window._confirmarCallback = onSi;
+  openModal('modal-confirmar');
+}
+function _confirmarSi() {
+  closeModal('modal-confirmar');
+  if (typeof window._confirmarCallback === 'function') window._confirmarCallback();
+  window._confirmarCallback = null;
+}
+
 // ── Catálogos ─────────────────────────────────────────────────
 // Sub-tab activo: 'cuentas' | 'motivos'
 let catalogoTab = 'cuentas';

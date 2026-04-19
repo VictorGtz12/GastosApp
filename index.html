@@ -638,6 +638,20 @@
   </div>
 </div>
 
+<!-- MODAL: Confirmar restaurar backup -->
+<div class="overlay" id="modal-backup-confirm">
+  <div class="modal">
+    <h2>📂 Restaurar backup</h2>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:8px">Se reemplazarán <strong>todos</strong> los datos actuales con:</p>
+    <p id="backup-confirm-info" style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:16px"></p>
+    <p style="font-size:12px;color:var(--orange)">⚠️ Esta acción no se puede deshacer</p>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-backup-confirm')">Cancelar</button>
+      <button class="mbtn prim" onclick="confirmarRestaurarBackup()">Restaurar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: GitHub Token -->
 <div class="overlay" id="modal-github-token">
   <div class="modal">
