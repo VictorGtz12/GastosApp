@@ -2314,23 +2314,21 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('main-app').style.display = 'block';
   actualizarSelectCuentas();
   actualizarSelectMotivos();
+  // Inicializar fecha
+  const fechaEl = document.getElementById('f-fecha');
+  if (fechaEl) fechaEl.value = new Date().toISOString().slice(0,10);
+  aplicarTema(localStorage.getItem('tema') || 'oscuro');
+  // Renderizar menú con datos locales INMEDIATAMENTE
   showTab('menu');
+  renderMenu();
   document.addEventListener('click', cerrarDropdownComentario);
-  // Service worker desactivado
-  // if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
-
-  // Mostrar banner de recordatorio de actualizar
+  iniciarAutoSync();
   mostrarBannerActualizar();
-
-  // Al abrir: descarga snapshot de Sheets en segundo plano (no sube)
-  console.log('usingGithub:', usingGithub());
-  mostrarBannerActualizar();
-  if (usingSheets()) {
+  // Sync con GitHub en segundo plano
+  if (usingGithub()) {
     downloadSnapshot().then(ok => {
-      if (ok) {
-        actualizarSelectCuentas(); actualizarSelectMotivos();
-        showTab('menu');
-      }
+      // Siempre re-renderizar menú después del sync (con o sin cambios)
+      renderMenu();
       mostrarEstadoSync(ok);
     });
   } else {
