@@ -240,6 +240,11 @@ async function downloadSnapshot() {
       const dlTs = new Date().toISOString();
       localStorage.setItem('lastSync', dlTs);
       localStorage.setItem('localModified', dlTs);
+      // Re-renderizar menú y selects con datos frescos
+      actualizarSelectCuentas();
+      actualizarSelectMotivos();
+      const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+      showTab(tabActual);
     }
     return ok;
   } catch(e) { console.warn('download error:', e.message); return false; }
