@@ -99,9 +99,10 @@ function getWeek(d) {
 }
 
 // ── Google Sheets API ─────────────────────────────────────────
-// Pega tu URL de Apps Script aquí para sincronización multi-dispositivo
-const SCRIPT_URL = localStorage.getItem('sheetsUrl') || '';
-const usingSheets = () => !!SCRIPT_URL;
+// URL por defecto — todos los dispositivos usarán esta automáticamente
+const SCRIPT_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbyTA1gjKpDoooomuXR_W_pzLDNjeXJEAQXtXX1q6zvptRPVZHUWU5v0k5-WevcMZjhm/exec';
+const SCRIPT_URL = localStorage.getItem('sheetsUrl') || SCRIPT_URL_DEFAULT;
+const usingSheets = () => SCRIPT_URL !== 'https://script.google.com/macros/s/AKfycbyTA1gjKpDoooomuXR_W_pzLDNjeXJEAQXtXX1q6zvptRPVZHUWU5v0k5-WevcMZjhm/exec' && !!SCRIPT_URL;
 
 async function apiGet(action) {
   const res = await fetch(`${SCRIPT_URL}?action=${action}`);
