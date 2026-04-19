@@ -117,7 +117,7 @@ const GITHUB_REPO   = 'GastosApp';
 const GITHUB_FILE   = 'datos.json';
 const GITHUB_BRANCH = 'main';
 
-function getGithubToken() { return localStorage.getItem('githubToken') || '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'; }
+function getGithubToken() { return localStorage.getItem('githubToken') || ''; }
 function usingGithub()    { return !!getGithubToken(); }
 // Alias para compatibilidad con código existente
 const usingSheets = usingGithub;
