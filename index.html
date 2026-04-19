@@ -638,6 +638,18 @@
   </div>
 </div>
 
+<!-- MODAL: Historial de ahorro -->
+<div class="overlay" id="modal-hist-ahorro">
+  <div class="modal" style="max-height:85vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h2 id="hist-ahorro-titulo" style="margin:0"></h2>
+      <button onclick="closeModal('modal-hist-ahorro')" style="background:transparent;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:4px">✕</button>
+    </div>
+    <div id="hist-ahorro-saldo" style="font-size:13px;color:var(--accent2);font-weight:600;margin-bottom:12px"></div>
+    <div id="hist-ahorro-lista" style="overflow-y:auto;flex:1;min-height:0"></div>
+  </div>
+</div>
+
 <!-- MODAL: Confirmar restaurar backup -->
 <div class="overlay" id="modal-backup-confirm">
   <div class="modal">

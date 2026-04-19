@@ -987,6 +987,7 @@ function renderAhorros() {
           <button class="btn-abonar" onclick="openMovAhorro(${c.id},'abono')">+ Abonar</button>
           <button class="btn-retirar" onclick="openMovAhorro(${c.id},'retiro')">− Retirar</button>
           ${tieneOtras?`<button class="btn-retirar" onclick="openTraspaso(${c.id})" style="flex:none;padding:8px 12px;color:var(--green);border-color:var(--green)">⇄</button>`:''}
+          <button class="btn-retirar" onclick="verHistorialAhorro(${c.id})" style="flex:none;padding:8px 12px;color:var(--accent2);border-color:var(--accent2)" title="Ver historial">📋</button>
           <button class="btn-retirar" onclick="editarCuentaAhorro(${c.id})" style="flex:none;padding:8px 12px;color:var(--text2)">✏️</button>
           <button class="btn-retirar" onclick="eliminarCuenta(${c.id})" style="flex:none;padding:8px 12px;color:var(--red);border-color:var(--red)">🗑</button>
         </div>
@@ -996,6 +997,51 @@ function renderAhorros() {
   el.innerHTML = html;
   // Aplicar visibilidad después de renderizar tarjetas
   aplicarVisibilidadAhorros();
+}
+
+function verHistorialAhorro(id) {
+  const c = cuentasAhorro.find(x => x.id === id);
+  if (!c) return;
+  const movs = [...c.movimientos].reverse(); // más reciente primero
+  const saldoFinal = saldoCuenta(c);
+
+  // Calcular saldo acumulado por movimiento
+  let saldoAcum = 0;
+  const movsConSaldo = [...c.movimientos].map(m => {
+    const pos = m.tipo === 'abono' || m.tipo === 'traspaso-in';
+    saldoAcum += pos ? m.cantidad : -m.cantidad;
+    return { ...m, saldoAcum };
+  }).reverse();
+
+  const tipoLabel = m => {
+    if (m.tipo === 'abono')       return { label:'Abono',    color:'var(--green)' };
+    if (m.tipo === 'retiro')      return { label:'Retiro',   color:'var(--red)' };
+    if (m.tipo === 'traspaso-in') return { label:'Entrada',  color:'var(--green)' };
+    if (m.tipo === 'traspaso-out')return { label:'Salida',   color:'var(--orange)' };
+    return { label: m.tipo, color: 'var(--text2)' };
+  };
+
+  document.getElementById('hist-ahorro-titulo').textContent = `📋 ${c.nombre}`;
+  document.getElementById('hist-ahorro-saldo').textContent  = `Saldo actual: ${fmt(saldoFinal)}`;
+  document.getElementById('hist-ahorro-lista').innerHTML = movsConSaldo.length
+    ? movsConSaldo.map(m => {
+        const { label, color } = tipoLabel(m);
+        const pos = m.tipo === 'abono' || m.tipo === 'traspaso-in';
+        const nota = m.nota || m.tipo;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:${color}">${label}</div>
+            <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.fecha}${nota?' · '+nota:''}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:14px;font-weight:700;color:${color}">${pos?'+':'-'}${fmt(m.cantidad)}</div>
+            <div style="font-size:10px;color:var(--text3)">${fmt(m.saldoAcum)}</div>
+          </div>
+        </div>`;
+      }).join('')
+    : '<div class="empty">Sin movimientos registrados</div>';
+
+  openModal('modal-hist-ahorro');
 }
 
 function openMovAhorro(id, tipo) {
