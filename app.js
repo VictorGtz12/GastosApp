@@ -1704,6 +1704,24 @@ function desmarcarPagado(i) {
 }
 
 
+function registrarRecurrente(i) {
+  const r = recurrentes[i];
+  if (!r) return;
+  // Marcar como pagado este mes
+  const hoy = new Date();
+  r.ultimoPago = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+  saveLocal();
+  // Pre-llenar formulario de nuevo gasto
+  showTab('nuevo');
+  setTimeout(() => {
+    document.getElementById('f-cuenta').value            = r.cuenta;
+    document.getElementById('f-motivo').value             = r.motivo;
+    document.getElementById('f-cantidad').value           = r.cantidad;
+    document.getElementById('f-comentarios-input').value  = r.nombre;
+    setAb(false); setIg(false); setExt('no');
+  }, 50);
+}
+
 function abrirNuevoRecurrente() {
   window._editRecIdx = null;
   document.getElementById('rec-nombre').value    = '';
