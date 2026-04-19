@@ -2122,7 +2122,9 @@ window.addEventListener('DOMContentLoaded', () => {
     downloadSnapshot().then(ok => {
       if (ok) {
         actualizarSelectCuentas(); actualizarSelectMotivos();
-        showTab('menu');
+        // Al abrir siempre va al menú — en sync manual ya se maneja en refreshData
+        const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+        showTab(tabActual);
       }
       mostrarEstadoSync(ok);
     });
