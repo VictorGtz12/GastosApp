@@ -2008,7 +2008,7 @@ function toggleAhorroVisible() {
 window.addEventListener('DOMContentLoaded', () => {
   try { loadFromLocal(); } catch(e) { console.error('Error cargando datos:', e); }
   document.getElementById('loading').style.display = 'none';
-  document.getElementById('main-app').style.display = 'flex';
+  document.getElementById('main-app').style.display = 'block';
   actualizarSelectCuentas();
   actualizarSelectMotivos();
   showTab('menu');
