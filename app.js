@@ -254,6 +254,9 @@ async function refreshData() {
     showToast('Vista actualizada ✓'); return;
   }
   const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+  // Ocultar banner inmediatamente al iniciar sync
+  const bp = document.getElementById('banner-pendientes');
+  if (bp) bp.style.display = 'none';
   mostrarBannerActualizar();
   showToast('Subiendo datos...');
   const up = await uploadSnapshot();

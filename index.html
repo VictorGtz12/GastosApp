@@ -259,6 +259,15 @@
     </div>
   </div>
 
+  <!-- Banner global pendientes — visible en todas las pantallas -->
+  <div id="banner-pendientes" style="display:none;position:fixed;bottom:calc(90px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:calc(100% - 32px);max-width:448px;background:rgba(30,20,0,.95);border:1px solid var(--orange);border-radius:12px;padding:10px 14px;align-items:center;justify-content:space-between;gap:8px;z-index:95;backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(255,159,67,.3)">
+    <div>
+      <div style="font-size:12px;font-weight:600;color:var(--orange)">⬆️ Cambios sin subir</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:1px">Toca para sincronizar con GitHub</div>
+    </div>
+    <button onclick="refreshData()" style="padding:6px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Sincronizar</button>
+  </div>
+
   <button class="fab" onclick="showTab('nuevo')" title="Nuevo gasto">+</button>
 
   <!-- MENÚ -->
@@ -270,15 +279,6 @@
         <div style="font-size:11px;color:var(--text2);margin-top:2px">Otro dispositivo guardó datos más recientes</div>
       </div>
       <button onclick="refreshData()" style="padding:7px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Actualizar</button>
-    </div>
-
-    <!-- Banner cambios pendientes de subir -->
-    <div id="banner-pendientes" style="display:none;background:rgba(255,159,67,.12);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px">
-      <div>
-        <div style="font-size:12px;font-weight:600;color:var(--orange)">⬆️ Tienes cambios sin subir</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">Toca Sincronizar para guardar en Sheets</div>
-      </div>
-      <button onclick="refreshData()" style="padding:7px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Sincronizar</button>
     </div>
 
     <!-- Banner cortes próximos -->
