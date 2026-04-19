@@ -120,8 +120,8 @@ async function apiPost(action, data) {
 // Aplica datos de Sheets sobre el estado actual
 function applySheetData(result) {
   if (!result) return;
-  if (result.semana)    gastos    = (result.semana    || []).map(normalizeGasto);
-  if (result.historico) historico = (result.historico || []).map(normalizeGasto);
+  if (result.semana)      gastos      = (result.semana    || []).map(normalizeGasto);
+  if (result.historico)   historico   = (result.historico || []).map(normalizeGasto);
   if (result.excepciones) excepciones = result.excepciones || [];
   if (result.ahorros && result.ahorros.length) {
     cuentasAhorro = result.ahorros.map(normAhorro);
@@ -135,6 +135,11 @@ function applySheetData(result) {
     if (result.catalogos.motivos?.length)     catalogoMotivos     = result.catalogos.motivos;
     if (result.catalogos.comentarios?.length) catalogoComentarios = result.catalogos.comentarios.map(c=>typeof c==='string'?c:(c.nombre||''));
   }
+  if (result.recurrentes)   recurrentes   = result.recurrentes   || [];
+  if (result.deudas)        deudas        = result.deudas        || [];
+  if (result.presupuesto)   PRESUPUESTO   = Number(result.presupuesto) || PRESUPUESTO;
+  if (result.nextRecId)     nextRecId     = result.nextRecId;
+  if (result.nextDeudaId)   nextDeudaId   = result.nextDeudaId;
 }
 
 // Sync en segundo plano — no bloquea la UI
@@ -354,9 +359,28 @@ function normAhorro(c) {
 // ── saveData ─────────────────────────────────────────────────
 function saveData(opts = {}) {
   saveLocal();
-  // Sincronizar con Sheets en segundo plano si está configurado
-  if (usingSheets() && opts.gasto)   saveGastoSheets(opts.gasto, opts.accion || 'addGasto');
-  if (usingSheets() && opts.ahorros) saveAhorrosSheets();
+  if (!usingSheets()) return;
+  // Gastos individuales
+  if (opts.gasto)       saveGastoSheets(opts.gasto, opts.accion || 'addGasto');
+  if (opts.ahorros)     saveAhorrosSheets();
+  // Datos que se guardan como bloque completo
+  if (opts.excepciones || opts.catalogos || opts.recurrentes || opts.deudas || opts.presupuesto) {
+    saveMetaSheets();
+  }
+}
+
+// Guarda metadatos completos en Sheets (una sola llamada)
+function saveMetaSheets() {
+  if (!usingSheets()) return;
+  apiPost('saveMeta', {
+    excepciones,
+    catalogos: { cuentas: catalogoCuentas, motivos: catalogoMotivos, comentarios: catalogoComentarios },
+    recurrentes,
+    deudas,
+    nextRecId,
+    nextDeudaId,
+    presupuesto: PRESUPUESTO
+  }).catch(e => console.warn('saveMeta error:', e));
 }
 
 // Carga datos y muestra la app
@@ -1425,6 +1449,7 @@ function guardarAjustes() {
   if (!val || val <= 0) { showToast('Ingresa un presupuesto válido'); return; }
   PRESUPUESTO = val;
   saveLocal();
+  saveMetaSheets();
   closeModal('modal-ajustes');
   renderMenu();
   showToast('Presupuesto actualizado ✓');
@@ -1574,6 +1599,7 @@ function guardarRecurrente() {
     recurrentes.push(obj);
   }
   saveLocal();
+  saveMetaSheets();
   closeModal('modal-rec-servicio');
   showToast('Servicio guardado ✓');
   renderServicios();
@@ -1583,6 +1609,7 @@ function eliminarRecurrente(i) {
   if (!confirm(`¿Eliminar "${recurrentes[i].nombre}"?`)) return;
   recurrentes.splice(i, 1);
   saveLocal();
+  saveMetaSheets();
   renderServicios();
   showToast('Servicio eliminado');
 }
@@ -1693,6 +1720,7 @@ function guardarDeuda() {
     deudas.push(obj);
   }
   saveLocal();
+  saveMetaSheets();
   closeModal('modal-deuda');
   showToast('Deuda guardada ✓');
   renderDeudas();
@@ -1702,6 +1730,7 @@ function eliminarDeuda(i) {
   if (!confirm(`¿Eliminar deuda "${deudas[i].nombre}"?`)) return;
   deudas.splice(i, 1);
   saveLocal();
+  saveMetaSheets();
   renderDeudas();
   showToast('Deuda eliminada');
 }
@@ -1805,7 +1834,8 @@ async function guardarCuenta_cat() {
     }
     catalogoCuentas.push(obj);
   }
-  await saveData();
+  saveLocal();
+  saveMetaSheets();
   closeModal('modal-cat-cuenta');
   showToast('Cuenta guardada ✓');
   renderCatCuentas();
@@ -1867,7 +1897,8 @@ async function guardarMotivo_cat() {
     }
     catalogoMotivos.push(nombre);
   }
-  await saveData();
+  saveLocal();
+  saveMetaSheets();
   closeModal('modal-cat-motivo');
   showToast('Motivo guardado ✓');
   renderCatMotivos();
@@ -1968,7 +1999,8 @@ async function guardarComentario_cat() {
     }
     catalogoComentarios.push(nombre);
   }
-  await saveData();
+  saveLocal();
+  saveMetaSheets();
   closeModal('modal-cat-comentario');
   showToast('Comentario guardado ✓');
   renderCatComentarios();
@@ -2037,27 +2069,37 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 function mostrarBannerActualizar() {
-  const banner = document.getElementById('banner-actualizar');
-  if (!banner) return;
-  const last = localStorage.getItem('lastSync');
-  if (usingSheets()) {
-    // Si tiene Sheets: mostrar "sincronizando..." y ocultar al terminar
-    banner.style.display = 'flex';
-    banner.innerHTML = `<span style="font-size:12px;color:var(--text2)">🔄 Sincronizando datos...</span>`;
-  } else {
-    // Sin Sheets: recordatorio de hacer backup
-    const lastBackup = localStorage.getItem('lastBackup');
-    if (!lastBackup) {
-      banner.style.display = 'flex';
-      banner.innerHTML = `<span style="font-size:12px;color:var(--text2)">💾 Sin backup reciente —</span>
-        <button onclick="exportarBackup();ocultarBannerActualizar()" style="font-size:12px;color:var(--accent2);background:none;border:none;cursor:pointer;font-weight:600;padding:0 4px">Hacer backup</button>
-        <button onclick="ocultarBannerActualizar()" style="font-size:12px;color:var(--text3);background:none;border:none;cursor:pointer;margin-left:4px">✕</button>`;
+  // Usar sync-status en topbar en vez de banner que ocupa espacio
+  const status = document.getElementById('sync-status');
+  if (status) {
+    status.style.display = 'inline';
+    if (usingSheets()) {
+      status.textContent = '🔄 Sync...';
+      status.style.color = 'var(--text3)';
+    } else {
+      const lastBackup = localStorage.getItem('lastBackup');
+      if (!lastBackup) {
+        status.textContent = '💾 Sin backup';
+        status.style.color = 'var(--orange)';
+      }
     }
   }
+  // Ocultar el banner de abajo (no usarlo para no afectar layout)
+  const banner = document.getElementById('banner-actualizar');
+  if (banner) banner.style.display = 'none';
 }
 
 function ocultarBannerActualizar() {
   const banner = document.getElementById('banner-actualizar');
   if (banner) banner.style.display = 'none';
   mostrarEstadoSync(true);
+  // Mostrar hora de sync en topbar
+  const last = localStorage.getItem('lastSync');
+  const status = document.getElementById('sync-status');
+  if (status && last) {
+    const d = new Date(last);
+    status.style.display = 'inline';
+    status.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
+    status.style.color = 'var(--green)';
+  }
 }

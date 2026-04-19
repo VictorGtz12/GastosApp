@@ -12,15 +12,18 @@
 // ════════════════════════════════════════════════════════════
 
 const SHEET = {
-  SEMANA:       'Semana',
-  HISTORICO:    'Historico',
-  AH_CUENTAS:  'Ahorros_Cuentas',
-  AH_MOVS:     'Ahorros_Movimientos',
-  EXCEPCIONES:  'ExcepcionesCorte',
-  CAT_CUENTAS:  'Catalogo_Cuentas',
+  SEMANA:          'Semana',
+  HISTORICO:       'Historico',
+  AH_CUENTAS:     'Ahorros_Cuentas',
+  AH_MOVS:        'Ahorros_Movimientos',
+  EXCEPCIONES:     'ExcepcionesCorte',
+  CAT_CUENTAS:     'Catalogo_Cuentas',
   CAT_MOTIVOS:     'Catalogo_Motivos',
   CAT_COMENTARIOS: 'Catalogo_Comentarios',
+  META:            'AppMeta',
 };
+
+const HDR_META = ['Clave','Valor'];
 
 const HDR_GASTO = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios',
                    'Abonado','Ignorar','Externo','Semana','AhorroDesc'];
@@ -53,6 +56,7 @@ function doPost(e) {
       deleteAhorroCuenta: () => deleteAhorroCuenta(data.id),
       saveExcepciones:    () => saveExcepciones(data),
       saveCatalogos:      () => saveCatalogos(data),
+      saveMeta:           () => saveMeta(data),
     };
     if (!map[action]) return json({ error: 'Accion no reconocida' });
     return json(map[action]());
@@ -61,13 +65,19 @@ function doPost(e) {
 
 // ── GET ALL ──────────────────────────────────────────────────
 function getAllData() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const meta = readMeta(ss);
   return {
-    semana:      readGastos(ss, SHEET.SEMANA),
-    historico:   readGastos(ss, SHEET.HISTORICO),
-    ahorros:     readAhorros(ss),
-    excepciones: readExcepciones(ss),
-    catalogos:   readCatalogos(ss),
+    semana:       readGastos(ss, SHEET.SEMANA),
+    historico:    readGastos(ss, SHEET.HISTORICO),
+    ahorros:      readAhorros(ss),
+    excepciones:  readExcepciones(ss),
+    catalogos:    readCatalogos(ss),
+    recurrentes:  meta.recurrentes  || [],
+    deudas:       meta.deudas       || [],
+    presupuesto:  meta.presupuesto  || 3400.09,
+    nextRecId:    meta.nextRecId    || 1,
+    nextDeudaId:  meta.nextDeudaId  || 1,
   };
 }
 
@@ -335,4 +345,43 @@ function json(data) {
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── META (recurrentes, deudas, presupuesto, etc.) ────────────
+function readMeta(ss) {
+  const sh  = getOrCreate(ss, SHEET.META, HDR_META);
+  const raw = sh.getDataRange().getValues();
+  if (raw.length <= 1) return {};
+  const obj = {};
+  raw.slice(1).forEach(row => {
+    const key = row[0], val = row[1];
+    try { obj[key] = JSON.parse(val); } catch(e) { obj[key] = val; }
+  });
+  return obj;
+}
+
+function saveMeta(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = getOrCreate(ss, SHEET.META, HDR_META);
+  sh.clearContents();
+  setHeaders(sh, HDR_META);
+  const entries = [
+    ['recurrentes',  JSON.stringify(data.recurrentes  || [])],
+    ['deudas',       JSON.stringify(data.deudas        || [])],
+    ['presupuesto',  JSON.stringify(data.presupuesto   || 3400.09)],
+    ['nextRecId',    JSON.stringify(data.nextRecId     || 1)],
+    ['nextDeudaId',  JSON.stringify(data.nextDeudaId   || 1)],
+  ];
+  // También guardar excepciones aquí si vienen
+  if (data.excepciones) entries.push(['excepciones', JSON.stringify(data.excepciones)]);
+  // Catálogos
+  if (data.catalogos) {
+    saveCatalogos(data.catalogos);
+  }
+  // Excepciones en su hoja separada también
+  if (data.excepciones) {
+    saveExcepciones(data.excepciones);
+  }
+  entries.forEach(e => sh.appendRow(e));
+  return { ok: true };
 }
