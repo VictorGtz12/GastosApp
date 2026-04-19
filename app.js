@@ -1776,14 +1776,14 @@ function verificarRecurrentesProximos() {
 async function verificarDesactualizado() {
   if (!usingSheets()) return false;
   try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 5000);
-    const res    = await fetch(`${SCRIPT_URL}?action=getLastModified`, { signal: controller.signal, redirect: 'follow' });
-    const result = await res.json();
-    if (!result.lastModified) return false;
+    const result = await Promise.race([
+      apiGet('getLastModified'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
+    ]);
+    if (!result || !result.lastModified) return false;
     const remoto = new Date(result.lastModified).getTime();
     const local  = new Date(localStorage.getItem('lastSync') || 0).getTime();
-    return remoto > local + 5000; // más de 5s de diferencia
+    return remoto > local + 5000;
   } catch(e) {
     return false;
   }
