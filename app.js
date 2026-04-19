@@ -173,7 +173,6 @@ async function uploadSnapshot() {
     if (result.error) throw new Error(result.error);
     localStorage.setItem('lastSync', new Date().toISOString());
     localStorage.setItem('localModified', localStorage.getItem('lastSync'));
-    console.log('Snapshot subido ✓');
     return true;
   } catch(e) {
     console.warn('uploadSnapshot error:', e.message);
@@ -196,7 +195,6 @@ async function downloadSnapshot() {
       saveLocal();
       localStorage.setItem('lastSync', new Date().toISOString());
       localStorage.setItem('localModified', localStorage.getItem('lastSync'));
-      console.log('Snapshot descargado ✓ — gastos:', gastos.length, 'hist:', historico.length);
     }
     return ok;
   } catch(e) {
@@ -297,8 +295,6 @@ function ocultarBannerActualizar() {
 
 function ocultarAvisoDesactualizado() {}
 function mostrarAvisoDesactualizado() {}
-
-
 
 
 // ════════════════════════════════════════════════════════════
@@ -1286,8 +1282,6 @@ function showToast(msg) {
 }
 
 
-
-
 // ════════════════════════════════════════════════════════════
 //  BACKUP — Exportar / Importar / Migrar desde Sheets
 // ════════════════════════════════════════════════════════════
@@ -1365,44 +1359,6 @@ function exportarBackupExcel() {
 }
 
 // Importar desde Google Sheets (migración única)
-async function importarDesdeSheets() {
-  const url = prompt('Pega la URL de tu Apps Script para importar datos de Google Sheets:');
-  if (!url || !url.includes('script.google.com')) {
-    showToast('URL inválida'); return;
-  }
-  document.getElementById('loading').style.display = 'flex';
-  try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 20000);
-    const res    = await fetch(`${url}?action=getAll`, { signal: controller.signal });
-    const result = await res.json();
-    if (result.error) throw new Error(result.error);
-    // Aplicar datos de Sheets
-    if (result.semana)    gastos    = (result.semana   ||[]).map(normGasto);
-    if (result.historico) historico = (result.historico||[]).map(normGasto);
-    if (result.excepciones) excepciones = result.excepciones || [];
-    if (result.ahorros && result.ahorros.length) {
-      cuentasAhorro = result.ahorros.map(normAhorro);
-      const ids = cuentasAhorro.map(c=>c.id).filter(Boolean);
-      nextAhorroId = ids.length ? Math.max(...ids)+1 : 1;
-    }
-    const allIds = [...gastos,...historico].map(g=>Number(g.id)).filter(Boolean);
-    nextId = allIds.length ? Math.max(...allIds)+1 : 1;
-    if (result.catalogos) {
-      if (result.catalogos.cuentas?.length)     catalogoCuentas     = result.catalogos.cuentas;
-      if (result.catalogos.motivos?.length)     catalogoMotivos     = result.catalogos.motivos;
-      if (result.catalogos.comentarios?.length) catalogoComentarios = result.catalogos.comentarios;
-    }
-    saveLocal();
-    actualizarSelectCuentas(); actualizarSelectMotivos();
-    showTab('menu');
-    showToast(`Importado ${gastos.length} gastos + ${historico.length} histórico ✓`);
-  } catch(e) {
-    showToast('Error al importar: ' + e.message);
-  } finally {
-    document.getElementById('loading').style.display = 'none';
-  }
-}
 
 
 // ════════════════════════════════════════════════════════════
@@ -1754,42 +1710,7 @@ function verificarRecurrentesProximos() {
 
 
 // ── Detección de datos desactualizados ───────────────────────
-async function verificarDesactualizado() {
-  if (!usingSheets()) return false;
-  try {
-    const result = await Promise.race([
-      apiGet('getLastModified'),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
-    ]);
-    if (!result || !result.lastModified) return false;
-    const remoto = new Date(result.lastModified).getTime();
-    const local  = new Date(localStorage.getItem('lastSync') || 0).getTime();
-    return remoto > local + 5000;
-  } catch(e) {
-    return false;
-  }
-}
 
-function mostrarAvisoDesactualizado() {
-  const status = document.getElementById('sync-status');
-  if (status) {
-    status.style.display = 'inline';
-    status.textContent = '⚠️ Datos desactualizados';
-    status.style.color = 'var(--orange)';
-    status.style.cursor = 'pointer';
-    status.onclick = () => refreshData();
-  }
-  // Banner prominente en el menú
-  const banner = document.getElementById('banner-desactualizado');
-  if (banner) banner.style.display = 'flex';
-}
-
-function ocultarAvisoDesactualizado() {
-  const banner = document.getElementById('banner-desactualizado');
-  if (banner) banner.style.display = 'none';
-  const status = document.getElementById('sync-status');
-  if (status) status.style.cursor = '';
-}
 
 // ── Catálogos ─────────────────────────────────────────────────
 // Sub-tab activo: 'cuentas' | 'motivos'
@@ -2094,7 +2015,6 @@ window.addEventListener('DOMContentLoaded', () => {
   mostrarBannerActualizar();
 
   // Al abrir: descarga snapshot de Sheets en segundo plano (no sube)
-  console.log('usingSheets:', usingSheets(), '| URL:', SCRIPT_URL.slice(0,50)+'...');
   mostrarBannerActualizar();
   if (usingSheets()) {
     downloadSnapshot().then(ok => {
@@ -2108,39 +2028,3 @@ window.addEventListener('DOMContentLoaded', () => {
     mostrarEstadoSync(false);
   }
 });
-
-function mostrarBannerActualizar() {
-  // Usar sync-status en topbar en vez de banner que ocupa espacio
-  const status = document.getElementById('sync-status');
-  if (status) {
-    status.style.display = 'inline';
-    if (usingSheets()) {
-      status.textContent = '🔄 Sync...';
-      status.style.color = 'var(--text3)';
-    } else {
-      const lastBackup = localStorage.getItem('lastBackup');
-      if (!lastBackup) {
-        status.textContent = '💾 Sin backup';
-        status.style.color = 'var(--orange)';
-      }
-    }
-  }
-  // Ocultar el banner de abajo (no usarlo para no afectar layout)
-  const banner = document.getElementById('banner-actualizar');
-  if (banner) banner.style.display = 'none';
-}
-
-function ocultarBannerActualizar() {
-  const banner = document.getElementById('banner-actualizar');
-  if (banner) banner.style.display = 'none';
-  mostrarEstadoSync(true);
-  // Mostrar hora de sync en topbar
-  const last = localStorage.getItem('lastSync');
-  const status = document.getElementById('sync-status');
-  if (status && last) {
-    const d = new Date(last);
-    status.style.display = 'inline';
-    status.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
-    status.style.color = 'var(--green)';
-  }
-}

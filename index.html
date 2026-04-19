@@ -35,7 +35,7 @@
     .tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
     .tab svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
     /* Content */
-    .content{flex:1;padding:14px;display:none;max-width:480px;width:100%;box-sizing:border-box;align-self:flex-start}
+    .content{padding:14px;display:none;max-width:480px;width:100%;box-sizing:border-box}
     .content.active{display:block}
     /* Stats */
     .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
@@ -51,10 +51,9 @@
     /* Progress */
     .progress-bar{height:6px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-bottom:6px}
     .progress-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s}
-    .progress-fill.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24)}.progress-fill.over{background:linear-gradient(90deg,var(--red),#ff8fa3)}
+    .progress-fill.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
     /* Buttons */
     .btn-teal{flex:1;padding:12px;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;border:none;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer}
-    .btn-outline{padding:12px 16px;background:var(--bg3);color:var(--text2);border:1px solid var(--border2);border-radius:12px;font-size:13px;cursor:pointer}
     .btn-cancel{flex:1;padding:11px;border-radius:10px;border:1px solid var(--border2);background:transparent;font-size:13px;color:var(--text2);cursor:pointer}
     .btn-save{flex:2;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:13px;font-weight:600;cursor:pointer}
     .btn-abonar{flex:1;padding:8px;border-radius:10px;border:none;background:linear-gradient(135deg,#7c3aed,var(--purple));color:white;font-size:12px;font-weight:600;cursor:pointer}
