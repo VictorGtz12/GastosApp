@@ -557,7 +557,7 @@ function renderGastos() {
     ).map(g => ({...g, _esHistorico: true}));
     if (enHist.length) list = [...list, ...enHist];
   }
-  list = list.sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
+  list = list.sort((a,b) => (Number(b.id)||0) - (Number(a.id)||0) || String(b.fecha).localeCompare(String(a.fecha)));
   const el = document.getElementById('gastos-list');
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos registrados</div>'; return; }
   el.innerHTML = list.map(g => {
@@ -601,8 +601,7 @@ function renderExternos() {
   let list = todos;
   if (extFilter === 'pendiente') list = pend;
   if (extFilter === 'pagado')    list = paid;
-  list = list.sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
-  const el = document.getElementById('externos-list');
+  list = list.sort((a,b) => (Number(b.id)||0) - (Number(a.id)||0) || String(b.fecha).localeCompare(String(a.fecha)));
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos externos en este filtro</div>'; return; }
   el.innerHTML = list.map(g => {
     const iP = g.externo === 'pagado';
@@ -698,6 +697,16 @@ function periodoDesde(clave) {
 // Obtiene el período activo actual para una tarjeta
 function getPeriodoActualKey(cuenta) {
   return calcularPeriodoCorte(cuenta, today());
+}
+
+function gastosEnPeriodo(all, cuenta, desde, hasta) {
+  return all.filter(g => {
+    if (g.cuenta !== cuenta) return false;
+    const fechaStr = String(g.fecha || '').slice(0, 10);
+    if (!fechaStr) return false;
+    const fd = new Date(fechaStr + 'T12:00:00');
+    return fd >= desde && fd <= hasta;
+  });
 }
 
 function renderCortes() {
@@ -807,7 +816,7 @@ function openCorteTarjeta(cuenta) {
       </button>
 
       ${gp.length
-        ? gp.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).map(g=>`
+        ? gp.sort((a,b)=>(Number(b.id)||0)-(Number(a.id)||0)||String(b.fecha).localeCompare(String(a.fecha))).map(g=>`
           <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
             <span style="font-size:16px">${getMotivoIcon(g.motivo)}</span>
             <div style="flex:1">
@@ -1081,7 +1090,7 @@ function renderHistorico() {
   const bySem = {};
   historico.forEach(g => { if(!bySem[g.semana])bySem[g.semana]=[]; bySem[g.semana].push(g); });
   el.innerHTML = Object.keys(bySem).sort((a,b)=>b.localeCompare(a)).map(sem => {
-    const items = bySem[sem].sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+    const items = bySem[sem].sort((a,b)=>(Number(b.id)||0)-(Number(a.id)||0)||String(b.fecha).localeCompare(String(a.fecha)));
     const total = items.filter(g=>!g.ignorar).reduce((s,g)=>s+g.cantidad,0);
     return `<div class="semana-group">
       <div class="semana-header"><span>Semana ${sem}</span><span>${fmt(total)}</span></div>

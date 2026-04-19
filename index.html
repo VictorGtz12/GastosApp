@@ -35,7 +35,7 @@
     .tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
     .tab svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
     /* Content */
-    .content{flex:1;padding:14px;display:none}
+    .content{flex:1;padding:14px;display:none;max-width:480px;width:100%;box-sizing:border-box}
     .content.active{display:block}
     /* Stats */
     .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
@@ -177,7 +177,7 @@
     .drawer-item svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;flex-shrink:0}
     .drawer-item.active-item{color:var(--accent2)}
     /* FAB */
-    .fab{position:fixed;bottom:calc(22px + env(safe-area-inset-bottom));right:20px;width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#8b5cf6);border:none;color:white;font-size:26px;cursor:pointer;box-shadow:0 4px 20px rgba(108,99,255,.5);z-index:90;display:flex;align-items:center;justify-content:center;line-height:1}
+    .fab{position:fixed;bottom:calc(22px + env(safe-area-inset-bottom));right:max(20px, calc(50vw - 220px));width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#8b5cf6);border:none;color:white;font-size:26px;cursor:pointer;box-shadow:0 4px 20px rgba(108,99,255,.5);z-index:90;display:flex;align-items:center;justify-content:center;line-height:1}
     .fab:active{transform:scale(.92)}
     /* Comentario dropdown */
     #comentario-dropdown{background:var(--bg2) !important;border:1px solid var(--border2) !important;border-radius:12px !important;box-shadow:0 8px 24px rgba(0,0,0,.5) !important}
@@ -421,18 +421,18 @@
 
   <!-- RECURRENTES Y DEUDAS -->
   <div class="content" id="content-recurrentes">
-    <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px">
+    <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px;max-width:480px;width:100%">
       <button id="rtab-servicios" onclick="setRecTab('servicios')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:var(--accent);color:white">🔄 Servicios</button>
-      <button id="rtab-deudas"    onclick="setRecTab('deudas')"    style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:transparent;color:var(--text2)">💳 Meses sin int.</button>
+      <button id="rtab-deudas" onclick="setRecTab('deudas')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:transparent;color:var(--text2)">💳 Meses sin int.</button>
     </div>
-    <div id="rec-panel-servicios">
+    <div id="rec-panel-servicios" style="max-width:480px;width:100%">
       <div id="banner-rec-tab" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:12px;padding:10px 14px;margin-bottom:12px">
         <div style="font-size:10px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">⚠️ Cobran pronto</div>
       </div>
       <div id="rec-servicios-list"></div>
       <button onclick="abrirNuevoRecurrente()" style="width:100%;padding:13px;border-radius:12px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px;font-weight:500">+ Agregar servicio recurrente</button>
     </div>
-    <div id="rec-panel-deudas" style="display:none">
+    <div id="rec-panel-deudas" style="display:none;max-width:480px;width:100%">
       <div id="rec-deudas-list"></div>
       <button onclick="abrirNuevaDeuda()" style="width:100%;padding:13px;border-radius:12px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px;font-weight:500">+ Agregar compra a meses</button>
     </div>
