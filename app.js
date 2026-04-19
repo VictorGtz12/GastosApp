@@ -211,8 +211,9 @@ async function uploadSnapshot() {
       })
     });
     if (!res.ok) { const e = await res.json(); throw new Error(e.message||`HTTP ${res.status}`); }
-    localStorage.setItem('lastSync', new Date().toISOString());
-    localStorage.setItem('localModified', localStorage.getItem('lastSync'));
+    const syncTs = new Date().toISOString();
+    localStorage.setItem('lastSync', syncTs);
+    localStorage.setItem('localModified', syncTs);
     return true;
   } catch(e) { console.warn('upload error:', e.message); return false; }
 }
@@ -236,8 +237,9 @@ async function downloadSnapshot() {
     const ok      = applySnapshot(snap);
     if (ok) {
       saveLocal();
-      localStorage.setItem('lastSync', new Date().toISOString());
-      localStorage.setItem('localModified', localStorage.getItem('lastSync'));
+      const dlTs = new Date().toISOString();
+      localStorage.setItem('lastSync', dlTs);
+      localStorage.setItem('localModified', dlTs);
     }
     return ok;
   } catch(e) { console.warn('download error:', e.message); return false; }
@@ -366,8 +368,23 @@ function saveLocal() {
       recurrentes, nextRecId, deudas, nextDeudaId
     };
     localStorage.setItem('appData_v1', JSON.stringify(data));
-    localStorage.setItem('localModified', new Date().toISOString());
-    if (typeof verificarPendientes === 'function') verificarPendientes();
+    const ts = new Date().toISOString();
+    localStorage.setItem('localModified', ts);
+    // Mostrar indicador de pendientes en topbar
+    const syncEl = document.getElementById('sync-status');
+    if (syncEl && usingGithub()) {
+      const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
+      const localMod = new Date(ts).getTime();
+      if (localMod > lastSync + 3000) {
+        syncEl.style.display = 'inline';
+        syncEl.textContent   = '⬆️ Sin subir';
+        syncEl.style.color   = 'var(--orange)';
+        syncEl.style.cursor  = 'pointer';
+        syncEl.onclick       = () => refreshData();
+        const b = document.getElementById('banner-pendientes');
+        if (b) b.style.display = 'flex';
+      }
+    }
   } catch(e) {
     console.warn('saveLocal error:', e);
     try {
