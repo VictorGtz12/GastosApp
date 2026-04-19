@@ -211,6 +211,8 @@ async function uploadSnapshot() {
       })
     });
     if (!res.ok) { const e = await res.json(); throw new Error(e.message||`HTTP ${res.status}`); }
+    const uploadData = await res.json();
+    if (uploadData.content?.sha) localStorage.setItem('githubSha', uploadData.content.sha);
     const syncTs = new Date().toISOString();
     localStorage.setItem('lastSync', syncTs);
     localStorage.setItem('localModified', syncTs);
@@ -223,27 +225,33 @@ async function downloadSnapshot() {
   try {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 15000);
-    const res = await fetch(`${githubApiUrl()}?ref=${GITHUB_BRANCH}&t=${Date.now()}`, {
+    // Usar SHA para caché — solo descarga contenido si cambió
+    const metaRes = await fetch(`${githubApiUrl()}?ref=${GITHUB_BRANCH}`, {
       headers: githubHeaders(), signal: controller.signal
     });
-    if (res.status === 404) {
-      console.log('datos.json no existe aún — primera vez, sube primero');
-      return false;
+    if (metaRes.status === 404) { console.log('datos.json no existe aún'); return false; }
+    if (!metaRes.ok) throw new Error(`HTTP ${metaRes.status}`);
+    const meta       = await metaRes.json();
+    const remoteSha  = meta.sha;
+    const cachedSha  = localStorage.getItem('githubSha');
+    // Si el SHA no cambió, no hace falta descargar el contenido
+    if (remoteSha && remoteSha === cachedSha) {
+      console.log('GitHub sin cambios (SHA igual) — usando caché local');
+      return true;
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data    = await res.json();
-    const decoded = decodeURIComponent(escape(atob(data.content.replace(/\n/g,''))));
+    // SHA diferente — descargar contenido
+    const decoded = decodeURIComponent(escape(atob(meta.content.replace(/\n/g,''))));
     const snap    = decompressSnap(JSON.parse(decoded));
     const ok      = applySnapshot(snap);
     if (ok) {
       saveLocal();
+      localStorage.setItem('githubSha', remoteSha);
       const dlTs = new Date().toISOString();
       localStorage.setItem('lastSync', dlTs);
       localStorage.setItem('localModified', dlTs);
-      // Re-renderizar todo con datos frescos
       actualizarSelectCuentas();
       actualizarSelectMotivos();
-      renderMenu(); // siempre actualizar menú
+      renderMenu();
       const tabActual = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
       showTab(tabActual);
     }
@@ -326,7 +334,11 @@ function mostrarEstadoSync(ok) {
 
 function mostrarBannerActualizar() {
   const s = document.getElementById('sync-status');
-  if (s && usingGithub()) { s.style.display='inline'; s.textContent='🔄 ...'; s.style.color='var(--text3)'; }
+  if (s) {
+    s.style.display = 'inline';
+    s.innerHTML = '<span style="display:inline-block;animation:spin .7s linear infinite">⟳</span> Sync...';
+    s.style.color = 'var(--text3)';
+  }
 }
 function ocultarBannerActualizar()    { mostrarEstadoSync(true); }
 function ocultarAvisoDesactualizado() {}
@@ -944,7 +956,11 @@ function renderAhorros() {
       const pct = c.meta ? Math.min(100, Math.round(s/c.meta*100)) : 0;
       const ult = c.movimientos.slice(-3).reverse();
       const excluida = !!c.excluirTotal;
-      html += `<div class="ahorro-card">
+      html += `<div class="ahorro-card" data-id="${c.id}" draggable="true"
+        ondragstart="onAhorroDragStart(event,${c.id})" ondragend="onAhorroDragEnd(event)"
+        ondragover="onAhorroDragOver(event)" ondragleave="onAhorroDragLeave(event)" ondrop="onAhorroDrop(event,${c.id})"
+        ontouchstart="onAhorroTouchStart(event,${c.id})" ontouchmove="onAhorroTouchMove(event)" ontouchend="onAhorroTouchEnd(event,${c.id})"
+        style="cursor:grab;touch-action:none">
         <div class="ahorro-header">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span class="ahorro-nombre">🐷 ${c.nombre}</span>
@@ -1885,6 +1901,87 @@ function ocultarAvisoDesactualizado() {
   if (banner) banner.style.display = 'none';
   const status = document.getElementById('sync-status');
   if (status) status.style.cursor = '';
+}
+
+
+// ── Drag & Drop para reordenar ahorros ───────────────────────
+let dragSrcId = null;
+
+function onAhorroDragStart(e, id) {
+  dragSrcId = id;
+  e.dataTransfer.effectAllowed = 'move';
+  e.currentTarget.style.opacity = '0.5';
+}
+
+function onAhorroDragEnd(e) {
+  e.currentTarget.style.opacity = '1';
+}
+
+function onAhorroDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.style.borderColor = 'var(--accent)';
+}
+
+function onAhorroDragLeave(e) {
+  e.currentTarget.style.borderColor = '';
+}
+
+function onAhorroDrop(e, targetId) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = '';
+  if (dragSrcId === targetId) return;
+  const srcIdx = cuentasAhorro.findIndex(c => c.id === dragSrcId);
+  const tgtIdx = cuentasAhorro.findIndex(c => c.id === targetId);
+  if (srcIdx === -1 || tgtIdx === -1) return;
+  // Intercambiar posiciones
+  const [item] = cuentasAhorro.splice(srcIdx, 1);
+  cuentasAhorro.splice(tgtIdx, 0, item);
+  saveLocal();
+  renderAhorros();
+}
+
+// Touch drag para móvil
+let touchDragId = null;
+let touchClone  = null;
+
+function onAhorroTouchStart(e, id) {
+  touchDragId = id;
+  const card = e.currentTarget;
+  touchClone = card.cloneNode(true);
+  touchClone.style.cssText = `position:fixed;opacity:.8;pointer-events:none;z-index:999;width:${card.offsetWidth}px;left:${card.getBoundingClientRect().left}px;top:${card.getBoundingClientRect().top}px;`;
+  document.body.appendChild(touchClone);
+  card.style.opacity = '0.3';
+}
+
+function onAhorroTouchMove(e) {
+  if (!touchClone) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  touchClone.style.left = `${t.clientX - touchClone.offsetWidth/2}px`;
+  touchClone.style.top  = `${t.clientY - 30}px`;
+}
+
+function onAhorroTouchEnd(e, id) {
+  if (!touchClone) return;
+  const t = e.changedTouches[0];
+  touchClone.remove(); touchClone = null;
+  document.querySelectorAll('.ahorro-card').forEach(card => card.style.opacity = '1');
+  // Encontrar el card sobre el que se soltó
+  const el = document.elementFromPoint(t.clientX, t.clientY)?.closest('.ahorro-card');
+  if (!el) return;
+  const targetId = Number(el.dataset.id);
+  if (targetId && targetId !== touchDragId) {
+    const srcIdx = cuentasAhorro.findIndex(c => c.id === touchDragId);
+    const tgtIdx = cuentasAhorro.findIndex(c => c.id === targetId);
+    if (srcIdx !== -1 && tgtIdx !== -1) {
+      const [item] = cuentasAhorro.splice(srcIdx, 1);
+      cuentasAhorro.splice(tgtIdx, 0, item);
+      saveLocal();
+      renderAhorros();
+    }
+  }
+  touchDragId = null;
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
