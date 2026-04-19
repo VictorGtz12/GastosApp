@@ -227,9 +227,9 @@ function normalizeGasto(row) {
     externo:      row.Externo || row.externo || 'no',
     semana:       row.Semana || row.semana || getWeek(new Date()),
     ahorroDesc:   row.AhorroDesc || row.ahorroDesc || '',
+    periodoCorte: row.periodoCorte || null,
   };
-}
-function gastoToSheets(g) {
+}(g) {
   return {
     ID: g.id, Fecha: g.fecha, Cuenta: g.cuenta, Motivo: g.motivo,
     Cantidad: g.cantidad, Comentarios: g.comentarios || '',
@@ -327,7 +327,8 @@ function normGasto(x) {
     ignorar:     x.ignorar === true  || x.Ignorar === 'SI'  || x.ignorar === 'true',
     externo:     x.externo || x.Externo || 'no',
     semana:      x.semana || x.Semana || getWeek(new Date()),
-    ahorroDesc:  x.ahorroDesc || x.AhorroDesc || '',
+    ahorroDesc:   x.ahorroDesc || x.AhorroDesc || '',
+    periodoCorte: x.periodoCorte || null, // se asigna dinámicamente si null
   };
 }
 
@@ -562,94 +563,93 @@ async function marcarExterno(id, estado) {
 // ── Excepciones de corte ──────────────────────────────────────
 // Dado un día de corte y una fecha, devuelve la fecha de corte real
 // considerando si existe una excepción para ese período
-function diaCorteEfectivo(cuenta, fechaCorteNormal) {
-  const fStr = fmtD(fechaCorteNormal);
-  const exc = excepciones.find(e =>
-    e.Cuenta === cuenta && e.FechaOriginal === fStr
-  );
-  if (exc && exc.FechaExcepcion) return new Date(exc.FechaExcepcion + 'T12:00:00');
-  return fechaCorteNormal;
-}
+// ════════════════════════════════════════════════════════════
+//  CORTES POR TARJETA — Rediseño robusto
+//  Cada gasto lleva un campo "periodoCorte" = "CUENTA|YYYY-MM-DD"
+//  (fecha del último día del período) asignado al guardarlo.
+//  La vista simplemente agrupa por ese campo, sin recalcular fechas.
+// ════════════════════════════════════════════════════════════
 
-function fechaCorteNormal(cfg, año, mes) {
-  return new Date(año, mes, cfg.dia);
-}
+// Calcula a qué período pertenece un gasto dado su fecha y cuenta
+function calcularPeriodoCorte(cuenta, fechaGasto) {
+  const cfg = getCortesConfig()[cuenta];
+  if (!cfg) return null; // cuenta sin corte (débito)
 
-// Calcula el período activo para una tarjeta respetando excepciones
-function getPeriodoActual(cfg, cuenta) {
-  const hoy = new Date();
-  let desde, hastaBase, hasta;
+  const fecha = new Date(String(fechaGasto).slice(0,10) + 'T12:00:00');
+  const dia   = cfg.dia;
 
-  if (hoy.getDate() <= cfg.dia) {
-    const pm = hoy.getMonth() === 0 ? 11 : hoy.getMonth() - 1;
-    const py = hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear();
-    // fecha corte del mes anterior
-    const cortePrevBase = fechaCorteNormal(cfg, py, pm);
-    const cortePrev = diaCorteEfectivo(cuenta, cortePrevBase);
-    desde = new Date(cortePrev.getFullYear(), cortePrev.getMonth(), cortePrev.getDate() + 1);
-    hastaBase = fechaCorteNormal(cfg, hoy.getFullYear(), hoy.getMonth());
-    hasta = diaCorteEfectivo(cuenta, hastaBase);
+  // El período cierra el día "dia" de cada mes
+  // Si el día del gasto <= dia de corte → pertenece al corte de ESTE mes
+  // Si el día del gasto >  dia de corte → pertenece al corte del MES SIGUIENTE
+  let anio = fecha.getFullYear();
+  let mes  = fecha.getMonth(); // 0-11
+
+  if (fecha.getDate() <= dia) {
+    // corte es este mes
   } else {
-    const corteActBase = fechaCorteNormal(cfg, hoy.getFullYear(), hoy.getMonth());
-    const corteAct = diaCorteEfectivo(cuenta, corteActBase);
-    desde = new Date(corteAct.getFullYear(), corteAct.getMonth(), corteAct.getDate() + 1);
-    const nm = (hoy.getMonth() + 1) % 12;
-    const ny = hoy.getMonth() === 11 ? hoy.getFullYear() + 1 : hoy.getFullYear();
-    hastaBase = fechaCorteNormal(cfg, ny, nm);
-    hasta = diaCorteEfectivo(cuenta, hastaBase);
+    // corte es el mes siguiente
+    mes++;
+    if (mes > 11) { mes = 0; anio++; }
   }
-  return { desde, hasta };
+
+  // Verificar excepción
+  const corteBase = new Date(anio, mes, dia);
+  const fBase = fmtD(corteBase);
+  const exc = excepciones.find(e => e.Cuenta === cuenta && e.FechaOriginal === fBase);
+  const fechaCorte = exc ? exc.FechaExcepcion : fBase;
+  return `${cuenta}|${fechaCorte}`;
 }
 
-function periodoAnterior(cfg, cuenta, desde) {
-  // El corte que terminó justo antes de 'desde' es el día anterior
-  const hastaBase = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate() - 1);
-  const hasta = diaCorteEfectivo(cuenta, hastaBase);
-  // El inicio de ese período es el día después del corte previo
-  const pm = hasta.getMonth() === 0 ? 11 : hasta.getMonth() - 1;
-  const py = hasta.getMonth() === 0 ? hasta.getFullYear() - 1 : hasta.getFullYear();
-  const corteAntBase = fechaCorteNormal(cfg, py, pm);
-  const corteAnt = diaCorteEfectivo(cuenta, corteAntBase);
-  const nuevaDesde = new Date(corteAnt.getFullYear(), corteAnt.getMonth(), corteAnt.getDate() + 1);
-  return { desde: nuevaDesde, hasta };
+// Obtiene inicio del período dado su clave "CUENTA|YYYY-MM-DD"
+function periodoDesde(clave) {
+  const [cuenta, hastaStr] = clave.split('|');
+  const cfg = getCortesConfig()[cuenta];
+  if (!cfg) return null;
+  // El inicio es el día siguiente al corte del mes anterior
+  const hasta = new Date(hastaStr + 'T12:00:00');
+  const pm    = hasta.getMonth() === 0 ? 11 : hasta.getMonth() - 1;
+  const py    = hasta.getMonth() === 0 ? hasta.getFullYear() - 1 : hasta.getFullYear();
+  const corteAntBase = fmtD(new Date(py, pm, cfg.dia));
+  const exc = excepciones.find(e => e.Cuenta === cuenta && e.FechaOriginal === corteAntBase);
+  const corteAnt = exc ? exc.FechaExcepcion : corteAntBase;
+  const d = new Date(corteAnt + 'T12:00:00');
+  d.setDate(d.getDate() + 1);
+  return fmtD(d);
 }
 
-function periodoSiguiente(cfg, cuenta, hasta) {
-  const nuevaDesde = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate() + 1);
-  const nm = (nuevaDesde.getMonth() + 1) % 12;
-  const ny = nuevaDesde.getMonth() === 11 ? nuevaDesde.getFullYear() + 1 : nuevaDesde.getFullYear();
-  const hastaBase = fechaCorteNormal(cfg, ny, nm);
-  const nuevaHasta = diaCorteEfectivo(cuenta, hastaBase);
-  return { desde: nuevaDesde, hasta: nuevaHasta };
-}
-
-function gastosEnPeriodo(all, cuenta, desde, hasta) {
-  return all.filter(g => {
-    if (g.cuenta !== cuenta) return false;
-    // Normalizar fecha: quitar hora si viene con T antes de comparar
-    const fechaStr = String(g.fecha || '').slice(0, 10);
-    const fd = new Date(fechaStr + 'T12:00:00');
-    return fd >= desde && fd <= hasta;
-  });
+// Obtiene el período activo actual para una tarjeta
+function getPeriodoActualKey(cuenta) {
+  return calcularPeriodoCorte(cuenta, today());
 }
 
 function renderCortes() {
   const all = [...gastos, ...historico];
   const hoy = new Date();
-  document.getElementById('cortes-list').innerHTML = Object.entries(getCortesConfig()).map(([cuenta, cfg]) => {
-    const { desde, hasta } = getPeriodoActual(cfg, cuenta);
-    const gp    = gastosEnPeriodo(all, cuenta, desde, hasta);
-    const total = gp.reduce((s,g) => s+g.cantidad, 0);
-    const dias  = Math.ceil((hasta - hoy) / 864e5);
-    const vencida = dias < 0;
-    return `<div class="tarjeta-card" onclick="openCorteTarjeta('${cuenta}')" style="${vencida?'border-color:#fcd34d':''}">
+  const cfg = getCortesConfig();
+
+  document.getElementById('cortes-list').innerHTML = Object.entries(cfg).map(([cuenta, c]) => {
+    const key    = getPeriodoActualKey(cuenta);
+    const hasta  = key ? key.split('|')[1] : null;
+    const desde  = key ? periodoDesde(key) : null;
+    const gp     = all.filter(g => g.cuenta === cuenta && (g.periodoCorte === key ||
+      // fallback para gastos sin periodoCorte: comparar fecha
+      (!g.periodoCorte && hasta && desde &&
+        String(g.fecha).slice(0,10) >= desde &&
+        String(g.fecha).slice(0,10) <= hasta)
+    ));
+    const total  = gp.reduce((s,g) => s+g.cantidad, 0);
+    const diasR  = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
+    const vencida = diasR < 0;
+    return `<div class="tarjeta-card" onclick="openCorteTarjeta('${cuenta}')" style="${vencida?'border-color:var(--orange)':''}">
       <div class="tarjeta-header">
-        <span class="tarjeta-nombre"><span class="dot" style="background:${cfg.color}"></span>${cuenta}</span>
+        <span class="tarjeta-nombre"><span class="dot" style="background:${c.color}"></span>${cuenta}</span>
         <span class="tarjeta-monto">${fmt(total)}</span>
       </div>
       <div class="tarjeta-info">
-        Corte día ${cfg.dia} · ${fmtD(desde)} → ${fmtD(hasta)} ·
-        <strong style="color:${vencida?'#d97706':dias<=3?'#ef9f27':'#94a3b8'}">${vencida?'¡Vencido!':dias===0?'Hoy':dias+' días'}</strong>
+        Corte día ${c.dia} · ${desde||'—'} → ${hasta||'—'} ·
+        <strong style="color:${vencida?'var(--orange)':diasR<=3?'var(--yellow)':'var(--text2)'}">
+          ${vencida?'¡Vencido!':diasR===0?'Hoy':diasR+' días'}
+        </strong>
       </div>
     </div>`;
   }).join('');
@@ -659,137 +659,112 @@ function openCorteTarjeta(cuenta) {
   const cfg = getCortesConfig()[cuenta];
   const all = [...gastos,...historico];
   const hoy = new Date();
-  let { desde: dActual, hasta: hActual } = getPeriodoActual(cfg, cuenta);
-  let curDesde = dActual, curHasta = hActual;
+
+  // Obtener todos los períodos que tienen gastos para esta tarjeta
+  const keysConGastos = [...new Set(
+    all.filter(g => g.cuenta === cuenta && g.periodoCorte)
+       .map(g => g.periodoCorte)
+  )].sort().reverse();
+
+  // Agregar período actual si no está
+  const keyActual = getPeriodoActualKey(cuenta);
+  if (keyActual && !keysConGastos.includes(keyActual)) keysConGastos.unshift(keyActual);
+
+  // Gastos sin periodoCorte — asignar dinámicamente
+  const sinClave = all.filter(g => g.cuenta === cuenta && !g.periodoCorte);
+  sinClave.forEach(g => {
+    const k = calcularPeriodoCorte(cuenta, g.fecha);
+    if (k && !keysConGastos.includes(k)) keysConGastos.push(k);
+    g._periodoTemp = k;
+  });
+  keysConGastos.sort().reverse();
+
+  let periodoIdx = 0;
   const body = document.getElementById('modal-corte-body');
 
-  const isActual  = () => fmtD(curDesde) === fmtD(dActual);
-  const isFuturo  = () => curDesde > dActual;
-
   function render() {
-    const gp = gastosEnPeriodo(all, cuenta, curDesde, curHasta);
-    const total = gp.reduce((s,g)=>s+g.cantidad,0);
-    const diasR = Math.ceil((curHasta - hoy) / 864e5);
-    const vencida = isActual() && diasR < 0;
-    const esActual = isActual();
-    const labelPeriodo = esActual
-      ? (vencida ? '⚠️ Período vencido'
-        : `Período activo · ${diasR===0?'Corte hoy':diasR+' días para corte'}`)
-      : isFuturo() ? 'Período futuro' : 'Período anterior';
-    const labelColor = esActual && vencida ? '#d97706' : esActual ? '#0d9488' : '#94a3b8';
+    const key   = keysConGastos[periodoIdx] || keyActual;
+    const hasta = key ? key.split('|')[1] : null;
+    const desde = key ? periodoDesde(key) : null;
+    const esActual = key === keyActual;
+    const diasR = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
+    const vencida = esActual && diasR < 0;
 
-    // Excepción activa para este período
-    const excActiva = excepciones.find(e =>
-      e.Cuenta === cuenta && e.FechaOriginal === fmtD(curHasta)
+    const gp = all.filter(g => g.cuenta === cuenta &&
+      (g.periodoCorte === key || g._periodoTemp === key ||
+        (!g.periodoCorte && !g._periodoTemp && hasta && desde &&
+          String(g.fecha).slice(0,10) >= desde &&
+          String(g.fecha).slice(0,10) <= hasta)
+      )
     );
+    const total = gp.reduce((s,g) => s+g.cantidad, 0);
+
+    const label = esActual
+      ? (vencida ? '⚠️ Período vencido' : `Período activo · ${diasR===0?'Corte hoy':diasR+' días para corte'}`)
+      : 'Período anterior';
+    const labelColor = esActual && vencida ? 'var(--orange)' : esActual ? 'var(--green)' : 'var(--text2)';
 
     body.innerHTML = `
       <h2 style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <span style="width:12px;height:12px;border-radius:50%;background:${cfg.color};display:inline-block;flex-shrink:0"></span>${cuenta}
       </h2>
-      <div style="font-size:11px;color:${labelColor};font-weight:500;margin-bottom:10px">${labelPeriodo}</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <button onclick="window._prevP()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:13px;cursor:pointer">‹</button>
+      <div style="font-size:11px;color:${labelColor};font-weight:500;margin-bottom:10px">${label}</div>
+
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <button onclick="window._prevP()" ${periodoIdx>=keysConGastos.length-1?'disabled':''} style="padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:14px;cursor:pointer;color:var(--text)">‹</button>
         <div style="flex:1;text-align:center;font-size:12px;color:var(--text2);font-weight:500">
-          ${curDesde.toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'})} →
-          ${curHasta.toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'})}
+          ${desde||'—'} → ${hasta||'—'}
         </div>
-        <button onclick="window._nextP()" ${isFuturo()?'disabled':''} style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:13px;cursor:pointer;color:${isFuturo()?'#cbd5e1':'#1e293b'}">›</button>
+        <button onclick="window._nextP()" ${periodoIdx===0?'disabled':''} style="padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:14px;cursor:pointer;color:var(--text)">›</button>
       </div>
 
-      ${excActiva ? `<div style="background:rgba(255,159,67,.15);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:var(--orange)">
-        ⚠️ Excepción activa: corte movido al <strong>${excActiva.FechaExcepcion}</strong>${excActiva.Nota?' — '+excActiva.Nota:''}
-        <button onclick="eliminarExcepcion('${cuenta}','${fmtD(curHasta)}')" style="float:right;background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">Eliminar</button>
-      </div>` : ''}
-
-      <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:10px;text-align:center">
+      <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:12px;text-align:center">
         <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Total del período</div>
-        <div style="font-size:24px;font-weight:500;color:${total>0?'#e24b4a':'#94a3b8'}">${fmt(total)}</div>
+        <div style="font-size:26px;font-weight:700;color:${total>0?'var(--red)':'var(--text2)'}">${fmt(total)}</div>
         <div style="font-size:11px;color:var(--text2);margin-top:2px">${gp.length} gasto${gp.length!==1?'s':''}</div>
       </div>
 
-      ${esActual && vencida ? `<button onclick="window._nuevoPeriodo()" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:white;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:10px">✂️ Registrar corte y abrir nuevo período</button>` : ''}
+      ${esActual && vencida ? `<button onclick="showToast('Haz el corte semanal desde el Menú')" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:white;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:10px">✂️ Ir al corte semanal</button>` : ''}
 
-      <button onclick="window._openExc()" style="width:100%;padding:8px;border-radius:8px;border:1px dashed #e2e8f0;background:transparent;color:var(--text2);font-size:12px;cursor:pointer;margin-bottom:10px">
+      <button onclick="window._openExc()" style="width:100%;padding:8px;border-radius:8px;border:1px dashed var(--border2);background:transparent;color:var(--text2);font-size:12px;cursor:pointer;margin-bottom:10px">
         📅 Ajustar fecha de corte por día inhábil
       </button>
 
       ${gp.length
         ? gp.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))).map(g=>`
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:15px">${getMotivoIcon(g.motivo)||'📋'}</span>
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:16px">${getMotivoIcon(g.motivo)}</span>
             <div style="flex:1">
-              <div style="font-size:13px;font-weight:500;color:var(--text)">${g.motivo}</div>
-              <div style="font-size:11px;color:var(--text2)">${g.fecha}${g.comentarios?' · '+g.comentarios:''}</div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">${g.motivo}</div>
+              <div style="font-size:11px;color:var(--text2)">${String(g.fecha).slice(0,10)}${g.comentarios?' · '+g.comentarios:''}</div>
             </div>
-            <div style="font-size:13px;font-weight:500;color:var(--text)">${fmt(g.cantidad)}</div>
+            <div style="font-size:14px;font-weight:700;color:var(--text)">${fmt(g.cantidad)}</div>
           </div>`).join('')
-        : '<div style="text-align:center;padding:16px;color:var(--text2);font-size:13px">Sin gastos en este período</div>'}
-      <div class="modal-actions" style="margin-top:12px">
+        : '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px">Sin gastos en este período</div>'}
+
+      <div class="modal-actions" style="margin-top:14px">
         <button class="mbtn sec" onclick="closeModal('modal-corte-tarjeta')">Cerrar</button>
       </div>`;
   }
 
-  window._prevP = () => {
-    const ant = periodoAnterior(cfg, cuenta, curDesde);
-    curDesde = ant.desde; curHasta = ant.hasta; render();
-  };
-  window._nextP = () => {
-    if (isFuturo()) return;
-    const sig = periodoSiguiente(cfg, cuenta, curHasta);
-    if (sig.desde > dActual) return;
-    curDesde = sig.desde; curHasta = sig.hasta; render();
-  };
-  window._nuevoPeriodo = () => {
-    const sig = periodoSiguiente(cfg, cuenta, hActual);
-    dActual = sig.desde; hActual = sig.hasta;
-    curDesde = sig.desde; curHasta = sig.hasta;
-    showToast(`Nuevo período: ${fmtD(sig.desde)} → ${fmtD(sig.hasta)}`);
-    render(); renderCortes();
-  };
+  window._prevP = () => { if (periodoIdx < keysConGastos.length-1) { periodoIdx++; render(); } };
+  window._nextP = () => { if (periodoIdx > 0) { periodoIdx--; render(); } };
   window._openExc = () => {
-    // Abrir modal de excepción para la fecha de corte del período actual
-    document.getElementById('exc-cuenta').textContent  = cuenta;
-    document.getElementById('exc-fecha-orig').textContent = fmtD(curHasta);
-    document.getElementById('exc-fecha-nueva').value   = fmtD(curHasta);
-    document.getElementById('exc-nota').value          = '';
+    const key  = keysConGastos[periodoIdx] || keyActual;
+    const hasta = key ? key.split('|')[1] : today();
+    document.getElementById('exc-cuenta').textContent     = cuenta;
+    document.getElementById('exc-fecha-orig').textContent = hasta;
+    document.getElementById('exc-fecha-nueva').value      = hasta;
+    document.getElementById('exc-nota').value             = '';
     window._excCuenta    = cuenta;
-    window._excFechaOrig = fmtD(curHasta);
+    window._excFechaOrig = hasta;
     openModal('modal-excepcion');
   };
-  window._eliminarExc = (cta, fo) => eliminarExcepcion(cta, fo);
 
   render();
   openModal('modal-corte-tarjeta');
 }
 
-async function guardarExcepcion() {
-  const nuevaFecha = document.getElementById('exc-fecha-nueva').value;
-  const nota       = document.getElementById('exc-nota').value;
-  if (!nuevaFecha) { showToast('Ingresa la nueva fecha de corte'); return; }
-  // Eliminar excepción previa para este período si existía
-  excepciones = excepciones.filter(e =>
-    !(e.Cuenta === window._excCuenta && e.FechaOriginal === window._excFechaOrig)
-  );
-  excepciones.push({
-    Cuenta: window._excCuenta,
-    FechaOriginal: window._excFechaOrig,
-    FechaExcepcion: nuevaFecha,
-    Nota: nota
-  });
-  await saveData();
-  closeModal('modal-excepcion');
-  showToast('Fecha de corte ajustada ✓');
-  // Reabrir el modal del tarjeta con datos actualizados
-  openCorteTarjeta(window._excCuenta);
-}
-
-async function eliminarExcepcion(cuenta, fechaOrig) {
-  excepciones = excepciones.filter(e => !(e.Cuenta===cuenta && e.FechaOriginal===fechaOrig));
-  await saveData();
-  showToast('Excepción eliminada');
-  openCorteTarjeta(cuenta);
-}
 
 // ── Ahorros ───────────────────────────────────────────────────
 const saldoCuenta = c => c.movimientos.reduce((s,m) =>
@@ -1096,15 +1071,16 @@ async function guardarGasto() {
 
   const isEditing = !!editingId;
   const gasto = {
-    id:          editingId || nextId++,
-    fecha:       today(),
-    cuenta:      document.getElementById('f-cuenta').value,
-    motivo:      document.getElementById('f-motivo').value,
+    id:           editingId || nextId++,
+    fecha:        today(),
+    cuenta:       document.getElementById('f-cuenta').value,
+    motivo:       document.getElementById('f-motivo').value,
     cantidad,
-    comentarios: document.getElementById('f-comentarios-input').value,
+    comentarios:  document.getElementById('f-comentarios-input').value,
     abonado, ignorar, externo,
-    semana:      getWeek(new Date()),
-    ahorroDesc:  descontarAhorro ? ahorroSelNombre : '',
+    semana:       getWeek(new Date()),
+    ahorroDesc:   descontarAhorro ? ahorroSelNombre : '',
+    periodoCorte: calcularPeriodoCorte(document.getElementById('f-cuenta').value, today()),
   };
 
   if (isEditing) {
