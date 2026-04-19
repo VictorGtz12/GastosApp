@@ -1207,8 +1207,8 @@ async function guardarGasto() {
     const sel = document.getElementById('f-ahorro-cuenta');
     ahorroSelId = parseInt(sel.value);
     const ca = cuentasAhorro.find(x=>x.id===ahorroSelId);
-    if (!ca) { showToast('Selecciona una cuenta de ahorro'); return; }
-    if (cantidad > saldoCuenta(ca)) { showToast(`Saldo insuficiente en ${ca.nombre}`); return; }
+    if (!ca) { syncBloqueado = false; showToast('Selecciona una cuenta de ahorro'); return; }
+    if (cantidad > saldoCuenta(ca)) { syncBloqueado = false; showToast(`Saldo insuficiente en ${ca.nombre}`); return; }
     ahorroSelNombre = ca.nombre;
   }
 
@@ -1241,16 +1241,14 @@ async function guardarGasto() {
       ca.movimientos.push({
         tipo:'retiro', cantidad,
         nota:`Gasto: ${gasto.motivo}`,
-        fecha: today()
+        fecha: gasto.fecha
       });
-      await saveData();
     }
-  } else {
-    saveLocal();
   }
 
-
-  syncBloqueado = false; // liberar sync
+  // Guardar todo junto
+  saveLocal();
+  syncBloqueado = false;
   resetForm(); editingId=null; showTab('gastos');
   showToast('Gasto guardado ✓');
 }
