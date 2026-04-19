@@ -7,7 +7,7 @@
 // Usa el menú ☰ → Importar de Sheets para migrar datos.
 
 // ── Configuración ─────────────────────────────────────────────
-const PRESUPUESTO = 3400.09;
+let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
 
 // Iconos por defecto para motivos conocidos
 const MOTIVO_ICON_DEFAULT = {
@@ -154,7 +154,7 @@ function loadFromLocal() {
       if (data.excepciones)         excepciones         = data.excepciones;
       if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
       if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
-      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
+      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === "string" ? c : (c.nombre || c.Nombre || "")).filter(Boolean);
       if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
       return;
     }
@@ -179,7 +179,11 @@ function loadFromLocal() {
     if (ex)   excepciones         = JSON.parse(ex);
     if (cc)   catalogoCuentas     = JSON.parse(cc);
     if (cm)   catalogoMotivos     = JSON.parse(cm);
-    if (ccom) catalogoComentarios = JSON.parse(ccom);
+    if (ccom) {
+      const raw = JSON.parse(ccom);
+      // Normalizar: aceptar strings o {nombre:...}
+      catalogoComentarios = raw.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
+    }
     if (a)    cuentasAhorro       = JSON.parse(a).map(normAhorro);
     // Migrar a clave nueva
     if (g || h || a) saveLocal();
@@ -236,10 +240,14 @@ function loadData() {
 
 // Botón Actualizar — solo refresca la vista (no hay red que esperar)
 function refreshData() {
-  const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
-  showTab(tab);
+  loadFromLocal(); // recargar datos frescos
   actualizarSelectCuentas();
   actualizarSelectMotivos();
+  renderMenu();
+  renderCortes();
+  // Re-renderizar la pestaña activa
+  const tab = document.querySelector('.tab.active')?.id?.replace('tab-','') || 'menu';
+  showTab(tab);
   showToast('Vista actualizada ✓');
 }
 
@@ -307,6 +315,7 @@ function renderMenu() {
   }).filter(Boolean).join('');
   document.getElementById('saldos-list').innerHTML = rows ||
     '<div style="font-size:12px;color:var(--text2);padding:6px 0">Sin gastos esta semana</div>';
+  verificarCortesProximos();
 }
 
 // ── Gastos ────────────────────────────────────────────────────
@@ -321,17 +330,28 @@ function renderGastos() {
   }).filter(g => !q ||
     g.motivo.toLowerCase().includes(q) ||
     g.cuenta.toLowerCase().includes(q) ||
-    (g.comentarios||'').toLowerCase().includes(q)
+    (g.comentarios||'').toLowerCase().includes(q) ||
+    String(g.cantidad).includes(q)
   );
+  // Búsqueda global: incluir histórico cuando hay texto
+  if (q && activeFilter === 'todos') {
+    const enHist = historico.filter(g =>
+      g.motivo.toLowerCase().includes(q) ||
+      g.cuenta.toLowerCase().includes(q) ||
+      (g.comentarios||'').toLowerCase().includes(q) ||
+      String(g.cantidad).includes(q)
+    ).map(g => ({...g, _esHistorico: true}));
+    if (enHist.length) list = [...list, ...enHist];
+  }
   list = list.sort((a,b) => String(b.fecha).localeCompare(String(a.fecha)));
   const el = document.getElementById('gastos-list');
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos registrados</div>'; return; }
   el.innerHTML = list.map(g => {
     const iE = g.externo === 'externo', iP = g.externo === 'pagado';
-    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" onclick="openDetail(${g.id})" style="${g.ignorar?'opacity:.55':''}">
-      <div class="gasto-icon">${getMotivoIcon(g.motivo)||'📋'}</div>
-      <div class="gasto-info">
-        <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}</div>
+    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" style="${g.ignorar?'opacity:.55':''}">
+      <div class="gasto-icon" onclick="openDetail(${g.id})">${getMotivoIcon(g.motivo)||'📋'}</div>
+      <div class="gasto-info" onclick="openDetail(${g.id})">
+        <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}</div>
         <div class="gasto-meta">${g.cuenta}${g.comentarios?' · '+g.comentarios:''} · ${g.fecha}</div>
         <div class="badges">
           ${g.ignorar ? '<span class="badge ignorar">🚫 Ignorado</span>'
@@ -340,7 +360,10 @@ function renderGastos() {
             : `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`}
         </div>
       </div>
-      <div class="gasto-monto" style="${g.ignorar||iP?'text-decoration:line-through;color:var(--text2)':iE?'color:var(--orange)':''}">${fmt(g.cantidad)}</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <div class="gasto-monto" onclick="openDetail(${g.id})" style="${g.ignorar||iP?'text-decoration:line-through;color:var(--text2)':iE?'color:var(--orange)':''}">${fmt(g.cantidad)}</div>
+        ${!g._esHistorico?`<button onclick="editarDirecto(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
+      </div>
     </div>`;
   }).join('');
 }
@@ -1017,6 +1040,22 @@ function openDetail(id) {
   openModal('modal-detail');
 }
 
+function editarDirecto(id) {
+  const g = gastos.find(x=>x.id===id); if(!g) return;
+  editingId=id;
+  document.getElementById('f-cuenta').value            = g.cuenta;
+  document.getElementById('f-motivo').value             = g.motivo;
+  document.getElementById('f-cantidad').value           = g.cantidad;
+  document.getElementById('f-comentarios-input').value  = g.comentarios||'';
+  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); setDescAhorro(false);
+  TABS.forEach(t=>{
+    document.getElementById('content-'+t).classList.remove('active');
+    const te = document.getElementById('tab-'+t); if(te) te.classList.remove('active');
+  });
+  document.getElementById('content-nuevo').classList.add('active');
+  document.getElementById('topbar-title').textContent='Editar Gasto';
+}
+
 function editar(id) {
   closeModal('modal-detail');
   const g = gastos.find(x=>x.id===id); if(!g) return;
@@ -1035,10 +1074,21 @@ function editar(id) {
   document.getElementById('topbar-title').textContent='Editar Gasto';
 }
 
-async function eliminar(id) {
-  gastos = gastos.filter(x=>x.id!==id);
-  saveLocal();
+function eliminar(id) {
+  const g = gastos.find(x=>x.id===id);
+  if (!g) return;
+  // Guardar id para confirmar
+  window._eliminarId = id;
+  document.getElementById('confirm-eliminar-desc').textContent =
+    `${g.motivo} · ${g.cuenta} · ${fmt(g.cantidad)}`;
   closeModal('modal-detail');
+  openModal('modal-confirm-eliminar');
+}
+
+function confirmarEliminar() {
+  gastos = gastos.filter(x => x.id !== window._eliminarId);
+  saveLocal();
+  closeModal('modal-confirm-eliminar');
   showToast('Gasto eliminado');
   renderGastos(); renderMenu();
 }
@@ -1112,7 +1162,8 @@ function exportarBackup() {
     version: 1, fecha: today(),
     gastos, historico, nextId, nextAhorroId,
     cuentasAhorro, excepciones,
-    catalogoCuentas, catalogoMotivos, catalogoComentarios
+    catalogoCuentas, catalogoMotivos, catalogoComentarios,
+    presupuesto: PRESUPUESTO
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -1144,7 +1195,7 @@ function importarBackup() {
       if (data.excepciones)         excepciones       = data.excepciones;
       if (data.catalogoCuentas)     catalogoCuentas   = data.catalogoCuentas;
       if (data.catalogoMotivos)     catalogoMotivos   = data.catalogoMotivos;
-      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios;
+      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === "string" ? c : (c.nombre || c.Nombre || "")).filter(Boolean);
       if (data.cuentasAhorro)       cuentasAhorro     = data.cuentasAhorro.map(normAhorro);
       saveLocal();
       actualizarSelectCuentas(); actualizarSelectMotivos();
@@ -1214,6 +1265,55 @@ async function importarDesdeSheets() {
   } finally {
     document.getElementById('loading').style.display = 'none';
   }
+}
+
+
+// ════════════════════════════════════════════════════════════
+//  NOTIFICACIONES DE CORTE PRÓXIMO
+// ════════════════════════════════════════════════════════════
+function verificarCortesProximos() {
+  const cfg = getCortesConfig();
+  const hoy = new Date();
+  const alertas = [];
+  Object.entries(cfg).forEach(([cuenta, c]) => {
+    const { hasta } = getPeriodoActual(c, cuenta);
+    const dias = Math.ceil((hasta - hoy) / 864e5);
+    if (dias >= 0 && dias <= 3) {
+      alertas.push({ cuenta, dias, hasta });
+    }
+  });
+  if (!alertas.length) return;
+  // Mostrar banner en el menú
+  const banner = document.getElementById('banner-cortes');
+  if (!banner) return;
+  banner.innerHTML = alertas.map(a =>
+    `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:12px;color:var(--text)">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${getCuentaColor(a.cuenta)};margin-right:6px"></span>
+        ${a.cuenta}
+      </span>
+      <span style="font-size:12px;font-weight:600;color:${a.dias===0?'var(--red)':'var(--orange)'}">
+        ${a.dias===0?'Corte hoy':a.dias===1?'Mañana':a.dias+' días'}
+      </span>
+    </div>`
+  ).join('');
+  banner.style.display = 'block';
+}
+
+// ── Presupuesto configurable ─────────────────────────────────
+function abrirAjustes() {
+  document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
+  openModal('modal-ajustes');
+}
+
+function guardarAjustes() {
+  const val = parseFloat(document.getElementById('ajuste-presupuesto').value);
+  if (!val || val <= 0) { showToast('Ingresa un presupuesto válido'); return; }
+  PRESUPUESTO = val;
+  saveLocal();
+  closeModal('modal-ajustes');
+  renderMenu();
+  showToast('Presupuesto actualizado ✓');
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
@@ -1384,15 +1484,27 @@ function actualizarSelectMotivos() {
 function openComentarioDropdown() {
   const dropdown = document.getElementById('comentario-dropdown');
   const input    = document.getElementById('f-comentarios-input');
-  const q = input.value.toLowerCase();
-  const items = q
-    ? catalogoComentarios.filter(c => c.toLowerCase().includes(q))
-    : catalogoComentarios;
-  if (!items.length) { dropdown.style.display = 'none'; return; }
-  dropdown.innerHTML = items.map(c =>
-    `<div onclick="seleccionarComentario('${c.replace(/'/g,"\'")}')"`+
-    ` style="padding:10px 12px;font-size:13px;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)">${c}</div>`
+  const q        = input.value.trim().toLowerCase();
+
+  // Normalizar: el catálogo puede tener strings u objetos {nombre:...}
+  const todos = (catalogoComentarios || []).map(c =>
+    typeof c === 'string' ? c : (c.nombre || c.Nombre || String(c))
+  ).filter(Boolean);
+
+  const items = q ? todos.filter(c => c.toLowerCase().includes(q)) : todos;
+
+  let html = items.map(c =>
+    `<div onmousedown="event.preventDefault();seleccionarComentario('${c.replace(/'/g,'&#39;').replace(/"/g,'&quot;')}')"
+      style="padding:11px 14px;font-size:14px;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)">${c}</div>`
   ).join('');
+
+  if (q && !todos.some(c => c.toLowerCase() === q)) {
+    html += `<div onmousedown="event.preventDefault();seleccionarComentario('${input.value.replace(/'/g,'&#39;').replace(/"/g,'&quot;')}')"
+      style="padding:11px 14px;font-size:13px;color:var(--green);cursor:pointer;font-weight:600">+ Usar "${input.value}"</div>`;
+  }
+
+  if (!html) { dropdown.style.display = 'none'; return; }
+  dropdown.innerHTML = html;
   dropdown.style.display = 'block';
 }
 
