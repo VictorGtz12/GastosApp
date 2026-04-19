@@ -156,7 +156,6 @@ async function syncSheetsBackground() {
       signal: controller.signal,
       redirect: 'follow'
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
     if (result.error) throw new Error(result.error);
     console.log('Sheets sync OK — gastos:', result.semana?.length, 'histórico:', result.historico?.length);
@@ -2110,7 +2109,8 @@ window.addEventListener('DOMContentLoaded', () => {
   actualizarSelectMotivos();
   showTab('menu');
   document.addEventListener('click', cerrarDropdownComentario);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  // Service worker desactivado
+  // if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 
   // Mostrar banner de recordatorio de actualizar
   mostrarBannerActualizar();
