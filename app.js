@@ -1,6 +1,5 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
-//  Cambia SCRIPT_URL por tu URL de Apps Script publicada
 // ════════════════════════════════════════════════════════════
 
 // Google Sheets ya no se usa como base de datos principal.
@@ -218,7 +217,6 @@ async function uploadSnapshot() {
     const ts = new Date().toISOString();
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
-    console.log('Upload OK — nuevo SHA:', newSha?.slice(0,8));
     return true;
   } catch(e) { console.warn('upload error:', e.message); return false; }
 }
@@ -239,7 +237,6 @@ async function downloadSnapshot() {
     const cachedSha = localStorage.getItem('githubSha');
     // Si el SHA coincide Y hay datos locales -> sin cambios remotos, no aplicar
     if (remoteSha && remoteSha === cachedSha && gastos.length > 0) {
-      console.log('Sin cambios remotos (SHA igual)');
       return true;
     }
     // Hay cambios o no hay datos -> aplicar snapshot
@@ -252,7 +249,6 @@ async function downloadSnapshot() {
       const ts = new Date().toISOString();
       localStorage.setItem('lastSync', ts);
       localStorage.setItem('localModified', ts);
-      console.log('Download OK — SHA:', remoteSha?.slice(0,8), 'gastos:', gastos.length);
     }
     return ok;
   } catch(e) { console.warn('download error:', e.message); return false; }
@@ -376,14 +372,14 @@ function mostrarEstadoSync(ok) {
     el.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
     el.style.color = 'var(--green)';
   } else {
-    el.textContent = usingSheets() ? '⚠️ Sin sync' : '';
+    el.textContent = usingGithub() ? '⚠️ Sin sync' : '';
     el.style.color = 'var(--orange)';
   }
 }
 
 function mostrarBannerActualizar() {
   const status = document.getElementById('sync-status');
-  if (status && usingSheets()) {
+  if (status && usingGithub()) {
     status.style.display = 'inline';
     status.textContent = '🔄 ...';
     status.style.color = 'var(--text3)';
@@ -1501,44 +1497,6 @@ function exportarBackupExcel() {
 }
 
 // Importar desde Google Sheets (migración única)
-async function importarDesdeSheets() {
-  const url = prompt('Pega la URL de tu Apps Script para importar datos de Google Sheets:');
-  if (!url || !url.includes('script.google.com')) {
-    showToast('URL inválida'); return;
-  }
-  document.getElementById('loading').style.display = 'flex';
-  try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 20000);
-    const res    = await fetch(`${url}?action=getAll`, { signal: controller.signal });
-    const result = await res.json();
-    if (result.error) throw new Error(result.error);
-    // Aplicar datos de Sheets
-    if (result.semana)    gastos    = (result.semana   ||[]).map(normGasto);
-    if (result.historico) historico = (result.historico||[]).map(normGasto);
-    if (result.excepciones) excepciones = result.excepciones || [];
-    if (result.ahorros && result.ahorros.length) {
-      cuentasAhorro = result.ahorros.map(normAhorro);
-      const ids = cuentasAhorro.map(c=>c.id).filter(Boolean);
-      nextAhorroId = ids.length ? Math.max(...ids)+1 : 1;
-    }
-    const allIds = [...gastos,...historico].map(g=>Number(g.id)).filter(Boolean);
-    nextId = allIds.length ? Math.max(...allIds)+1 : 1;
-    if (result.catalogos) {
-      if (result.catalogos.cuentas?.length)     catalogoCuentas     = result.catalogos.cuentas;
-      if (result.catalogos.motivos?.length)     catalogoMotivos     = result.catalogos.motivos;
-      if (result.catalogos.comentarios?.length) catalogoComentarios = result.catalogos.comentarios;
-    }
-    saveLocal();
-    actualizarSelectCuentas(); actualizarSelectMotivos();
-    showTab('menu');
-    showToast(`Importado ${gastos.length} gastos + ${historico.length} histórico ✓`);
-  } catch(e) {
-    showToast('Error al importar: ' + e.message);
-  } finally {
-    document.getElementById('loading').style.display = 'none';
-  }
-}
 
 
 // ════════════════════════════════════════════════════════════
@@ -1890,21 +1848,6 @@ function verificarRecurrentesProximos() {
 
 
 // ── Detección de datos desactualizados ───────────────────────
-async function verificarDesactualizado() {
-  if (!usingSheets()) return false;
-  try {
-    const result = await Promise.race([
-      apiGet('getLastModified'),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
-    ]);
-    if (!result || !result.lastModified) return false;
-    const remoto = new Date(result.lastModified).getTime();
-    const local  = new Date(localStorage.getItem('lastSync') || 0).getTime();
-    return remoto > local + 5000;
-  } catch(e) {
-    return false;
-  }
-}
 
 function mostrarAvisoDesactualizado() {
   const status = document.getElementById('sync-status');
@@ -2044,6 +1987,87 @@ function _confirmarSi() {
   closeModal('modal-confirmar');
   if (typeof window._confirmarCallback === 'function') window._confirmarCallback();
   window._confirmarCallback = null;
+}
+
+
+// ── Búsqueda global ───────────────────────────────────────────
+let searchVisible = false;
+
+function toggleBusquedaGlobal() {
+  searchVisible = !searchVisible;
+  const wrap = document.getElementById('busqueda-global-wrap');
+  if (!wrap) return;
+  wrap.style.display = searchVisible ? 'block' : 'none';
+  if (searchVisible) {
+    const inp = document.getElementById('busqueda-global-input');
+    if (inp) { inp.focus(); inp.value = ''; }
+    document.getElementById('busqueda-global-results').innerHTML = '';
+  }
+}
+
+function busquedaGlobal() {
+  const q = (document.getElementById('busqueda-global-input').value || '').trim().toLowerCase();
+  const el = document.getElementById('busqueda-global-results');
+  if (!q || q.length < 2) { el.innerHTML = ''; return; }
+  const resultados = [];
+  gastos.filter(g =>
+    g.motivo.toLowerCase().includes(q) || g.cuenta.toLowerCase().includes(q) ||
+    (g.comentarios||'').toLowerCase().includes(q) || String(g.cantidad).includes(q)
+  ).forEach(g => resultados.push({ tipo:'Gasto', icon:getMotivoIcon(g.motivo), titulo:g.motivo,
+    sub:`${g.cuenta} · ${g.fecha}`, monto:fmt(g.cantidad), color:'var(--text)',
+    onClick:`openDetail(${g.id})` }));
+  historico.filter(g =>
+    g.motivo.toLowerCase().includes(q) || g.cuenta.toLowerCase().includes(q) ||
+    (g.comentarios||'').toLowerCase().includes(q) || String(g.cantidad).includes(q)
+  ).forEach(g => resultados.push({ tipo:'Historial', icon:getMotivoIcon(g.motivo), titulo:g.motivo,
+    sub:`${g.cuenta} · ${g.fecha}`, monto:fmt(g.cantidad), color:'var(--text2)',
+    onClick:`showTab('historico')` }));
+  cuentasAhorro.filter(c => c.nombre.toLowerCase().includes(q))
+    .forEach(c => resultados.push({ tipo:'Ahorro', icon:'🐷', titulo:c.nombre,
+      sub:`${c.grupo} · Meta: ${fmt(c.meta||0)}`, monto:fmt(saldoCuenta(c)), color:'var(--purple)',
+      onClick:`showTab('ahorros')` }));
+  recurrentes.filter(r => r.nombre.toLowerCase().includes(q) || r.cuenta.toLowerCase().includes(q))
+    .forEach(r => resultados.push({ tipo:'Recurrente', icon:'🔄', titulo:r.nombre,
+      sub:`${r.cuenta} · Día ${r.dia}`, monto:fmt(r.cantidad), color:'var(--accent2)',
+      onClick:`showTab('recurrentes')` }));
+  if (!resultados.length) {
+    el.innerHTML = '<div style="padding:12px;text-align:center;font-size:13px;color:var(--text3)">Sin resultados</div>';
+    return;
+  }
+  el.innerHTML = resultados.slice(0,20).map(r => `
+    <div onclick="${r.onClick};toggleBusquedaGlobal()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer">
+      <span style="font-size:18px">${r.icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:${r.color};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.titulo}</div>
+        <div style="font-size:10px;color:var(--text3)">${r.tipo} · ${r.sub}</div>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:${r.color};flex-shrink:0">${r.monto}</div>
+    </div>`).join('');
+}
+
+
+// ── Excepciones de corte ──────────────────────────────────────
+function guardarExcepcion() {
+  const cuenta    = document.getElementById('exc-cuenta').textContent;
+  const fechaNueva = document.getElementById('exc-fecha-nueva').value;
+  const nota      = document.getElementById('exc-nota').value.trim();
+  if (!fechaNueva) { showToast('Selecciona una fecha'); return; }
+  // Remover excepción previa para este período si existe
+  const periodoKey = document.getElementById('exc-periodo-key')?.value || '';
+  excepciones = excepciones.filter(e => !(e.Cuenta === cuenta && e.FechaOriginal === periodoKey));
+  excepciones.push({ Cuenta: cuenta, FechaOriginal: periodoKey, FechaExcepcion: fechaNueva, Nota: nota });
+  saveLocal();
+  closeModal('modal-excepcion');
+  showToast('Excepción guardada ✓');
+  renderCortes();
+}
+
+
+function nuevoComentarioCat() {
+  document.getElementById('modal-cat-comentario-titulo').textContent = 'Nuevo lugar';
+  document.getElementById('input-cat-comentario').value = '';
+  window._editComentarioIdx = null;
+  openModal('modal-cat-comentario');
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
@@ -2277,7 +2301,7 @@ function editarComentario(i) {
   openModal('modal-cat-comentario');
 }
 
-async function guardarComentario_cat() {
+async function guardarComentarioCat() {
   const nombre = document.getElementById('ccom-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre del comentario'); return; }
   if (window._editComentarioIdx !== null) {
@@ -2418,7 +2442,7 @@ function mostrarBannerActualizar() {
   const status = document.getElementById('sync-status');
   if (status) {
     status.style.display = 'inline';
-    if (usingSheets()) {
+    if (usingGithub()) {
       status.textContent = '🔄 Sync...';
       status.style.color = 'var(--text3)';
     } else {
