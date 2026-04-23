@@ -2345,6 +2345,14 @@ function renderConciliacion() {
       </div>
     </div>
     <div id="concil-lista">
+      ${window._noConcilBanco?.length && concilCuenta === concilCuenta ? `
+        <div style="background:rgba(255,94,122,.08);border:1px solid rgba(255,94,122,.2);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">⚠️ En banco pero no en app</div>
+          ${window._noConcilBanco.map(m => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
+            <span style="color:var(--text2)">${m.fecha} · ${m.descripcion}</span>
+            <span style="color:var(--red);font-weight:600">${fmt(m.monto)}</span>
+          </div>`).join('')}
+        </div>` : ''}
       ${!items.length
         ? '<div class="empty">Sin gastos en este período</div>'
         : items.map(g => {
@@ -2384,6 +2392,123 @@ function conciliarTodos() {
   const todosConcil = items.every(g => conciliados[clave][g.id]);
   items.forEach(g => { conciliados[clave][g.id] = !todosConcil; });
   renderConciliacion();
+}
+
+
+// ── Conciliación automática con PDF ──────────────────────────
+
+function subirEstadoCuenta() {
+  document.getElementById('concil-pdf-input').click();
+}
+
+async function procesarEstadoCuenta(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('concil-pdf-status');
+  status.style.display = 'block';
+  status.textContent = '📄 Leyendo PDF...';
+
+  try {
+    // Convertir PDF a base64
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = () => rej(new Error('Error al leer el archivo'));
+      r.readAsDataURL(file);
+    });
+
+    status.textContent = '🤖 Analizando con IA...';
+
+    // Obtener gastos del período actual para contexto
+    const clave = `${concilCuenta}|${concilPeriodo}`;
+    const [, hasta] = concilPeriodo.split('|');
+    const desde = periodoDesde(concilPeriodo);
+    const all = [...gastos, ...historico];
+    const items = gastosEnPeriodo(all, concilCuenta,
+      new Date(desde + 'T00:00:00'),
+      new Date(hasta + 'T23:59:59')
+    );
+
+    const prompt = `Eres un asistente de conciliación bancaria. Analiza este estado de cuenta bancario en PDF y extrae todos los cargos/movimientos de débito.
+
+Mis gastos registrados para el período ${desde} al ${hasta} en cuenta ${concilCuenta} son:
+${items.map(g => `- ID:${g.id} | ${g.fecha} | ${g.motivo}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
+
+Del PDF extrae todos los cargos y compáralos con mis gastos. Devuelve SOLO un JSON con este formato exacto, sin texto adicional:
+{
+  "movimientos_banco": [
+    { "fecha": "YYYY-MM-DD", "descripcion": "descripcion del cargo", "monto": 123.45 }
+  ],
+  "conciliados": [id_gasto1, id_gasto2],
+  "no_conciliados_banco": [
+    { "fecha": "YYYY-MM-DD", "descripcion": "cargo en banco no encontrado en app", "monto": 123.45 }
+  ],
+  "no_conciliados_app": [id_gasto3, id_gasto4],
+  "resumen": "breve explicación de lo encontrado"
+}
+
+Criterios de conciliación: considera conciliado si el monto coincide exactamente o tiene diferencia menor a $1, y la fecha está dentro de ±3 días. Si hay descripción similar al motivo o comentario, úsalo como pista adicional.`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    const data = await response.json();
+    const text = data.content.map(c => c.text || '').join('');
+
+    // Parsear JSON de respuesta
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No se pudo parsear la respuesta');
+    const resultado = JSON.parse(jsonMatch[0]);
+
+    // Aplicar conciliación automática
+    if (!conciliados[clave]) conciliados[clave] = {};
+    (resultado.conciliados || []).forEach(id => {
+      conciliados[clave][id] = true;
+    });
+    // Los no conciliados quedan desmarcados (false o undefined)
+    (resultado.no_conciliados_app || []).forEach(id => {
+      conciliados[clave][id] = false;
+    });
+
+    // Guardar movimientos del banco para mostrar
+    window._bancMovs = resultado.movimientos_banco || [];
+    window._noConcilBanco = resultado.no_conciliados_banco || [];
+
+    const concilCount = (resultado.conciliados || []).length;
+    const totalBanco = (resultado.movimientos_banco || []).length;
+    status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados automáticamente`;
+    if (resultado.resumen) {
+      status.textContent += ` · ${resultado.resumen}`;
+    }
+
+    renderConciliacion();
+
+    // Mostrar movimientos del banco no encontrados si hay
+    if (window._noConcilBanco?.length) {
+      showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
+    }
+
+  } catch(e) {
+    status.textContent = `❌ Error: ${e.message}`;
+    showToast('Error al procesar el PDF');
+  }
+
+  // Limpiar input para permitir subir el mismo archivo de nuevo
+  event.target.value = '';
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
