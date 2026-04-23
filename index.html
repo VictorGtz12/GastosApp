@@ -232,6 +232,9 @@
     <div class="drawer-item" id="drawer-recurrentes" onclick="closeDrawer();showTab('recurrentes')">
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Recurrentes y Deudas
     </div>
+    <div class="drawer-item" id="drawer-conciliacion" onclick="abrirConciliacion()">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Conciliación
+    </div>
     <div class="drawer-header" style="margin-top:8px">Configuración</div>
     <div class="drawer-item" onclick="closeDrawer();abrirAjustes()">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Ajustes
@@ -485,6 +488,21 @@
   </div>
 
 </div>
+
+  <!-- CONCILIACIÓN -->
+  <div class="content" id="content-conciliacion">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <div style="flex:1">
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Tarjeta</label>
+        <select id="concil-cuenta" onchange="actualizarPeriodosConcil()" style="width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;font-family:inherit"></select>
+      </div>
+      <div style="flex:1">
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Período</label>
+        <select id="concil-periodo" onchange="renderConciliacion()" style="width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;font-family:inherit"></select>
+      </div>
+    </div>
+    <div id="concil-results"></div>
+  </div>
 
 <!-- MODALES -->
 <div class="overlay" id="modal-corte-sem">
