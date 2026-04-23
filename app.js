@@ -2362,8 +2362,8 @@ function renderConciliacion() {
                 ${ok?'<span style="color:white;font-size:12px;font-weight:700">✓</span>':''}
               </div>
               <div style="flex:1;min-width:0">
-                <div style="font-size:13px;font-weight:600;color:${ok?'var(--green)':'var(--text)'};text-decoration:${ok?'none':'none'}">${g.motivo}${g.comentarios?' · <span style="font-weight:400;color:var(--text2)">${g.comentarios}</span>':''}</div>
-                <div style="font-size:11px;color:var(--text3)">${g.fecha}${g.ignorar?' · <span style="color:var(--orange)">Ignorado</span>':''}</div>
+                <div style="font-size:13px;font-weight:600;color:${ok?'var(--green)':'var(--text)'}">${g.motivo}${g.comentarios?' · '+g.comentarios:''}</div>
+                <div style="font-size:11px;color:var(--text3)">${g.fecha}${g.ignorar?' · Ignorado':''}</div>
               </div>
               <div style="font-size:14px;font-weight:700;color:${ok?'var(--green)':'var(--text)'};flex-shrink:0">${fmt(g.cantidad)}</div>
             </div>`;
@@ -2449,25 +2449,31 @@ Del PDF extrae todos los cargos y compáralos con mis gastos. Devuelve SOLO un J
 
 Criterios de conciliación: considera conciliado si el monto coincide exactamente o tiene diferencia menor a $1, y la fecha está dentro de ±3 días. Si hay descripción similar al motivo o comentario, úsalo como pista adicional.`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // Extraer texto del PDF usando PDF.js
+    status.textContent = '📄 Extrayendo texto del PDF...';
+    const pdfText = await extraerTextoPDF(base64);
+    if (!pdfText || pdfText.length < 50) throw new Error('No se pudo extraer texto del PDF');
+
+    status.textContent = '🤖 Analizando con IA...';
+
+    // Llamar a Claude via API proxy (GitHub Actions o endpoint propio)
+    // Por ahora usar el endpoint de claude.ai que ya tiene acceso
+    const apiUrl = localStorage.getItem('concilApiUrl') || '';
+    if (!apiUrl) {
+      // Sin proxy: hacer conciliación manual asistida con el texto extraído
+      mostrarTextoPDFParaConciliar(pdfText, items);
+      return;
+    }
+
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      })
+      body: JSON.stringify({ prompt, pdfText })
     });
 
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     const data = await response.json();
-    const text = data.content.map(c => c.text || '').join('');
+    const text = data.text || data.content || '';
 
     // Parsear JSON de respuesta
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -2509,6 +2515,70 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
 
   // Limpiar input para permitir subir el mismo archivo de nuevo
   event.target.value = '';
+}
+
+
+// ── Extraer texto de PDF (usando PDF.js si disponible) ────────
+async function extraerTextoPDF(base64) {
+  try {
+    // Cargar PDF.js si no está disponible
+    if (!window.pdfjsLib) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    const pdfData = atob(base64);
+    const bytes = new Uint8Array(pdfData.length);
+    for (let i = 0; i < pdfData.length; i++) bytes[i] = pdfData.charCodeAt(i);
+    const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(item => item.str).join(' ') + '\n';
+    }
+    return text;
+  } catch(e) {
+    console.warn('PDF.js error:', e);
+    return null;
+  }
+}
+
+// ── Conciliación asistida sin IA ─────────────────────────────
+function mostrarTextoPDFParaConciliar(pdfText, items) {
+  // Extraer montos del texto del PDF usando regex
+  const lineas = pdfText.split('\n').filter(l => l.trim());
+  const montoRegex = /\$?([\d,]+\.\d{2})/g;
+  const montosEncontrados = new Set();
+  lineas.forEach(l => {
+    let m;
+    while ((m = montoRegex.exec(l)) !== null) {
+      const val = parseFloat(m[1].replace(',',''));
+      if (val > 0) montosEncontrados.add(val);
+    }
+  });
+
+  // Marcar automáticamente los gastos cuyo monto aparece en el PDF
+  const clave = `${concilCuenta}|${concilPeriodo}`;
+  if (!conciliados[clave]) conciliados[clave] = {};
+  let conciliados_count = 0;
+  items.forEach(g => {
+    const encontrado = [...montosEncontrados].some(m => Math.abs(m - g.cantidad) < 1);
+    conciliados[clave][g.id] = encontrado;
+    if (encontrado) conciliados_count++;
+  });
+
+  const status = document.getElementById('concil-pdf-status');
+  status.textContent = `✅ ${conciliados_count} de ${items.length} gastos conciliados por monto. Revisa los desmarcados manualmente.`;
+  renderConciliacion();
+  if (conciliados_count < items.length) {
+    showToast(`${items.length - conciliados_count} gasto(s) sin conciliar — revisa manualmente`);
+  }
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
