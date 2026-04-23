@@ -2690,7 +2690,7 @@ function toggleTema() {
   aplicarTema(localStorage.getItem('tema')==='claro' ? 'oscuro' : 'claro');
 }
 // ── Ocultar/mostrar total ahorrado ───────────────────────────
-let ahorroVisible = true;
+let ahorroVisible = false;
 function toggleAhorroVisible() {
   ahorroVisible = !ahorroVisible;
   aplicarVisibilidadAhorros();
@@ -2733,6 +2733,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Renderizar menú con datos locales INMEDIATAMENTE
   showTab('menu');
   renderMenu();
+  aplicarVisibilidadAhorros(); // aplicar estado inicial (oculto)
   document.addEventListener('click', cerrarDropdownComentario);
   iniciarAutoSync();
   mostrarBannerActualizar();
