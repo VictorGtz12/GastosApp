@@ -622,10 +622,10 @@ function renderGastos() {
         <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}</div>
         <div class="gasto-meta">${g.cuenta}${g.comentarios?' · '+g.comentarios:''} · ${g.fecha}</div>
         <div class="badges">
-          ${g.ignorar ? '<span class="badge ignorar">🚫 Ignorado</span>'
-            : iE ? '<span class="badge ext">📤 Externo</span>'
-            : iP ? '<span class="badge ext-paid">✅ Cobrado</span>'
-            : `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`}
+          ${g.ignorar ? '<span class="badge ignorar">🚫 Ignorado</span>' : ''}
+          ${!g.ignorar && iE ? '<span class="badge ext">📤 Externo</span>' : ''}
+          ${!g.ignorar && iP ? '<span class="badge ext-paid">✅ Cobrado</span>' : ''}
+          ${!iE && !iP ? `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>` : ''}
           ${gastoPendienteSync(g) ? '<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);border:1px solid rgba(255,159,67,.3);padding:1px 6px;border-radius:6px;font-weight:600">⬆️ Sin sync</span>' : ''}
         </div>
       </div>
@@ -1358,10 +1358,10 @@ function openDetail(id) {
     ${g.comentarios?`<div style="font-size:12px;color:var(--text2);margin-bottom:9px">📝 ${g.comentarios}</div>`:''}
     ${g.ahorroDesc?`<div style="font-size:12px;color:var(--purple);margin-bottom:9px">🐷 Descontado de: ${g.ahorroDesc}</div>`:''}
     <div class="badges" style="margin-bottom:12px">
-      ${g.ignorar?'<span class="badge ignorar">🚫 Ignorado</span>'
-        :iE?'<span class="badge ext">📤 Externo pendiente de cobro</span>'
-        :iP?'<span class="badge ext-paid">✅ Externo cobrado</span>'
-        :`<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`}
+      ${g.ignorar?'<span class="badge ignorar">🚫 Ignorado</span>':''}
+      ${!g.ignorar && iE?'<span class="badge ext">📤 Externo pendiente de cobro</span>':''}
+      ${!g.ignorar && iP?'<span class="badge ext-paid">✅ Externo cobrado</span>':''}
+      ${!iE && !iP?`<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`:''}
     </div>
     ${iE?`<button class="btn-marcar-pagado" onclick="marcarExterno(${g.id},'pagado');closeModal('modal-detail');renderGastos()">✅ Marcar como cobrado</button>`:''}
     ${iP?`<button class="btn-marcar-pend" onclick="marcarExterno(${g.id},'externo');closeModal('modal-detail');renderGastos()">↩ Marcar como pendiente</button>`:''}
