@@ -347,15 +347,16 @@ function verificarPendientes()        { mostrarEstadoSync(true); }
 
 function iniciarAutoSync() {
   if (!usingGithub()) return;
+  // Respaldo: cada 2 min reintenta si quedó algo sin subir
   setInterval(async () => {
     if (syncBloqueado) return;
     const lm = new Date(localStorage.getItem('localModified')||0).getTime();
     const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
     if (lm > ls + 3000) {
       const up = await uploadSnapshot();
-      if (up) { localStorage.setItem('lastSync', new Date().toISOString()); localStorage.setItem('localModified', localStorage.getItem('lastSync')); mostrarEstadoSync(true); }
+      if (up) mostrarEstadoSync(true);
     }
-  }, 5 * 60 * 1000);
+  }, 2 * 60 * 1000);
 }
 
 // Configura la URL de Sheets
@@ -414,20 +415,30 @@ function saveLocal() {
     localStorage.setItem('appData_v1', JSON.stringify(data));
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
-    // Mostrar indicador de pendientes en topbar
-    const syncEl = document.getElementById('sync-status');
-    if (syncEl && usingGithub()) {
-      const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
-      const localMod = new Date(ts).getTime();
-      if (localMod > lastSync + 3000) {
-        syncEl.style.display = 'inline';
-        syncEl.textContent   = '⬆️ Sin subir';
-        syncEl.style.color   = 'var(--orange)';
-        syncEl.style.cursor  = 'pointer';
-        syncEl.onclick       = () => refreshData();
-        const b = document.getElementById('banner-pendientes');
-        if (b) b.style.display = 'flex';
-      }
+    // Sincronizar automáticamente en segundo plano
+    if (usingGithub() && !syncBloqueado) {
+      clearTimeout(window._autoSyncTimer);
+      window._autoSyncTimer = setTimeout(async () => {
+        const up = await uploadSnapshot();
+        if (up) {
+          mostrarEstadoSync(true);
+          // Ocultar banner si estaba visible
+          const b = document.getElementById('banner-pendientes');
+          if (b) b.style.display = 'none';
+        } else {
+          // Solo mostrar aviso si falló la red
+          const syncEl = document.getElementById('sync-status');
+          if (syncEl) {
+            syncEl.style.display = 'inline';
+            syncEl.textContent   = '⬆️ Sin subir';
+            syncEl.style.color   = 'var(--orange)';
+            syncEl.style.cursor  = 'pointer';
+            syncEl.onclick       = () => refreshData();
+          }
+          const b = document.getElementById('banner-pendientes');
+          if (b) b.style.display = 'flex';
+        }
+      }, 1500); // esperar 1.5s por si hay más cambios seguidos
     }
   } catch(e) {
     console.warn('saveLocal error:', e);
