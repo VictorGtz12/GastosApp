@@ -514,7 +514,7 @@ function normAhorro(c) {
 
 
 // ── Navegación ────────────────────────────────────────────────
-const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes'];
+const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes','conciliacion'];
 let tabActualGlobal = 'menu';
 
 function showTab(tab) {
@@ -525,7 +525,7 @@ function showTab(tab) {
     if (tabEl) tabEl.classList.toggle('active', t === tab);
   });
   // Marcar activo en drawer
-  ['historico','catalogos','recurrentes'].forEach(t => {
+  ['historico','catalogos','recurrentes','conciliacion'].forEach(t => {
     const el = document.getElementById('drawer-' + t);
     if (el) el.classList.toggle('active-item', t === tab);
   });
@@ -534,7 +534,7 @@ function showTab(tab) {
     nuevo: editingId ? 'Editar Gasto' : 'Nuevo Gasto',
     externos:'Externos', cortes:'Cortes por Tarjeta',
     ahorros:'Mis Ahorros', historico:'Historial',
-    catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas'
+    catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas', conciliacion:'Conciliación'
   };
   document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
   if (tab === 'nuevo' && !editingId) {
@@ -547,6 +547,7 @@ function showTab(tab) {
   if (tab === 'historico')   renderHistorico();
   if (tab === 'catalogos')   renderCatalogos();
   if (tab === 'recurrentes') renderRecurrentes();
+  if (tab === 'conciliacion') renderConciliacion();
 }
 
 // ── Menú ──────────────────────────────────────────────────────
@@ -2237,6 +2238,141 @@ function nuevoComentarioCat() {
   document.getElementById('input-cat-comentario').value = '';
   window._editComentarioIdx = null;
   openModal('modal-cat-comentario');
+}
+
+
+// ── Conciliación de estado de cuenta ─────────────────────────
+let concilCuenta   = '';
+let concilPeriodo  = '';
+let conciliados    = {}; // { gastoId: true/false }
+
+function abrirConciliacion() {
+  closeDrawer();
+  // Poblar selector de cuentas con corte
+  const cfg = getCortesConfig();
+  const sel = document.getElementById('concil-cuenta');
+  sel.innerHTML = Object.keys(cfg).map(c => `<option value="${c}">${c}</option>`).join('');
+  concilCuenta = sel.value || Object.keys(cfg)[0] || '';
+  actualizarPeriodosConcil();
+  showTab('conciliacion');
+}
+
+function actualizarPeriodosConcil() {
+  const cuenta = document.getElementById('concil-cuenta').value;
+  concilCuenta = cuenta;
+  // Recopilar períodos únicos para esta cuenta
+  const all = [...gastos, ...historico];
+  const periodos = [...new Set(
+    all.filter(g => g.cuenta === cuenta && g.periodoCorte)
+       .map(g => g.periodoCorte)
+  )].sort((a,b) => b.localeCompare(a)); // más reciente primero
+
+  const selP = document.getElementById('concil-periodo');
+  if (!periodos.length) {
+    selP.innerHTML = '<option>Sin períodos disponibles</option>';
+    document.getElementById('concil-results').innerHTML =
+      '<div class="empty">Sin gastos con período de corte para esta cuenta</div>';
+    return;
+  }
+  selP.innerHTML = periodos.map(p => {
+    const [, hasta] = p.split('|');
+    const [, desde] = [p, periodoDesde(p)];
+    return `<option value="${p}">${periodoDesde(p)} → ${hasta}</option>`;
+  }).join('');
+  concilPeriodo = selP.value;
+  renderConciliacion();
+}
+
+function renderConciliacion() {
+  const cuenta  = document.getElementById('concil-cuenta')?.value || concilCuenta;
+  const periodo = document.getElementById('concil-periodo')?.value || concilPeriodo;
+  concilCuenta  = cuenta;
+  concilPeriodo = periodo;
+
+  const el = document.getElementById('concil-results');
+  if (!el || !periodo) return;
+
+  const [, hasta] = periodo.split('|');
+  const desde     = periodoDesde(periodo);
+  const all       = [...gastos, ...historico];
+  const items     = gastosEnPeriodo(all, cuenta,
+    new Date(desde + 'T00:00:00'),
+    new Date(hasta + 'T23:59:59')
+  ).sort((a,b) => String(a.fecha).localeCompare(String(b.fecha)) || a.id - b.id);
+
+  const clave = `${cuenta}|${periodo}`;
+  if (!conciliados[clave]) conciliados[clave] = {};
+  const conc = conciliados[clave];
+
+  const totalPeriodo  = items.reduce((s,g) => s + g.cantidad, 0);
+  const totalConcil   = items.filter(g => conc[g.id]).reduce((s,g) => s + g.cantidad, 0);
+  const totalPendiente= totalPeriodo - totalConcil;
+  const todosConcil   = items.length > 0 && items.every(g => conc[g.id]);
+
+  // Header de resumen
+  el.innerHTML = `
+    <div style="background:var(--bg2);border-radius:12px;padding:12px 14px;margin-bottom:14px;border:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:11px;color:var(--text2)">Total período</span>
+        <span style="font-size:14px;font-weight:700;color:var(--text)">${fmt(totalPeriodo)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:11px;color:var(--text2)">Conciliado</span>
+        <span style="font-size:14px;font-weight:700;color:var(--green)">${fmt(totalConcil)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:11px;color:var(--text2)">Pendiente</span>
+        <span style="font-size:14px;font-weight:700;color:${totalPendiente>0?'var(--orange)':'var(--green)'}">${fmt(totalPendiente)}</span>
+      </div>
+      <div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${totalPeriodo>0?Math.round(totalConcil/totalPeriodo*100):0}%;background:var(--green);border-radius:3px;transition:width .3s"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button onclick="conciliarTodos()" style="flex:1;padding:7px;border-radius:8px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer">
+          ${todosConcil ? '☐ Desmarcar todos' : '☑ Marcar todos'}
+        </button>
+      </div>
+    </div>
+    <div id="concil-lista">
+      ${!items.length
+        ? '<div class="empty">Sin gastos en este período</div>'
+        : items.map(g => {
+            const ok = !!conc[g.id];
+            return `<div onclick="toggleConcil(${g.id})" style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;border:1px solid ${ok?'rgba(34,211,165,.3)':'var(--border)'};background:${ok?'rgba(34,211,165,.06)':'var(--bg2)'};margin-bottom:8px;cursor:pointer;transition:all .2s">
+              <div style="width:22px;height:22px;border-radius:50%;border:2px solid ${ok?'var(--green)':'var(--border2)'};background:${ok?'var(--green)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s">
+                ${ok?'<span style="color:white;font-size:12px;font-weight:700">✓</span>':''}
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600;color:${ok?'var(--green)':'var(--text)'};text-decoration:${ok?'none':'none'}">${g.motivo}${g.comentarios?' · <span style="font-weight:400;color:var(--text2)">${g.comentarios}</span>':''}</div>
+                <div style="font-size:11px;color:var(--text3)">${g.fecha}${g.ignorar?' · <span style="color:var(--orange)">Ignorado</span>':''}</div>
+              </div>
+              <div style="font-size:14px;font-weight:700;color:${ok?'var(--green)':'var(--text)'};flex-shrink:0">${fmt(g.cantidad)}</div>
+            </div>`;
+          }).join('')
+      }
+    </div>`;
+}
+
+function toggleConcil(gastoId) {
+  const clave = `${concilCuenta}|${concilPeriodo}`;
+  if (!conciliados[clave]) conciliados[clave] = {};
+  conciliados[clave][gastoId] = !conciliados[clave][gastoId];
+  renderConciliacion();
+}
+
+function conciliarTodos() {
+  const clave = `${concilCuenta}|${concilPeriodo}`;
+  if (!conciliados[clave]) conciliados[clave] = {};
+  const [, hasta] = concilPeriodo.split('|');
+  const desde = periodoDesde(concilPeriodo);
+  const all = [...gastos, ...historico];
+  const items = gastosEnPeriodo(all, concilCuenta,
+    new Date(desde + 'T00:00:00'),
+    new Date(hasta + 'T23:59:59')
+  );
+  const todosConcil = items.every(g => conciliados[clave][g.id]);
+  items.forEach(g => { conciliados[clave][g.id] = !todosConcil; });
+  renderConciliacion();
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
