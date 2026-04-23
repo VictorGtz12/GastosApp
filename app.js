@@ -2513,9 +2513,7 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
     renderConciliacion();
 
     // Mostrar movimientos del banco no encontrados si hay
-    if (window._noConcilBanco?.length) {
-      showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
-    }
+    showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
 
   } catch(e) {
     status.textContent = `❌ Error: ${e.message}`;
