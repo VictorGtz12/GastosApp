@@ -499,6 +499,14 @@
         <select id="concil-periodo" onchange="renderConciliacion()" style="width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;font-family:inherit"></select>
       </div>
     </div>
+    <!-- Botón subir estado de cuenta -->
+    <div style="margin-bottom:14px">
+      <button onclick="subirEstadoCuenta()" style="width:100%;padding:11px;border-radius:12px;border:1px dashed rgba(108,99,255,.4);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px">
+        <span>📄</span> <span>Conciliar con estado de cuenta PDF</span>
+      </button>
+      <input type="file" id="concil-pdf-input" accept=".pdf" style="display:none" onchange="procesarEstadoCuenta(event)">
+      <div id="concil-pdf-status" style="font-size:11px;color:var(--text3);text-align:center;margin-top:6px;display:none"></div>
+    </div>
     <div id="concil-results"></div>
   </div>
 
