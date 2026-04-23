@@ -2560,62 +2560,113 @@ async function extraerTextoPDF(base64) {
 
 // ── Conciliación asistida sin IA ─────────────────────────────
 function mostrarTextoPDFParaConciliar(pdfText, items) {
-  // Extraer líneas con montos del texto del PDF
-  const lineas = pdfText.split('\n').filter(l => l.trim());
-  const montoRegex = /\$?([\d,]+\.\d{2})/g;
+  // ── Palabras clave que indican que una línea NO es una transacción ──
+  const EXCLUIR_KEYWORDS = [
+    'número de cuenta', 'numero de cuenta', 'cuenta número', 'no. de cuenta',
+    'límite de crédito', 'limite de credito', 'saldo anterior', 'saldo al corte',
+    'saldo mínimo', 'saldo minimo', 'pago mínimo', 'pago minimo',
+    'pago para no generar', 'fecha límite', 'fecha limite', 'fecha de corte',
+    'fecha de pago', 'período', 'periodo', 'fecha siguiente',
+    'total de cargos', 'total cargos', 'total de abonos', 'total abonos',
+    'saldo total', 'importe total', 'total a pagar',
+    'clabe', 'sucursal', 'página', 'pagina', 'hoja',
+    'tarjeta', 'tarjetahabiente', 'número de tarjeta', 'no. tarjeta',
+    'estado de cuenta', 'resumen', 'subtotal',
+    'intereses', 'iva de intereses', 'comisión', 'comision',
+    'saldo promedio', 'cat promedio', 'tasa', 'anual',
+  ];
 
-  // Mapear cada línea con su monto
+  // ── Palabras clave que sugieren que es una transacción real ──
+  const CARGO_KEYWORDS = [
+    'compra', 'cargo', 'pago', 'retiro', 'disposicion', 'disposición',
+    'transferencia', 'spei', 'compr', 'purchase', 'amazon', 'walmart',
+    'oxxo', 'uber', 'netflix', 'spotify', 'starbucks', 'mercado',
+    'sam\'s', 'costco', 'coppel', 'liverpool', 'sanborn', 'telcel',
+    'att', 'telmex', 'bbva', 'banamex', 'hsbc', 'santander', 'banorte',
+    'gasolina', 'gas', 'farmacia', 'restaurante', 'supermercado',
+  ];
+
+  // ── Calcular rango de montos esperado basado en los gastos del período ──
+  const montoMax = items.length
+    ? Math.max(...items.map(g => g.cantidad)) * 3  // hasta 3x el gasto mayor
+    : 50000;
+  const montoMin = 1; // mínimo $1
+
+  const lineas = pdfText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
+
+  // ── Filtrar líneas candidatas a ser transacciones ──
+  const lineasCandidatas = lineas.filter(linea => {
+    const lower = linea.toLowerCase();
+
+    // Excluir si contiene palabras de metadata del estado de cuenta
+    if (EXCLUIR_KEYWORDS.some(kw => lower.includes(kw))) return false;
+
+    // Excluir si la línea es muy corta (menos de 6 chars) o solo dígitos
+    if (linea.length < 6) return false;
+    if (/^\d+$/.test(linea.replace(/[,.\s]/g, ''))) return false;
+
+    // Excluir líneas que solo tienen fecha (DD/MM/YYYY o similar)
+    if (/^\d{1,2}[\/\-]\d{1,2}([\/\-]\d{2,4})?$/.test(linea)) return false;
+
+    // Debe tener al menos un número que parezca monto
+    const tieneMontoValido = /\$?([\d,]{1,9}\.\d{2})/.test(linea);
+    return tieneMontoValido;
+  });
+
+  // ── Extraer montos de las líneas candidatas ──
   const lineasConMonto = [];
-  lineas.forEach(linea => {
+  lineasCandidatas.forEach(linea => {
     const montos = [];
+    const rx = /\$?([\d,]{1,9}\.\d{2})/g;
     let m;
-    const rx = /\$?([\d,]+\.\d{2})/g;
     while ((m = rx.exec(linea)) !== null) {
-      const val = parseFloat(m[1].replace(/,/g,''));
-      if (val > 0 && val < 1000000) montos.push(val);
+      const val = parseFloat(m[1].replace(/,/g, ''));
+      // Solo incluir montos dentro del rango razonable
+      if (val >= montoMin && val <= montoMax) montos.push(val);
     }
     if (montos.length) {
-      lineasConMonto.push({ texto: linea.trim(), montos });
+      lineasConMonto.push({ texto: linea, montos });
     }
   });
 
-  // Marcar automáticamente los gastos cuyo monto aparece en el PDF
+  // ── Conciliar: buscar cada gasto en las líneas del PDF ──
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
   let conciliados_count = 0;
-  const montosUsados = new Set();
+  const lineasUsadas = new Set();
 
   items.forEach(g => {
-    const lineaMatch = lineasConMonto.find(l =>
-      l.montos.some(m => Math.abs(m - g.cantidad) < 1)
-    );
+    // Buscar línea cuyo monto coincida (±$1 de tolerancia)
+    let lineaMatch = null;
+    let idxMatch = -1;
+    lineasConMonto.forEach((l, idx) => {
+      if (lineasUsadas.has(idx)) return; // no reusar la misma línea
+      if (l.montos.some(m => Math.abs(m - g.cantidad) < 1)) {
+        if (!lineaMatch) { lineaMatch = l; idxMatch = idx; }
+      }
+    });
     const encontrado = !!lineaMatch;
     conciliados[clave][g.id] = encontrado;
     if (encontrado) {
       conciliados_count++;
-      // Marcar este monto como usado
-      lineaMatch.montos.forEach(m => {
-        if (Math.abs(m - g.cantidad) < 1) montosUsados.add(m);
-      });
+      lineasUsadas.add(idxMatch);
     }
   });
 
-  // Encontrar montos del PDF que no coincidieron con ningún gasto
+  // ── Montos del PDF no encontrados en los gastos registrados ──
   window._noConcilBanco = [];
-  lineasConMonto.forEach(linea => {
+  lineasConMonto.forEach((linea, idx) => {
+    if (lineasUsadas.has(idx)) return; // ya fue conciliado
     linea.montos.forEach(monto => {
-      // Si este monto no fue usado en ningún gasto
-      const yaUsado = items.some(g => Math.abs(g.cantidad - monto) < 1 && conciliados[clave][g.id]);
-      if (!yaUsado && monto > 0) {
-        // Evitar duplicados
-        const existe = window._noConcilBanco.some(x => Math.abs(x.monto - monto) < 0.01 && x.descripcion === linea.texto.slice(0,60));
-        if (!existe) {
-          window._noConcilBanco.push({
-            fecha: '',
-            descripcion: linea.texto.slice(0, 80),
-            monto
-          });
-        }
+      const existe = window._noConcilBanco.some(x =>
+        Math.abs(x.monto - monto) < 0.01 && x.descripcion === linea.texto.slice(0, 60)
+      );
+      if (!existe) {
+        window._noConcilBanco.push({
+          fecha: '',
+          descripcion: linea.texto.slice(0, 80),
+          monto
+        });
       }
     });
   });
