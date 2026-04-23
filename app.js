@@ -2560,15 +2560,22 @@ async function extraerTextoPDF(base64) {
 
 // ── Conciliación asistida sin IA ─────────────────────────────
 function mostrarTextoPDFParaConciliar(pdfText, items) {
-  // Extraer montos del texto del PDF usando regex
+  // Extraer líneas con montos del texto del PDF
   const lineas = pdfText.split('\n').filter(l => l.trim());
   const montoRegex = /\$?([\d,]+\.\d{2})/g;
-  const montosEncontrados = new Set();
-  lineas.forEach(l => {
+
+  // Mapear cada línea con su monto
+  const lineasConMonto = [];
+  lineas.forEach(linea => {
+    const montos = [];
     let m;
-    while ((m = montoRegex.exec(l)) !== null) {
-      const val = parseFloat(m[1].replace(',',''));
-      if (val > 0) montosEncontrados.add(val);
+    const rx = /\$?([\d,]+\.\d{2})/g;
+    while ((m = rx.exec(linea)) !== null) {
+      const val = parseFloat(m[1].replace(/,/g,''));
+      if (val > 0 && val < 1000000) montos.push(val);
+    }
+    if (montos.length) {
+      lineasConMonto.push({ texto: linea.trim(), montos });
     }
   });
 
@@ -2576,18 +2583,48 @@ function mostrarTextoPDFParaConciliar(pdfText, items) {
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
   let conciliados_count = 0;
+  const montosUsados = new Set();
+
   items.forEach(g => {
-    const encontrado = [...montosEncontrados].some(m => Math.abs(m - g.cantidad) < 1);
+    const lineaMatch = lineasConMonto.find(l =>
+      l.montos.some(m => Math.abs(m - g.cantidad) < 1)
+    );
+    const encontrado = !!lineaMatch;
     conciliados[clave][g.id] = encontrado;
-    if (encontrado) conciliados_count++;
+    if (encontrado) {
+      conciliados_count++;
+      // Marcar este monto como usado
+      lineaMatch.montos.forEach(m => {
+        if (Math.abs(m - g.cantidad) < 1) montosUsados.add(m);
+      });
+    }
+  });
+
+  // Encontrar montos del PDF que no coincidieron con ningún gasto
+  window._noConcilBanco = [];
+  lineasConMonto.forEach(linea => {
+    linea.montos.forEach(monto => {
+      // Si este monto no fue usado en ningún gasto
+      const yaUsado = items.some(g => Math.abs(g.cantidad - monto) < 1 && conciliados[clave][g.id]);
+      if (!yaUsado && monto > 0) {
+        // Evitar duplicados
+        const existe = window._noConcilBanco.some(x => Math.abs(x.monto - monto) < 0.01 && x.descripcion === linea.texto.slice(0,60));
+        if (!existe) {
+          window._noConcilBanco.push({
+            fecha: '',
+            descripcion: linea.texto.slice(0, 80),
+            monto
+          });
+        }
+      }
+    });
   });
 
   const status = document.getElementById('concil-pdf-status');
-  status.textContent = `✅ ${conciliados_count} de ${items.length} gastos conciliados por monto. Revisa los desmarcados manualmente.`;
+  const noBanco = window._noConcilBanco.length;
+  status.textContent = `✅ ${conciliados_count} de ${items.length} gastos conciliados por monto.`;
+  if (noBanco) status.textContent += ` · ${noBanco} cargo(s) en PDF sin registrar.`;
   renderConciliacion();
-  if (conciliados_count < items.length) {
-    showToast(`${items.length - conciliados_count} gasto(s) sin conciliar — revisa manualmente`);
-  }
 }
 
 // ── Catálogos ─────────────────────────────────────────────────
