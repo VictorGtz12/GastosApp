@@ -1674,6 +1674,8 @@ function verificarCortesProximos() {
 // ── Presupuesto configurable ─────────────────────────────────
 function abrirAjustes() {
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
+  const wu = document.getElementById('ajuste-worker-url');
+  if (wu) wu.value = localStorage.getItem('workerUrl') || '';
   openModal('modal-ajustes');
 }
 
@@ -2456,29 +2458,31 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
 
     status.textContent = '🤖 Analizando con IA...';
 
-    // Llamar a Claude via API proxy (GitHub Actions o endpoint propio)
-    // Por ahora usar el endpoint de claude.ai que ya tiene acceso
-    const apiUrl = localStorage.getItem('concilApiUrl') || '';
-    if (!apiUrl) {
-      // Sin proxy: hacer conciliación manual asistida con el texto extraído
+    // Llamar al Worker de Cloudflare como proxy
+    const workerUrl = localStorage.getItem('workerUrl') || '';
+    if (!workerUrl) {
+      // Sin Worker configurado: conciliación por monto
       mostrarTextoPDFParaConciliar(pdfText, items);
       return;
     }
 
-    const response = await fetch(apiUrl, {
+    const response = await fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, pdfText })
+      body: JSON.stringify({
+        pdfText,
+        gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
+        cuenta: concilCuenta,
+        periodo: concilPeriodo
+      })
     });
 
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
-    const data = await response.json();
-    const text = data.text || data.content || '';
+    if (!response.ok) throw new Error(`Worker error: ${response.status}`);
+    const resultado = await response.json();
+    if (resultado.error) throw new Error(resultado.error);
+    const text = JSON.stringify(resultado);
 
-    // Parsear JSON de respuesta
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No se pudo parsear la respuesta');
-    const resultado = JSON.parse(jsonMatch[0]);
+    // resultado ya viene como objeto JSON del Worker
 
     // Aplicar conciliación automática
     if (!conciliados[clave]) conciliados[clave] = {};
