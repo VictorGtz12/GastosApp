@@ -2418,18 +2418,43 @@ function renderConciliacion() {
       <div style="background:rgba(255,94,122,.08);border:1px solid rgba(255,94,122,.25);border-radius:12px;padding:12px 14px;margin-top:14px">
         <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">⚠️ En banco pero no registrados en app</div>
         ${(window._noConcilBanco || []).map((m, i) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div style="display:flex;align-items:flex-start;gap:8px">
-              <span style="font-size:10px;color:var(--text3);min-width:16px;padding-top:2px">${i + 1}.</span>
-              <div>
-                <div style="font-size:12px;font-weight:500;color:var(--text)">${m.descripcion}</div>
-                <div style="font-size:10px;color:var(--text3)">${m.fecha}</div>
+          <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:flex-start;gap:8px">
+                <span style="font-size:10px;color:var(--text3);min-width:16px;padding-top:2px">${i + 1}.</span>
+                <div>
+                  <div style="font-size:12px;font-weight:500;color:var(--text)">${m.descripcion}</div>
+                  <div style="font-size:10px;color:var(--text3)">${m.fecha}</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <span style="font-size:13px;font-weight:700;color:var(--red)">${fmt(m.monto)}</span>
+                <button onclick="registrarDesdeBanco(window._noConcilBanco[${i}])" style="font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid var(--red);background:transparent;color:var(--red);cursor:pointer;white-space:nowrap">+ Registrar</button>
               </div>
             </div>
-            <span style="font-size:13px;font-weight:700;color:var(--red);flex-shrink:0">${fmt(m.monto)}</span>
           </div>`).join('')}
       </div>` : ''}
     `;
+}
+
+function registrarDesdeBanco(mv) {
+  // Pre-llenar formulario con los datos del movimiento bancario
+  showTab('form');
+  setTimeout(() => {
+    const fCantidad = document.getElementById('f-cantidad');
+    const fFecha    = document.getElementById('f-fecha');
+    const fComent   = document.getElementById('f-comentarios-input');
+    const fCuenta   = document.getElementById('f-cuenta');
+    if (fCantidad) fCantidad.value = mv.monto;
+    if (fFecha && mv.fecha) fFecha.value = mv.fecha;
+    if (fComent) fComent.value = mv.descripcion || '';
+    // Seleccionar la cuenta activa en conciliación
+    if (fCuenta && concilCuenta) {
+      const opt = Array.from(fCuenta.options).find(o => o.value === concilCuenta);
+      if (opt) fCuenta.value = concilCuenta;
+    }
+    showToast('Completa el motivo y guarda el gasto');
+  }, 100);
 }
 
 function toggleConcil(gastoId) {
