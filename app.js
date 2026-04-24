@@ -468,6 +468,103 @@ function mostrarBannerActualizar() {
   }
 }
 function ocultarBannerActualizar()    { mostrarEstadoSync(true); }
+
+// Exportar conciliacion
+function exportarConciliacion() {
+  const clave = `${concilCuenta}|${concilPeriodo}`;
+  const [, hasta] = concilPeriodo.split('|');
+  const desde = periodoDesde(concilPeriodo);
+  const all = [...gastos, ...historico];
+  const items = gastosEnPeriodo(all, concilCuenta,
+    new Date(desde + 'T00:00:00'), new Date(hasta + 'T23:59:59'));
+
+  // Cabecera
+  const rows = [
+    ['Conciliacion Bancaria - ' + concilCuenta],
+    ['Periodo: ' + desde + ' a ' + hasta],
+    ['Generado: ' + new Date().toLocaleDateString('es-MX')],
+    [],
+    // Gastos en app
+    ['GASTOS EN APP'],
+    ['Estado', 'Fecha', 'Motivo', 'Comentarios', 'Monto'],
+    ...items.map(g => [
+      conciliados[clave]?.[g.id] ? 'Conciliado' : 'Pendiente',
+      g.fecha, g.motivo, g.comentarios || '', g.cantidad
+    ]),
+    [],
+    // Movimientos banco
+    ['MOVIMIENTOS EN BANCO'],
+    ['Fecha', 'Descripcion', 'Monto'],
+    ...(window._bancMovs || []).map(m => [m.fecha, m.descripcion, m.monto]),
+    [],
+    // No encontrados
+    ['EN BANCO SIN REGISTRAR'],
+    ['Fecha', 'Descripcion', 'Monto'],
+    ...(window._noConcilBanco || []).map(m => [m.fecha, m.descripcion, m.monto]),
+  ];
+
+  // Generar CSV
+  const csv = rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'conciliacion-' + concilCuenta + '-' + hasta + '.csv';
+  a.click(); URL.revokeObjectURL(url);
+  showToast('Conciliacion exportada');
+}
+
+// Alertas de corte
+async function solicitarPermisosNotificacion() {
+  if (!('Notification' in window)) { showToast('Tu navegador no soporta notificaciones'); return false; }
+  if (Notification.permission === 'granted') return true;
+  const perm = await Notification.requestPermission();
+  return perm === 'granted';
+}
+
+async function programarAlertasCorte() {
+  const ok = await solicitarPermisosNotificacion();
+  if (!ok) { showToast('Activa las notificaciones para recibir alertas de corte'); return; }
+  const cfg = getCortesConfig();
+  const sw = navigator.serviceWorker?.controller;
+  let programadas = 0;
+  Object.entries(cfg).forEach(([cuenta, c]) => {
+    const key = getPeriodoActualKey(cuenta);
+    if (!key) return;
+    const hasta = key.split('|')[1];
+    if (!hasta) return;
+    const fechaCorte = new Date(hasta + 'T12:00:00');
+    [3, 1].forEach(dias => {
+      const alertDate = new Date(fechaCorte);
+      alertDate.setDate(alertDate.getDate() - dias);
+      alertDate.setHours(9, 0, 0, 0);
+      const delay = alertDate - Date.now();
+      if (delay <= 0) return;
+      const title = 'Corte de ' + cuenta + ' en ' + dias + ' dia' + (dias > 1 ? 's' : '');
+      const body  = 'Tu corte es el ' + hasta + '. Revisa tus gastos.';
+      if (sw) {
+        sw.postMessage({ type: 'SCHEDULE_NOTIFICATION', title, body, delay, tag: 'corte-'+cuenta+'-'+dias });
+      } else {
+        setTimeout(() => new Notification(title, { body, icon: 'icon-192.png' }), delay);
+      }
+      programadas++;
+    });
+  });
+  showToast(programadas + ' alertas de corte programadas');
+}
+
+// Indicador offline
+function actualizarEstadoRed() {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  if (!navigator.onLine) {
+    el.style.display = 'inline'; el.style.cursor = 'default'; el.onclick = null;
+    el.textContent = '🛰️ Sin internet'; el.style.color = 'var(--red)';
+  } else {
+    mostrarEstadoSync(true);
+  }
+}
+window.addEventListener('online',  () => { actualizarEstadoRed(); syncUp && syncUp(); });
+window.addEventListener('offline', () => actualizarEstadoRed());
 function ocultarAvisoDesactualizado() {}
 function mostrarAvisoDesactualizado() {}
 function verificarPendientes()        { mostrarEstadoSync(true); }
@@ -1531,7 +1628,10 @@ async function guardarGasto() {
   // Guardar todo junto
   syncBloqueado = false;
   saveLocal();
-  resetForm(); editingId=null; showTab('gastos');
+  const _volverConcil = !!window._desdeConciliador;
+  window._desdeConciliador = null;
+  resetForm(); editingId=null;
+  showTab(_volverConcil ? 'conciliacion' : 'gastos');
   showToast('Gasto guardado ✓');
 }
 
@@ -2907,6 +3007,9 @@ function conciliarTodos() {
     new Date(hasta + 'T23:59:59')
   );
   const todosConcil = items.every(g => conciliados[clave][g.id]);
+  if (!todosConcil && items.length > 0) {
+    if (!confirm(`¿Marcar los ${items.length} gastos como conciliados?`)) return;
+  }
   items.forEach(g => { conciliados[clave][g.id] = !todosConcil; });
   renderConciliacion();
 }
