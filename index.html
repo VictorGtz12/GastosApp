@@ -197,7 +197,9 @@
     .fab:active{transform:scale(.92)}
     /* Comentario dropdown */
     #comentario-dropdown{background:var(--bg2) !important;border:1px solid var(--border2) !important;border-radius:12px !important;box-shadow:0 8px 24px rgba(0,0,0,.5) !important}
-  </style>
+    .stat-tab { padding:5px 12px;border-radius:20px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer;font-weight:500 }
+  .stat-tab.active { background:var(--accent);border-color:var(--accent);color:white }
+</style>
 </head>
 <body>
 
@@ -349,9 +351,10 @@
       <div class="action-row"><button class="btn-teal" onclick="openCorte()">✂️ Corte semanal</button></div>
     </div>
     <div class="card"><div class="card-title">Gastos por cuenta</div><div id="saldos-list"></div></div>
-    <div class="card">
-      <div class="card-title">Últimos 6 cortes — Gasto total</div>
-      <div id="grafica-cortes" style="width:100%;height:120px;display:flex;align-items:flex-end;gap:4px;padding-top:8px"></div>
+    <div class="card" style="cursor:pointer;text-align:center" onclick="abrirEstadisticas()">
+      <div style="font-size:28px;margin-bottom:6px">📊</div>
+      <div class="card-title" style="font-size:14px">Estadísticas y gráficas</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Gastos por semana, mes, categoría, tarjeta y más</div>
     </div>
   </div>
 
@@ -751,6 +754,26 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="app.js?v=20260419b"></script>
+<!-- MODAL: Estadísticas -->
+<div class="overlay" id="modal-estadisticas" onclick="if(event.target===this)closeModal('modal-estadisticas')">
+  <div class="modal" style="max-height:90vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+    <div style="padding:16px 16px 0">
+      <h2 style="margin-bottom:12px">📊 Estadísticas</h2>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="stat-tab active" id="stab-semanas" onclick="setStatTab('semanas')">Por semana</button>
+        <button class="stat-tab" id="stab-meses" onclick="setStatTab('meses')">Por mes</button>
+        <button class="stat-tab" id="stab-categorias" onclick="setStatTab('categorias')">Categorías</button>
+        <button class="stat-tab" id="stab-tarjetas" onclick="setStatTab('tarjetas')">Tarjetas</button>
+        <button class="stat-tab" id="stab-top" onclick="setStatTab('top')">Top gastos</button>
+      </div>
+    </div>
+    <div id="stat-content" style="flex:1;overflow-y:auto;padding:0 16px 16px"></div>
+    <div style="padding:12px 16px;border-top:1px solid var(--border)">
+      <button class="mbtn" onclick="closeModal('modal-estadisticas')" style="width:100%">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Historial sync -->
 <div class="overlay" id="modal-historial-sync" onclick="if(event.target===this)closeModal('modal-historial-sync')">
   <div class="modal" style="max-height:80vh;display:flex;flex-direction:column">

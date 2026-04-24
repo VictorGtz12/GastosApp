@@ -2634,6 +2634,157 @@ function renderConciliacion() {
     `;
 }
 
+// ── Estadísticas ────────────────────────────────────────────
+let _statTab = 'semanas';
+
+function abrirEstadisticas() {
+  _statTab = 'semanas';
+  document.querySelectorAll('.stat-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('stab-semanas')?.classList.add('active');
+  renderStatTab();
+  openModal('modal-estadisticas');
+}
+
+function setStatTab(tab) {
+  _statTab = tab;
+  document.querySelectorAll('.stat-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('stab-' + tab)?.classList.add('active');
+  renderStatTab();
+}
+
+function renderStatTab() {
+  const el = document.getElementById('stat-content');
+  if (!el) return;
+  const all = [...gastos, ...historico].filter(g => !g.ignorar && !g.externo);
+  switch (_statTab) {
+    case 'semanas':    el.innerHTML = renderStatSemanas(all); break;
+    case 'meses':      el.innerHTML = renderStatMeses(all); break;
+    case 'categorias': el.innerHTML = renderStatCategorias(all); break;
+    case 'tarjetas':   el.innerHTML = renderStatTarjetas(all); break;
+    case 'top':        el.innerHTML = renderStatTop(all); break;
+  }
+}
+
+function barChart(items, colorFn) {
+  // items: [{label, value}]
+  const max = Math.max(...items.map(i => i.value), 1);
+  return `<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+    ${items.map(it => `
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:2px">
+          <span style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.label}</span>
+          <span style="font-weight:600;color:var(--text)">${fmt(it.value)}</span>
+        </div>
+        <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${(it.value/max*100).toFixed(1)}%;background:${colorFn ? colorFn(it) : 'var(--accent)'};border-radius:4px;transition:width .3s"></div>
+        </div>
+      </div>`).join('')}
+  </div>`;
+}
+
+function renderStatSemanas(all) {
+  // Agrupar por semana (YYYY-Www)
+  const map = {};
+  all.forEach(g => {
+    const d = new Date(g.fecha + 'T12:00:00');
+    const wk = `${d.getFullYear()}-S${String(getWeek(d)).padStart(2,'0')}`;
+    map[wk] = (map[wk] || 0) + g.cantidad;
+  });
+  const items = Object.entries(map).sort((a,b) => a[0].localeCompare(b[0])).slice(-12)
+    .map(([label, value]) => ({ label, value }));
+  if (!items.length) return '<div class="empty">Sin datos</div>';
+  const total = items.reduce((s,i) => s+i.value, 0);
+  const prom  = total / items.length;
+  return `<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">Promedio/semana</div>
+      <div style="font-size:16px;font-weight:700;color:var(--accent2)">${fmt(prom)}</div>
+    </div>
+    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">Total (${items.length} sem)</div>
+      <div style="font-size:16px;font-weight:700;color:var(--text)">${fmt(total)}</div>
+    </div>
+  </div>
+  ${barChart(items.slice(-8), it => it.value > prom*1.2 ? 'var(--red)' : 'var(--accent)')}`;
+}
+
+function renderStatMeses(all) {
+  const map = {};
+  all.forEach(g => {
+    const k = g.fecha.slice(0, 7); // YYYY-MM
+    map[k] = (map[k] || 0) + g.cantidad;
+  });
+  const items = Object.entries(map).sort((a,b) => a[0].localeCompare(b[0])).slice(-12)
+    .map(([k, value]) => {
+      const [y, m] = k.split('-');
+      const meses = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      return { label: `${meses[+m]} ${y}`, value };
+    });
+  if (!items.length) return '<div class="empty">Sin datos</div>';
+  const total = items.reduce((s,i) => s+i.value, 0);
+  const prom  = total / items.length;
+  const max   = Math.max(...items.map(i => i.value));
+  const maxItem = items.find(i => i.value === max);
+  return `<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">Promedio/mes</div>
+      <div style="font-size:16px;font-weight:700;color:var(--accent2)">${fmt(prom)}</div>
+    </div>
+    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">Mes más alto</div>
+      <div style="font-size:16px;font-weight:700;color:var(--red)">${maxItem?.label}</div>
+    </div>
+  </div>
+  ${barChart(items, it => it.value > prom*1.2 ? 'var(--red)' : 'var(--accent)')}`;
+}
+
+function renderStatCategorias(all) {
+  const map = {};
+  all.forEach(g => { map[g.motivo] = (map[g.motivo] || 0) + g.cantidad; });
+  const items = Object.entries(map).sort((a,b) => b[1]-a[1])
+    .map(([label, value]) => ({ label, value }));
+  if (!items.length) return '<div class="empty">Sin datos</div>';
+  const total = items.reduce((s,i) => s+i.value, 0);
+  const colors = ['var(--accent)','var(--accent2)','var(--green)','var(--orange)','var(--red)','#06b6d4','#a78bfa','#f472b6'];
+  return `<div style="margin-bottom:12px;font-size:12px;color:var(--text3)">Total: ${fmt(total)}</div>
+    ${barChart(items, (it, i) => colors[items.indexOf(it) % colors.length])}`;
+}
+
+function renderStatTarjetas(all) {
+  const map = {};
+  all.forEach(g => { map[g.cuenta] = (map[g.cuenta] || 0) + g.cantidad; });
+  const items = Object.entries(map).sort((a,b) => b[1]-a[1])
+    .map(([label, value]) => ({ label, value }));
+  if (!items.length) return '<div class="empty">Sin datos</div>';
+  const total = items.reduce((s,i) => s+i.value, 0);
+  const colors = ['var(--accent)','var(--accent2)','var(--green)','var(--orange)','var(--red)','#06b6d4'];
+  return `<div style="margin-bottom:12px;font-size:12px;color:var(--text3)">Total acumulado: ${fmt(total)}</div>
+    ${barChart(items, (it) => colors[items.indexOf(it) % colors.length])}
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:6px">
+      ${items.map(it => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="color:var(--text2)">${it.label}</span>
+        <span style="color:var(--text3)">${(it.value/total*100).toFixed(1)}%</span>
+      </div>`).join('')}
+    </div>`;
+}
+
+function renderStatTop(all) {
+  const top = [...all].sort((a,b) => b.cantidad-a.cantidad).slice(0, 15);
+  if (!top.length) return '<div class="empty">Sin datos</div>';
+  return `<div style="display:flex;flex-direction:column;gap:0">
+    ${top.map((g,i) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:13px;color:var(--text3);min-width:20px">${i+1}.</span>
+        <div>
+          <div style="font-size:13px;font-weight:500;color:var(--text)">${g.motivo}${g.comentarios?' · <span style="color:var(--text3);font-weight:400">'+g.comentarios+'</span>':''}</div>
+          <div style="font-size:10px;color:var(--text3)">${g.fecha} · ${g.cuenta}</div>
+        </div>
+      </div>
+      <span style="font-size:13px;font-weight:700;color:var(--red);flex-shrink:0">${fmt(g.cantidad)}</span>
+    </div>`).join('')}
+  </div>`;
+}
+
 function registrarDesdeBanco(mv) {
   // Pre-llenar formulario con los datos del movimiento bancario
   window._desdeConciliador = mv; // marcar origen
