@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mis Recordatorios</title>
+<style>
+  :root {
+    --bg:#0f1117;--bg2:#1a1d27;--bg3:#22263a;
+    --border:rgba(255,255,255,.07);--border2:rgba(255,255,255,.12);
+    --text:#f0f2ff;--text2:#8b92b0;--text3:#555d7a;
+    --accent:#6c63ff;--accent2:#a78bfa;
+    --green:#22d3a5;--red:#ff5e7a;--orange:#ff9f43;--yellow:#ffd166;
+    --p-high:#ff5e7a;--p-med:#ff9f43;--p-low:#22d3a5;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  .app{max-width:480px;margin:0 auto;background:var(--bg);min-height:100vh;position:relative;box-shadow:0 0 40px rgba(0,0,0,.5)}
+
+  /* Topbar */
+  .topbar{background:linear-gradient(135deg,#1e1b4b,#2d1b6e);padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100}
+  .back-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:var(--text);border-radius:10px;padding:6px 12px;cursor:pointer;font-size:13px;text-decoration:none;display:flex;align-items:center;gap:4px}
+  .topbar-title{flex:1;font-size:16px;font-weight:700;color:var(--text)}
+  .topbar-btn{background:rgba(108,99,255,.25);border:1px solid rgba(108,99,255,.3);color:var(--accent2);border-radius:20px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600}
+
+  /* Tabs */
+  .tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border2);position:sticky;top:calc(50px + env(safe-area-inset-top));z-index:40;overflow-x:auto}
+  .tab{flex:1;min-width:60px;padding:10px 4px;text-align:center;font-size:10px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:2px;transition:color .2s;white-space:nowrap}
+  .tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
+  .tab svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+  /* Content */
+  .content{display:none;padding:12px;padding-bottom:80px}
+  .content.active{display:block}
+
+  /* Cards */
+  .card{background:var(--bg2);border-radius:16px;border:1px solid var(--border);padding:14px;margin-bottom:10px}
+  .card-title{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
+
+  /* Task item */
+  .task-item{background:var(--bg2);border-radius:14px;border:1px solid var(--border);padding:12px 14px;margin-bottom:8px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color .2s}
+  .task-item:hover{border-color:var(--border2)}
+  .task-item.done{opacity:.5}
+  .task-check{width:22px;height:22px;border-radius:50%;border:2px solid var(--border2);flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s;margin-top:1px}
+  .task-check.checked{background:var(--accent);border-color:var(--accent)}
+  .task-body{flex:1;min-width:0}
+  .task-title{font-size:13px;font-weight:500;color:var(--text);margin-bottom:3px}
+  .task-item.done .task-title{text-decoration:line-through;color:var(--text3)}
+  .task-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .tag{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600}
+  .tag-tipo{background:rgba(108,99,255,.15);color:var(--accent2)}
+  .tag-prio-high{background:rgba(255,94,122,.15);color:var(--p-high)}
+  .tag-prio-med{background:rgba(255,159,67,.15);color:var(--p-med)}
+  .tag-prio-low{background:rgba(34,211,165,.15);color:var(--p-low)}
+  .tag-fecha{font-size:10px;color:var(--text3)}
+  .task-project-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:6px}
+
+  /* Project card */
+  .proj-card{background:var(--bg2);border-radius:16px;border:1px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;gap:12px;transition:border-color .2s}
+  .proj-card:hover{border-color:var(--border2)}
+  .proj-icon{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+  .proj-info{flex:1}
+  .proj-name{font-size:14px;font-weight:600;color:var(--text);margin-bottom:2px}
+  .proj-count{font-size:11px;color:var(--text3)}
+
+  /* Nota */
+  .nota-card{background:var(--bg2);border-radius:16px;border:1px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer}
+  .nota-titulo{font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px}
+  .nota-body{font-size:12px;color:var(--text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .nota-fecha{font-size:10px;color:var(--text3);margin-top:8px}
+
+  /* FAB */
+  .fab{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));right:calc(50% - 240px + 16px);width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#8b5cf6);border:none;color:white;font-size:24px;cursor:pointer;box-shadow:0 4px 20px rgba(108,99,255,.5);display:flex;align-items:center;justify-content:center;z-index:50;transition:transform .2s}
+  .fab:active{transform:scale(.92)}
+  @media(max-width:480px){.fab{right:16px}}
+
+  /* Modal overlay */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)}
+  .overlay.open{display:flex}
+  .modal{background:var(--bg2);border-radius:24px 24px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom));width:100%;max-width:480px;max-height:92vh;overflow-y:auto}
+  .modal h2{font-size:17px;font-weight:700;margin-bottom:16px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+  .field input,.field textarea,.field select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none}
+  .field textarea{min-height:80px;resize:vertical}
+  .field select{appearance:none}
+  .modal-actions{display:flex;gap:8px;margin-top:16px}
+  .mbtn{flex:1;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--accent),#8b5cf6);color:white;font-size:14px;font-weight:600;cursor:pointer}
+  .mbtn.sec{background:var(--bg3);color:var(--text2);border:1px solid var(--border2)}
+  .mbtn.danger{background:rgba(255,94,122,.15);color:var(--red);border:1px solid rgba(255,94,122,.3)}
+
+  /* Notif badge */
+  .notif-badge{background:var(--red);color:white;font-size:9px;font-weight:700;border-radius:10px;padding:1px 5px;margin-left:3px}
+
+  /* Chips tipo */
+  .tipo-chips{display:flex;gap:6px;flex-wrap:wrap}
+  .tipo-chip{padding:6px 12px;border-radius:20px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer;transition:all .2s}
+  .tipo-chip.active{background:var(--accent);border-color:var(--accent);color:white}
+
+  /* Empty */
+  .empty{text-align:center;padding:40px 20px;color:var(--text3);font-size:13px}
+  .empty .e-icon{font-size:40px;margin-bottom:10px}
+
+  /* Hoy stats */
+  .hoy-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+  .hoy-stat{background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:10px;text-align:center}
+  .hoy-stat-val{font-size:20px;font-weight:700;color:var(--text)}
+  .hoy-stat-lbl{font-size:10px;color:var(--text3);margin-top:2px}
+
+  /* Prioridad row */
+  .prio-row{display:flex;gap:6px}
+  .prio-chip{flex:1;padding:8px;border-radius:10px;border:2px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;text-align:center;transition:all .2s}
+  .prio-chip[data-p="alta"].active{border-color:var(--p-high);color:var(--p-high);background:rgba(255,94,122,.1)}
+  .prio-chip[data-p="media"].active{border-color:var(--p-med);color:var(--p-med);background:rgba(255,159,67,.1)}
+  .prio-chip[data-p="baja"].active{border-color:var(--p-low);color:var(--p-low);background:rgba(34,211,165,.1)}
+
+  /* Color picker */
+  .color-row{display:flex;gap:8px;flex-wrap:wrap}
+  .color-dot{width:28px;height:28px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:transform .15s}
+  .color-dot.active{border-color:white;transform:scale(1.15)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <a href="index.html" class="back-btn">
+      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+      Gastos
+    </a>
+    <div class="topbar-title">📋 Mis Recordatorios</div>
+    <button class="topbar-btn" onclick="solicitarNotificaciones()">🔔</button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" id="tab-hoy" onclick="showTab('hoy')">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Hoy
+    </div>
+    <div class="tab" id="tab-todas" onclick="showTab('todas')">
+      <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/><polyline points="3 18 4 19 6 17"/></svg>
+      Todas
+    </div>
+    <div class="tab" id="tab-proyectos" onclick="showTab('proyectos')">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      Proyectos
+    </div>
+    <div class="tab" id="tab-notas" onclick="showTab('notas')">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Notas
+    </div>
+  </div>
+
+  <!-- HOY -->
+  <div class="content active" id="content-hoy">
+    <div class="hoy-stats" id="hoy-stats"></div>
+    <div id="hoy-overdue"></div>
+    <div id="hoy-hoy"></div>
+    <div id="hoy-proximos"></div>
+  </div>
+
+  <!-- TODAS -->
+  <div class="content" id="content-todas">
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="fil-tipo" onchange="renderTodas()" style="flex:1;padding:8px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:12px">
+        <option value="">Todos los tipos</option>
+        <option value="tarea">Tareas</option>
+        <option value="actividad">Actividades</option>
+        <option value="recordatorio">Recordatorios</option>
+      </select>
+      <select id="fil-prio" onchange="renderTodas()" style="flex:1;padding:8px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:12px">
+        <option value="">Todas las prioridades</option>
+        <option value="alta">Alta</option>
+        <option value="media">Media</option>
+        <option value="baja">Baja</option>
+      </select>
+      <select id="fil-estado" onchange="renderTodas()" style="flex:1;padding:8px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:12px">
+        <option value="">Todos</option>
+        <option value="pendiente">Pendientes</option>
+        <option value="completada">Completadas</option>
+      </select>
+    </div>
+    <div id="todas-list"></div>
+  </div>
+
+  <!-- PROYECTOS -->
+  <div class="content" id="content-proyectos">
+    <div id="proyectos-list"></div>
+  </div>
+
+  <!-- NOTAS -->
+  <div class="content" id="content-notas">
+    <div id="notas-list"></div>
+  </div>
+
+  <!-- FAB -->
+  <button class="fab" onclick="abrirNuevo()">+</button>
+</div>
+
+<!-- MODAL: Nueva tarea/nota/proyecto -->
+<div class="overlay" id="modal-nuevo">
+  <div class="modal">
+    <h2 id="modal-nuevo-title">Nueva tarea</h2>
+
+    <!-- Tipo selector -->
+    <div class="field">
+      <label>Tipo</label>
+      <div class="tipo-chips" id="tipo-chips">
+        <div class="tipo-chip active" data-tipo="tarea" onclick="setTipo('tarea')">📋 Tarea</div>
+        <div class="tipo-chip" data-tipo="actividad" onclick="setTipo('actividad')">🏃 Actividad</div>
+        <div class="tipo-chip" data-tipo="recordatorio" onclick="setTipo('recordatorio')">🔔 Recordatorio</div>
+        <div class="tipo-chip" data-tipo="nota" onclick="setTipo('nota')">📝 Nota</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label id="titulo-label">Título</label>
+      <input type="text" id="f-titulo" placeholder="¿Qué necesitas hacer?">
+    </div>
+
+    <div class="field">
+      <label>Descripción / Notas</label>
+      <textarea id="f-desc" placeholder="Detalles opcionales..."></textarea>
+    </div>
+
+    <div id="fields-no-nota">
+      <div class="field">
+        <label>Prioridad</label>
+        <div class="prio-row">
+          <div class="prio-chip active" data-p="alta" onclick="setPrio('alta')">🔴 Alta</div>
+          <div class="prio-chip" data-p="media" onclick="setPrio('media')">🟡 Media</div>
+          <div class="prio-chip" data-p="baja" onclick="setPrio('baja')">🟢 Baja</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <div class="field" style="flex:1">
+          <label>Fecha</label>
+          <input type="date" id="f-fecha">
+        </div>
+        <div class="field" style="flex:1" id="field-hora">
+          <label>Hora</label>
+          <input type="time" id="f-hora">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Proyecto</label>
+        <select id="f-proyecto">
+          <option value="">Sin proyecto</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="cerrarModal('modal-nuevo')">Cancelar</button>
+      <button class="mbtn danger" id="btn-eliminar-task" style="display:none" onclick="eliminarTask()">Eliminar</button>
+      <button class="mbtn" onclick="guardarTask()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Nuevo proyecto -->
+<div class="overlay" id="modal-proyecto">
+  <div class="modal">
+    <h2>Nuevo proyecto</h2>
+    <div class="field">
+      <label>Nombre</label>
+      <input type="text" id="fp-nombre" placeholder="Nombre del proyecto">
+    </div>
+    <div class="field">
+      <label>Ícono (emoji)</label>
+      <input type="text" id="fp-icono" placeholder="📁" maxlength="2" style="font-size:24px;text-align:center">
+    </div>
+    <div class="field">
+      <label>Color</label>
+      <div class="color-row" id="color-row"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="cerrarModal('modal-proyecto')">Cancelar</button>
+      <button class="mbtn" onclick="guardarProyecto()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Detalle proyecto -->
+<div class="overlay" id="modal-proj-detalle">
+  <div class="modal" style="max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <div id="pd-icon" style="font-size:28px"></div>
+      <h2 id="pd-nombre" style="margin-bottom:0"></h2>
+    </div>
+    <div id="pd-tasks" style="flex:1;overflow-y:auto"></div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="mbtn sec" onclick="cerrarModal('modal-proj-detalle')">Cerrar</button>
+      <button class="mbtn danger" onclick="eliminarProyecto()">Eliminar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────
+let tasks = [], proyectos = [], editingTaskId = null, editingProjId = null;
+let _tipo = 'tarea', _prio = 'alta', _tabActual = 'hoy';
+
+const COLORES = ['#6c63ff','#ff5e7a','#22d3a5','#ff9f43','#a78bfa','#06b6d4','#f472b6','#ffd166'];
+
+// Persist keys
+const KEY_TASKS = 'misRecordatorios_tasks';
+const KEY_PROJS = 'misRecordatorios_proyectos';
+const GITHUB_OWNER  = 'VictorGtz12';
+const GITHUB_REPO   = 'GastosApp';
+const GITHUB_BRANCH = 'main';
+const SUPABASE_URL  = 'https://iskzbiozycpvnkkverfg.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
+
+// ── Init ─────────────────────────────────────────────────────
+function init() {
+  loadLocal();
+  renderAll();
+  // Fecha por defecto = hoy
+  document.getElementById('f-fecha').value = today();
+  // Verificar notificaciones pendientes
+  checkNotificaciones();
+  // Sincronizar
+  syncDown();
+}
+
+function today() {
+  return new Date().toISOString().slice(0,10);
+}
+
+function loadLocal() {
+  try {
+    tasks     = JSON.parse(localStorage.getItem(KEY_TASKS) || '[]');
+    proyectos = JSON.parse(localStorage.getItem(KEY_PROJS) || '[]');
+  } catch(e) {}
+}
+
+function saveLocal() {
+  localStorage.setItem(KEY_TASKS, JSON.stringify(tasks));
+  localStorage.setItem(KEY_PROJS, JSON.stringify(proyectos));
+  syncUp();
+}
+
+// ── Tabs ─────────────────────────────────────────────────────
+function showTab(tab) {
+  _tabActual = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + tab)?.classList.add('active');
+  document.getElementById('content-' + tab)?.classList.add('active');
+  renderAll();
+}
+
+function renderAll() {
+  renderHoy();
+  renderTodas();
+  renderProyectos();
+  renderNotas();
+}
+
+// ── HOY ──────────────────────────────────────────────────────
+function renderHoy() {
+  const hoy = today();
+  const noNota = tasks.filter(t => t.tipo !== 'nota');
+  const vencidas = noNota.filter(t => !t.completada && t.fecha && t.fecha < hoy);
+  const deHoy    = noNota.filter(t => !t.completada && t.fecha === hoy);
+  const proximas = noNota.filter(t => !t.completada && t.fecha > hoy).slice(0, 5);
+  const hechas   = noNota.filter(t => t.completada && t.fecha === hoy);
+
+  // Stats
+  document.getElementById('hoy-stats').innerHTML = `
+    <div class="hoy-stat"><div class="hoy-stat-val" style="color:var(--red)">${vencidas.length}</div><div class="hoy-stat-lbl">Vencidas</div></div>
+    <div class="hoy-stat"><div class="hoy-stat-val" style="color:var(--accent2)">${deHoy.length}</div><div class="hoy-stat-lbl">Hoy</div></div>
+    <div class="hoy-stat"><div class="hoy-stat-val" style="color:var(--green)">${hechas.length}</div><div class="hoy-stat-lbl">Hechas hoy</div></div>`;
+
+  document.getElementById('hoy-overdue').innerHTML = vencidas.length
+    ? `<div class="card-title" style="color:var(--red);margin-bottom:6px">⚠️ Vencidas</div>${vencidas.map(taskHTML).join('')}`
+    : '';
+
+  document.getElementById('hoy-hoy').innerHTML = `
+    <div class="card-title" style="margin-bottom:6px">📅 Hoy</div>
+    ${deHoy.length ? deHoy.map(taskHTML).join('') : '<div class="empty"><div class="e-icon">✅</div>Todo al día por hoy</div>'}`;
+
+  document.getElementById('hoy-proximos').innerHTML = proximas.length
+    ? `<div class="card-title" style="margin-top:10px;margin-bottom:6px">🔜 Próximas</div>${proximas.map(taskHTML).join('')}`
+    : '';
+}
+
+// ── TODAS ────────────────────────────────────────────────────
+function renderTodas() {
+  const tipo   = document.getElementById('fil-tipo')?.value || '';
+  const prio   = document.getElementById('fil-prio')?.value || '';
+  const estado = document.getElementById('fil-estado')?.value || '';
+
+  let list = tasks.filter(t => t.tipo !== 'nota');
+  if (tipo)   list = list.filter(t => t.tipo === tipo);
+  if (prio)   list = list.filter(t => t.prioridad === prio);
+  if (estado === 'pendiente')  list = list.filter(t => !t.completada);
+  if (estado === 'completada') list = list.filter(t => t.completada);
+
+  // Sort: prioridad alta primero, luego fecha
+  const prioOrd = { alta:0, media:1, baja:2 };
+  list.sort((a,b) => {
+    if (a.completada !== b.completada) return a.completada ? 1 : -1;
+    const pa = prioOrd[a.prioridad] ?? 1, pb = prioOrd[b.prioridad] ?? 1;
+    if (pa !== pb) return pa - pb;
+    return (a.fecha||'').localeCompare(b.fecha||'');
+  });
+
+  document.getElementById('todas-list').innerHTML = list.length
+    ? list.map(taskHTML).join('')
+    : '<div class="empty"><div class="e-icon">🔍</div>Sin resultados</div>';
+}
+
+// ── PROYECTOS ────────────────────────────────────────────────
+function renderProyectos() {
+  const el = document.getElementById('proyectos-list');
+  const sinProj = tasks.filter(t => !t.proyecto && !t.completada && t.tipo !== 'nota').length;
+
+  let html = `<button onclick="abrirNuevoProyecto()" style="width:100%;padding:12px;border-radius:14px;border:2px dashed var(--border2);background:transparent;color:var(--text2);font-size:13px;cursor:pointer;margin-bottom:10px">+ Nuevo proyecto</button>`;
+
+  html += proyectos.map(p => {
+    const total     = tasks.filter(t => t.proyecto === p.id && t.tipo !== 'nota').length;
+    const pendientes = tasks.filter(t => t.proyecto === p.id && !t.completada && t.tipo !== 'nota').length;
+    return `<div class="proj-card" onclick="abrirProyecto('${p.id}')">
+      <div class="proj-icon" style="background:${p.color}22">${p.icono}</div>
+      <div class="proj-info">
+        <div class="proj-name">${p.nombre}</div>
+        <div class="proj-count">${pendientes} pendiente${pendientes!==1?'s':''} · ${total} total</div>
+      </div>
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="var(--text3)" fill="none" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+    </div>`;
+  }).join('');
+
+  if (sinProj > 0) {
+    html += `<div class="card" style="margin-top:6px">
+      <div class="card-title">Sin proyecto</div>
+      ${tasks.filter(t=>!t.proyecto&&!t.completada&&t.tipo!=='nota').map(taskHTML).join('')}
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ── NOTAS ────────────────────────────────────────────────────
+function renderNotas() {
+  const notas = tasks.filter(t => t.tipo === 'nota').sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+  document.getElementById('notas-list').innerHTML = notas.length
+    ? notas.map(n => `<div class="nota-card" onclick="editarTask('${n.id}')">
+        <div class="nota-titulo">${n.titulo}</div>
+        ${n.descripcion ? `<div class="nota-body">${n.descripcion}</div>` : ''}
+        <div class="nota-fecha">${n.createdAt.slice(0,10)}</div>
+      </div>`).join('')
+    : '<div class="empty"><div class="e-icon">📝</div>Sin notas aún</div>';
+}
+
+// ── Task HTML ────────────────────────────────────────────────
+function taskHTML(t) {
+  const proj = proyectos.find(p => p.id === t.proyecto);
+  const prioClass = { alta:'tag-prio-high', media:'tag-prio-med', baja:'tag-prio-low' }[t.prioridad] || 'tag-prio-low';
+  const tipoIco = { tarea:'📋', actividad:'🏃', recordatorio:'🔔' }[t.tipo] || '📋';
+  const fechaStr = t.fecha ? (t.fecha === today() ? 'Hoy' + (t.hora ? ' · '+t.hora : '') : t.fecha + (t.hora ? ' · '+t.hora : '')) : '';
+  const vencida = t.fecha && t.fecha < today() && !t.completada;
+  return `<div class="task-item ${t.completada?'done':''}" onclick="editarTask('${t.id}')">
+    <div class="task-check ${t.completada?'checked':''}" onclick="event.stopPropagation();toggleTask('${t.id}')">
+      ${t.completada ? '<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" fill="none" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+    </div>
+    ${proj ? `<div class="task-project-dot" style="background:${proj.color}"></div>` : ''}
+    <div class="task-body">
+      <div class="task-title">${t.titulo}</div>
+      <div class="task-meta">
+        <span class="tag tag-tipo">${tipoIco} ${t.tipo}</span>
+        <span class="tag ${prioClass}">${t.prioridad}</span>
+        ${fechaStr ? `<span class="tag-fecha" style="${vencida?'color:var(--red)':''}">📅 ${fechaStr}</span>` : ''}
+        ${proj ? `<span class="tag" style="background:${proj.color}22;color:${proj.color}">${proj.icono} ${proj.nombre}</span>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Toggle completada ────────────────────────────────────────
+function toggleTask(id) {
+  const t = tasks.find(t => t.id === id);
+  if (!t) return;
+  t.completada = !t.completada;
+  t.completadaAt = t.completada ? new Date().toISOString() : null;
+  saveLocal();
+  renderAll();
+}
+
+// ── Nueva tarea ──────────────────────────────────────────────
+function abrirNuevo() {
+  editingTaskId = null;
+  document.getElementById('modal-nuevo-title').textContent = 'Nueva tarea';
+  document.getElementById('f-titulo').value = '';
+  document.getElementById('f-desc').value = '';
+  document.getElementById('f-fecha').value = today();
+  document.getElementById('f-hora').value = '';
+  document.getElementById('f-proyecto').value = '';
+  document.getElementById('btn-eliminar-task').style.display = 'none';
+  setTipo('tarea'); setPrio('media');
+  llenarSelectProyectos();
+  abrirModal('modal-nuevo');
+}
+
+function editarTask(id) {
+  const t = tasks.find(t => t.id === id);
+  if (!t) return;
+  editingTaskId = id;
+  document.getElementById('modal-nuevo-title').textContent = 'Editar';
+  document.getElementById('f-titulo').value = t.titulo;
+  document.getElementById('f-desc').value = t.descripcion || '';
+  document.getElementById('f-fecha').value = t.fecha || today();
+  document.getElementById('f-hora').value = t.hora || '';
+  document.getElementById('btn-eliminar-task').style.display = 'flex';
+  setTipo(t.tipo || 'tarea'); setPrio(t.prioridad || 'media');
+  llenarSelectProyectos();
+  document.getElementById('f-proyecto').value = t.proyecto || '';
+  abrirModal('modal-nuevo');
+}
+
+function llenarSelectProyectos() {
+  const sel = document.getElementById('f-proyecto');
+  sel.innerHTML = '<option value="">Sin proyecto</option>' +
+    proyectos.map(p => `<option value="${p.id}">${p.icono} ${p.nombre}</option>`).join('');
+}
+
+function guardarTask() {
+  const titulo = document.getElementById('f-titulo').value.trim();
+  if (!titulo) { alert('Ingresa un título'); return; }
+  const t = {
+    id:          editingTaskId || 'tk_' + Date.now(),
+    tipo:        _tipo,
+    titulo,
+    descripcion: document.getElementById('f-desc').value.trim(),
+    prioridad:   _prio,
+    fecha:       document.getElementById('f-fecha').value,
+    hora:        _tipo === 'recordatorio' ? document.getElementById('f-hora').value : '',
+    proyecto:    document.getElementById('f-proyecto').value,
+    completada:  false,
+    createdAt:   new Date().toISOString(),
+  };
+  if (editingTaskId) {
+    const idx = tasks.findIndex(x => x.id === editingTaskId);
+    if (idx >= 0) { t.completada = tasks[idx].completada; tasks[idx] = t; }
+  } else {
+    tasks.unshift(t);
+  }
+  // Programar notificación si es recordatorio con hora
+  if (t.tipo === 'recordatorio' && t.fecha && t.hora) {
+    programarNotificacion(t);
+  }
+  saveLocal(); cerrarModal('modal-nuevo'); renderAll();
+}
+
+function eliminarTask() {
+  if (!editingTaskId) return;
+  tasks = tasks.filter(t => t.id !== editingTaskId);
+  saveLocal(); cerrarModal('modal-nuevo'); renderAll();
+}
+
+// ── Tipo / Prioridad selectors ───────────────────────────────
+function setTipo(tipo) {
+  _tipo = tipo;
+  document.querySelectorAll('.tipo-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.tipo === tipo);
+  });
+  // Mostrar/ocultar campos según tipo
+  const esNota = tipo === 'nota';
+  document.getElementById('fields-no-nota').style.display = esNota ? 'none' : 'block';
+  document.getElementById('field-hora').style.display = tipo === 'recordatorio' ? 'block' : 'none';
+  document.getElementById('titulo-label').textContent = esNota ? 'Título de la nota' : 'Título';
+}
+
+function setPrio(p) {
+  _prio = p;
+  document.querySelectorAll('.prio-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.p === p);
+  });
+}
+
+// ── Proyectos ────────────────────────────────────────────────
+function abrirNuevoProyecto() {
+  editingProjId = null;
+  document.getElementById('fp-nombre').value = '';
+  document.getElementById('fp-icono').value = '📁';
+  renderColorRow(COLORES[0]);
+  abrirModal('modal-proyecto');
+}
+
+function renderColorRow(selected) {
+  document.getElementById('color-row').innerHTML = COLORES.map(c =>
+    `<div class="color-dot ${c===selected?'active':''}" style="background:${c}" onclick="selectColor('${c}')"></div>`
+  ).join('');
+}
+
+function selectColor(c) { renderColorRow(c); }
+
+function guardarProyecto() {
+  const nombre = document.getElementById('fp-nombre').value.trim();
+  if (!nombre) { alert('Ingresa un nombre'); return; }
+  const color = document.querySelector('.color-dot.active')?.style.background || COLORES[0];
+  const p = {
+    id:     editingProjId || 'pj_' + Date.now(),
+    nombre,
+    icono:  document.getElementById('fp-icono').value || '📁',
+    color,
+    createdAt: new Date().toISOString()
+  };
+  if (editingProjId) {
+    const idx = proyectos.findIndex(x => x.id === editingProjId);
+    if (idx >= 0) proyectos[idx] = p;
+  } else {
+    proyectos.unshift(p);
+  }
+  saveLocal(); cerrarModal('modal-proyecto'); renderAll();
+}
+
+function abrirProyecto(id) {
+  editingProjId = id;
+  const p = proyectos.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('pd-icon').textContent = p.icono;
+  document.getElementById('pd-nombre').textContent = p.nombre;
+  const tareas = tasks.filter(t => t.proyecto === id && t.tipo !== 'nota');
+  document.getElementById('pd-tasks').innerHTML = tareas.length
+    ? tareas.map(taskHTML).join('')
+    : '<div class="empty">Sin tareas en este proyecto</div>';
+  abrirModal('modal-proj-detalle');
+}
+
+function eliminarProyecto() {
+  if (!editingProjId) return;
+  if (!confirm('¿Eliminar proyecto? Las tareas quedarán sin proyecto.')) return;
+  proyectos = proyectos.filter(p => p.id !== editingProjId);
+  tasks.forEach(t => { if (t.proyecto === editingProjId) t.proyecto = ''; });
+  saveLocal(); cerrarModal('modal-proj-detalle'); renderAll();
+}
+
+// ── Notificaciones ───────────────────────────────────────────
+async function solicitarNotificaciones() {
+  if (!('Notification' in window)) { alert('Tu navegador no soporta notificaciones'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') alert('Notificaciones activadas ✓');
+  else alert('Notificaciones denegadas. Actívalas en la configuración del navegador.');
+}
+
+function programarNotificacion(t) {
+  if (Notification.permission !== 'granted') return;
+  const fechaHora = new Date(t.fecha + 'T' + t.hora);
+  const diff = fechaHora - Date.now();
+  if (diff <= 0) return;
+  setTimeout(() => {
+    new Notification(`🔔 ${t.titulo}`, {
+      body: t.descripcion || 'Recordatorio',
+      icon: 'icon-192.png'
+    });
+  }, diff);
+}
+
+function checkNotificaciones() {
+  if (Notification.permission !== 'granted') return;
+  const ahora = Date.now();
+  tasks.filter(t => t.tipo === 'recordatorio' && t.fecha && t.hora && !t.completada)
+    .forEach(t => {
+      const dt = new Date(t.fecha + 'T' + t.hora);
+      const diff = dt - ahora;
+      if (diff > 0 && diff < 24 * 60 * 60 * 1000) programarNotificacion(t);
+    });
+}
+
+// ── Sync GitHub ──────────────────────────────────────────────
+function getGithubToken() { return localStorage.getItem('githubToken') || ''; }
+function usingGithub() { return !!getGithubToken() && localStorage.getItem('githubDisabled') !== '1'; }
+
+async function syncUp() {
+  clearTimeout(window._syncTimer);
+  window._syncTimer = setTimeout(async () => {
+    const data = { tasks, proyectos, updatedAt: new Date().toISOString() };
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+    // GitHub
+    if (usingGithub()) {
+      for (let i = 0; i < 2; i++) {
+        try {
+          let sha = null;
+          const g = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/tasks.json`,
+            { headers: { 'Authorization': `Bearer ${getGithubToken()}`, 'Accept': 'application/vnd.github+json' } });
+          if (g.ok) sha = (await g.json()).sha;
+          const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/tasks.json`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${getGithubToken()}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: 'tasks sync', content, branch: GITHUB_BRANCH, ...(sha ? {sha} : {}) })
+          });
+          if (res.ok || res.status === 409) { if (res.status === 409 && i === 0) continue; break; }
+        } catch(e) { break; }
+      }
+    }
+    // Supabase
+    if (localStorage.getItem('supabaseEnabled') === '1') {
+      const deviceId = localStorage.getItem('supabaseDeviceId') || 'tasks_device';
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/task_snapshots?on_conflict=device_id`, {
+          method: 'POST',
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ device_id: deviceId, data: { tasks, proyectos }, updated_at: new Date().toISOString() })
+        });
+      } catch(e) {}
+    }
+  }, 2000);
+}
+
+async function syncDown() {
+  // Supabase primero
+  if (localStorage.getItem('supabaseEnabled') === '1') {
+    try {
+      const deviceId = localStorage.getItem('supabaseDeviceId') || 'tasks_device';
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/task_snapshots?device_id=eq.${deviceId}&select=data,updated_at`,
+        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows.length && rows[0].data) {
+          const d = rows[0].data;
+          if (d.tasks) tasks = d.tasks;
+          if (d.proyectos) proyectos = d.proyectos;
+          localStorage.setItem(KEY_TASKS, JSON.stringify(tasks));
+          localStorage.setItem(KEY_PROJS, JSON.stringify(proyectos));
+          renderAll(); return;
+        }
+      }
+    } catch(e) {}
+  }
+  // GitHub fallback
+  if (usingGithub()) {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/tasks.json`,
+        { headers: { 'Authorization': `Bearer ${getGithubToken()}`, 'Accept': 'application/vnd.github+json' } });
+      if (res.ok) {
+        const j = await res.json();
+        const d = JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g,'')))));
+        if (d.tasks) tasks = d.tasks;
+        if (d.proyectos) proyectos = d.proyectos;
+        localStorage.setItem(KEY_TASKS, JSON.stringify(tasks));
+        localStorage.setItem(KEY_PROJS, JSON.stringify(proyectos));
+        renderAll();
+      }
+    } catch(e) {}
+  }
+}
+
+// ── Modal helpers ────────────────────────────────────────────
+function abrirModal(id) { document.getElementById(id).classList.add('open'); }
+function cerrarModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// ── Boot ─────────────────────────────────────────────────────
+init();
+</script>
+
+<!-- SQL para Supabase (ejecutar en SQL Editor):
+CREATE TABLE IF NOT EXISTS task_snapshots (
+  id         uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  device_id  text NOT NULL UNIQUE,
+  data       jsonb NOT NULL,
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE task_snapshots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "allow_all" ON task_snapshots FOR ALL USING (true) WITH CHECK (true);
+-->
+
+</body>
+</html>
