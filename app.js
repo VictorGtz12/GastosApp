@@ -2610,53 +2610,166 @@ function inferirAnio(texto) {
 }
 
 /**
- * Parser American Express.
- * Formato real del PDF (layout):
- * "24 de Marzo     UBER EATS           HTTPS://HELP.UB                                                             715.55"
- * El monto está al extremo derecho. La línea siguiente puede tener "CR" (crédito → ignorar)
- * o "Dólar U.S.A. XX.XX TC:YY.YY" (transacción en USD → incluir con monto en MXN)
+ * Parser American Express — funciona con texto plano (PDF.js).
+ *
+ * Amex tiene dos formatos según la página:
+ * - Página principal titular: fechas agrupadas, descripciones agrupadas, montos al final (columnas)
+ * - Páginas adicionales/tarjetahabiente: fecha-descripción-monto secuencial
+ *
+ * Estrategia: extraer sección de movimientos, detectar bloques de "N fechas seguidas → N montos"
+ * y secciones secuenciales, unirlos en orden.
  */
 function parsearAmex(texto) {
   const anio = inferirAnio(texto);
   const movimientos = [];
   const lineas = texto.split('\n');
 
-  // Ignorar líneas fuera de la sección de movimientos
-  // La sección empieza con "Fecha y Detalle de las operaciones"
-  // y también hay secciones de tarjetas adicionales
-  const SKIP = /^(Estado de Cuenta|Tarjetahabiente|Número de Cuenta|Fecha Siguiente|de Corte|Total de|Paga desde|Recuerda|En Canales|Desde|Paga con|El pago|Para mayor|Este no|Período|Resumen|Tasa|CAT|Interés|Comision|Tiempo|Pago apr|Nuevas|Favor|En caso|Estimado|Fecha lím|Pago mín)/i;
-
+  // Pasada 1: formato layout (una línea por transacción con espacios)
   for (let i = 0; i < lineas.length; i++) {
     const linea = lineas[i];
-    // Línea de transacción: empieza con "DD de Mes" y termina con número
-    const match = linea.match(/^\s*(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s{2,}([\d,]+\.\d{2})\s*$/i);
+    const match = linea.match(/^\s*(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s{3,}([\d,]+\.\d{2})\s*$/i);
     if (!match) continue;
     const [, dia, mes, desc, montoStr] = match;
-
-    // Verificar si la SIGUIENTE línea tiene "CR" → crédito, ignorar
     const sigLinea = (lineas[i + 1] || '').trim();
     if (sigLinea === 'CR') continue;
-
-    // Ignorar totales y líneas de resumen
-    if (/^Total|MONTO A DIFERIR|MESES EN AUTOMÁTICO|Crédito por redención|REVERSION|SERVICIO DE FACTURACION/i.test(desc.trim())) continue;
-
+    if (/^(Total|MONTO A DIFERIR|MESES EN AUTOMÁTICO|Crédito por redención|REVERSION|SERVICIO)/i.test(desc.trim())) continue;
     const numMes = mesEsToNum(mes);
     if (numMes === null) continue;
-    const fecha = new Date(anio, numMes, parseInt(dia));
     movimientos.push({
-      fecha: fecha.toISOString().slice(0, 10),
+      fecha: new Date(anio, numMes, parseInt(dia)).toISOString().slice(0, 10),
       descripcion: desc.trim().replace(/\s{2,}/g, ' '),
       monto: parseMonto(montoStr)
     });
   }
-  return movimientos;
-}
+  if (movimientos.length > 0) return movimientos;
 
-/**
- * Parser BBVA.
- * Formato: "DD-mes-AAAA  Descripción  $1,234.56" o con fecha de cargo separada.
- * Detecta sección DESGLOSE DE MOVIMIENTOS.
- */
+  // Pasada 2: texto plano — procesar línea por línea con state machine
+  // Estado: cuando vemos "DD de Mes" abrimos una transacción,
+  // recolectamos descripción, y cerramos cuando encontramos un monto suelto.
+  // Para el bloque de página 2 donde las fechas están agrupadas y los montos al final,
+  // usamos una estrategia diferente: detectar bloques de N fechas consecutivas seguidas de N montos.
+
+  const FECHA_RX = /^(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)$/i;
+  const MONTO_SOLO_RX = /^([\d,]+\.\d{2})$/;
+  const SKIP_LINE = /^(Total de|MONTO A DIFERIR|MESES EN AUTOMÁTICO|Crédito por redención|REVERSION|SERVICIO DE FACTURACION|Dólar U\.S\.A\.|Importe en MN|Fecha y Detalle|Estado de Cuenta|Número de Cuenta|Tarjetahabiente|Fecha Siguiente|de Corte|Paga desde|Recuerda|En Canales|Desde la Web|Paga con|El pago|Para mayor|Este no es|RFC[A-Z0-9]{10,}|Página \d)/i;
+
+  // Marcar índices de fechas y montos
+  const fechaIdxs = [];
+  const montoIdxs = [];
+  for (let i = 0; i < lineas.length; i++) {
+    const l = lineas[i].trim();
+    if (FECHA_RX.test(l)) fechaIdxs.push(i);
+    if (MONTO_SOLO_RX.test(l)) montoIdxs.push(i);
+  }
+
+  // Detectar si hay un bloque de fechas consecutivas (página 2 de Amex)
+  // Un bloque es: N líneas de fecha con índices contiguos (diferencia ≤2 entre ellas)
+  let i = 0;
+  while (i < fechaIdxs.length) {
+    // Buscar inicio de bloque de fechas consecutivas
+    let bloqueEnd = i;
+    while (bloqueEnd + 1 < fechaIdxs.length && fechaIdxs[bloqueEnd + 1] - fechaIdxs[bloqueEnd] <= 3) {
+      bloqueEnd++;
+    }
+    const bloqueFechas = fechaIdxs.slice(i, bloqueEnd + 1);
+
+    if (bloqueFechas.length >= 2) {
+      // Bloque de fechas agrupadas — los montos están al final, después de las descripciones
+      // Buscar el bloque de montos que sigue después del último índice del bloque de fechas
+      const despuesDeFechas = fechaIdxs[bloqueEnd];
+      // Los montos del bloque son los que aparecen después de las descripciones
+      // Hay que encontrar N montos consecutivos después del bloque de descripciones
+      // Buscamos el primer grupo de montos consecutivos después del bloque
+      let mStart = -1;
+      for (let m = 0; m < montoIdxs.length; m++) {
+        if (montoIdxs[m] > despuesDeFechas + 5) { // al menos 5 líneas después
+          // Verificar que son consecutivos
+          let count = 1;
+          while (m + count < montoIdxs.length && montoIdxs[m + count] - montoIdxs[m + count - 1] <= 2) count++;
+          if (count >= bloqueFechas.length) { mStart = m; break; }
+        }
+      }
+
+      if (mStart >= 0) {
+        // Tenemos N fechas y N montos, unirlos en orden (saltando CR)
+        let mIdx = mStart;
+        for (let f = 0; f < bloqueFechas.length; f++) {
+          // Buscar siguiente monto que no sea CR
+          while (mIdx < montoIdxs.length) {
+            const sigLinea = (lineas[montoIdxs[mIdx] + 1] || '').trim();
+            if (sigLinea !== 'CR') break;
+            mIdx++; // saltar monto CR
+          }
+          if (mIdx >= montoIdxs.length) break;
+
+          const fIdx = bloqueFechas[f];
+          const fm = lineas[fIdx].trim().match(FECHA_RX);
+          if (!fm) { mIdx++; continue; }
+
+          // Descripción: líneas entre esta fecha y la siguiente fecha del bloque (o fin de bloque)
+          const nextFIdx = f + 1 < bloqueFechas.length ? bloqueFechas[f + 1] : montoIdxs[mStart];
+          const descLineas = [];
+          for (let d = fIdx + 1; d < nextFIdx; d++) {
+            const dl = lineas[d].trim();
+            if (!dl || SKIP_LINE.test(dl) || FECHA_RX.test(dl) || MONTO_SOLO_RX.test(dl) || /^\d+\.\d{2}\s+TC:/.test(dl)) continue;
+            descLineas.push(dl);
+          }
+          const desc = descLineas.slice(0, 2).join(' ').trim();
+          const numMes = mesEsToNum(fm[2]);
+          if (numMes === null || !desc) { mIdx++; continue; }
+
+          movimientos.push({
+            fecha: new Date(anio, numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+            descripcion: desc.replace(/\s{2,}/g, ' '),
+            monto: parseMonto(lineas[montoIdxs[mIdx]].trim())
+          });
+          mIdx++;
+        }
+        i = bloqueEnd + 1;
+        continue;
+      }
+    }
+
+    // Fecha sola (secuencial): fecha → descripción → monto
+    const fIdx = fechaIdxs[i];
+    const fm = lineas[fIdx].trim().match(FECHA_RX);
+    if (fm) {
+      // Buscar el primer monto después de esta fecha
+      const nextFechaIdx = i + 1 < fechaIdxs.length ? fechaIdxs[i + 1] : lineas.length;
+      const montoEvt = montoIdxs.find(m => m > fIdx && m < nextFechaIdx);
+      if (montoEvt) {
+        const sigLinea = (lineas[montoEvt + 1] || '').trim();
+        if (sigLinea !== 'CR') {
+          const descLineas = [];
+          for (let d = fIdx + 1; d < montoEvt; d++) {
+            const dl = lineas[d].trim();
+            if (!dl || SKIP_LINE.test(dl) || /^\d+\.\d{2}\s+TC:/.test(dl)) continue;
+            descLineas.push(dl);
+          }
+          const desc = descLineas.slice(0, 2).join(' ').trim();
+          const numMes = mesEsToNum(fm[2]);
+          if (desc && numMes !== null && !SKIP_LINE.test(desc)) {
+            movimientos.push({
+              fecha: new Date(anio, numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+              descripcion: desc.replace(/\s{2,}/g, ' '),
+              monto: parseMonto(lineas[montoEvt].trim())
+            });
+          }
+        }
+      }
+    }
+    i++;
+  }
+
+  // Eliminar duplicados por fecha+monto
+  const vistos = new Set();
+  return movimientos.filter(m => {
+    const key = m.fecha + '|' + m.monto;
+    if (vistos.has(key)) return false;
+    vistos.add(key);
+    return true;
+  });
+}
 function parsearBBVA(texto) {
   const movimientos = [];
   // BBVA: "DD-mmm-AAAA  DD-mmm-AAAA  Descripcion  + / -  $1,234.56"
@@ -2848,7 +2961,6 @@ function parsearEstadoCuentaBanco(texto) {
 // ── Extraer texto de PDF (usando PDF.js si disponible) ────────
 async function extraerTextoPDF(base64) {
   try {
-    // Cargar PDF.js si no está disponible
     if (!window.pdfjsLib) {
       await new Promise((res, rej) => {
         const s = document.createElement('script');
@@ -2864,10 +2976,46 @@ async function extraerTextoPDF(base64) {
     for (let i = 0; i < pdfData.length; i++) bytes[i] = pdfData.charCodeAt(i);
     const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
     let text = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
       const content = await page.getTextContent();
-      text += content.items.map(item => item.str).join(' ') + '\n';
+      const viewport = page.getViewport({ scale: 1 });
+
+      // Agrupar items por línea usando coordenada Y (tolerancia de 3px)
+      const lineasMap = new Map();
+      for (const item of content.items) {
+        if (!item.str.trim()) continue;
+        const y = Math.round(item.transform[5]); // Y en espacio de página
+        // Buscar línea existente con Y cercana
+        let lineaKey = null;
+        for (const [k] of lineasMap) {
+          if (Math.abs(k - y) <= 3) { lineaKey = k; break; }
+        }
+        if (lineaKey === null) { lineaKey = y; lineasMap.set(y, []); }
+        lineasMap.get(lineaKey).push({ x: item.transform[4], str: item.str });
+      }
+
+      // Ordenar líneas por Y descendente (PDF tiene Y=0 abajo, texto va de arriba a abajo)
+      const lineasOrdenadas = [...lineasMap.entries()]
+        .sort((a, b) => b[0] - a[0]); // Y mayor = parte superior
+
+      for (const [, items] of lineasOrdenadas) {
+        // Ordenar items dentro de la línea por X
+        items.sort((a, b) => a.x - b.x);
+        // Construir línea con espaciado proporcional
+        let linea = '';
+        let prevX = items[0].x;
+        for (const item of items) {
+          // Insertar espacios según la distancia horizontal
+          const espacios = Math.max(1, Math.round((item.x - prevX) / 5));
+          if (linea) linea += ' '.repeat(espacios);
+          linea += item.str;
+          prevX = item.x + item.str.length * 5; // estimado
+        }
+        text += linea + '\n';
+      }
+      text += '\f'; // separador de página
     }
     return text;
   } catch(e) {
