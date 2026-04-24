@@ -2508,17 +2508,12 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
     const resultado = await response.json();
     if (resultado.error) throw new Error(resultado.error);
 
-    // Si el parser encontró movimientos, usarlos como fuente de verdad para movimientos_banco
-    // no_conciliados_banco = movimientos del banco sin match con los gastos conciliados por la IA
+    // Si el parser encontró movimientos, usarlos como fuente de verdad
+    // no_conciliados_banco = movimientos del banco que no tienen ningún gasto registrado en la app con monto+fecha similar
     if (tieneParseo) {
       resultado.movimientos_banco = movsBanco;
-      const gastosMap = {};
-      items.forEach(g => { gastosMap[g.id] = g; });
-      const conciliadosSet = new Set((resultado.conciliados || []).map(id => Number(id)));
-      // Montos y fechas de los gastos que la IA sí concilió
-      const matcheados = (resultado.conciliados || []).map(id => gastosMap[id]).filter(Boolean);
       resultado.no_conciliados_banco = movsBanco.filter(mv => {
-        return !matcheados.some(g =>
+        return !items.some(g =>
           Math.abs(g.cantidad - mv.monto) < 1 &&
           Math.abs(new Date(g.fecha) - new Date(mv.fecha)) <= 3 * 86400000
         );
