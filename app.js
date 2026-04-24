@@ -3290,4 +3290,1269 @@ async function procesarEstadoCuenta(event) {
     }
 
     // Detectar encoding corrupto (HSBC usa Xenos D2eVision con caracteres ilegibles)
-    const charRaros = (pdfText.match(/[^
+    const charRaros = (pdfText.match(/[^\x00-\xFF]/g) || []).length;
+    const ratioCorrupto = charRaros / pdfText.length;
+    if (ratioCorrupto > 0.15) {
+      status.innerHTML = '📷 Este PDF tiene codificación no estándar (HSBC). <a href="#" onclick="mostrarSubirImagenes();return false" style="color:var(--accent2);text-decoration:underline">Subir imágenes de los movimientos</a>';
+      event.target.value = '';
+      return;
+    }
+
+    // Obtener gastos del período actual
+    const clave = `${concilCuenta}|${concilPeriodo}`;
+    const [, hasta] = concilPeriodo.split('|');
+    const desde = periodoDesde(concilPeriodo);
+    const all = [...gastos, ...historico];
+    const items = gastosEnPeriodo(all, concilCuenta,
+      new Date(desde + 'T00:00:00'),
+      new Date(hasta + 'T23:59:59')
+    );
+
+    // Parser específico por banco
+    const parsedForPrompt = parsearEstadoCuentaBanco(pdfText, concilCuenta);
+    console.log('[Parser] cuenta:', concilCuenta, 'banco:', parsedForPrompt?.banco, 'movimientos:', parsedForPrompt?.movimientos?.length);
+    if (parsedForPrompt && parsedForPrompt.movimientos.length > 0) {
+      const nombresB = {
+        amex: 'American Express', bbva: 'BBVA', banamex: 'Banamex',
+        banorte: 'Banorte', hsbc: 'HSBC', santander: 'Santander', mercadolibre: 'Mercado Libre'
+      };
+      status.textContent = `🏦 ${nombresB[parsedForPrompt.banco]} — ${parsedForPrompt.movimientos.length} movimientos extraídos`;
+      window._bancoDetectado = parsedForPrompt.banco;
+      window._bancMovs = parsedForPrompt.movimientos;
+    }
+
+    // Construir prompt
+    const movsParsedStr = (parsedForPrompt && parsedForPrompt.movimientos.length > 0)
+      ? `\nMOVIMIENTOS DEL BANCO (parser ${parsedForPrompt.banco.toUpperCase()}):\n` +
+        parsedForPrompt.movimientos.map(mv => `- ${mv.fecha} | ${mv.descripcion} | $${mv.monto}`).join('\n')
+      : `\nESTADO DE CUENTA (texto PDF):\n${pdfText.slice(0, 6000)}`;
+
+    const prompt = `Eres un asistente de conciliación bancaria.${movsParsedStr}
+
+Mis gastos registrados para el período ${desde} al ${hasta} en cuenta ${concilCuenta} son:
+${items.map(g => `- ID:${g.id} | ${g.fecha} | ${g.motivo}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
+
+Devuelve SOLO un JSON con este formato exacto:
+{
+  "movimientos_banco": [{ "fecha": "YYYY-MM-DD", "descripcion": "...", "monto": 123.45 }],
+  "conciliados": [id1, id2],
+  "no_conciliados_banco": [{ "fecha": "YYYY-MM-DD", "descripcion": "...", "monto": 123.45 }],
+  "no_conciliados_app": [id3],
+  "resumen": "breve resumen"
+}
+Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
+
+    // Llamar al Worker de Cloudflare
+    const workerUrl = localStorage.getItem('workerUrl') || '';
+    if (!workerUrl) {
+      mostrarTextoPDFParaConciliar(pdfText, items);
+      return;
+    }
+
+    const movsBanco = parsedForPrompt?.movimientos || [];
+    const tieneParseo = movsBanco.length > 0;
+
+    if (tieneParseo) {
+      // ── Matching local sin IA ──────────────────────────────────
+      // Conciliar por monto (±$1) y fecha (±3 días)
+      if (!conciliados[clave]) conciliados[clave] = {};
+      const bancoConciliados = new Set();
+
+      items.forEach(g => {
+        const match = movsBanco.find((mv, idx) =>
+          !bancoConciliados.has(idx) &&
+          Math.abs(g.cantidad - mv.monto) < 1 &&
+          Math.abs(new Date(g.fecha) - new Date(mv.fecha)) <= 3 * 86400000
+        );
+        if (match) {
+          conciliados[clave][g.id] = true;
+          bancoConciliados.add(movsBanco.indexOf(match));
+        }
+      });
+
+      window._bancMovs = movsBanco;
+      const noConcilBanco = movsBanco.filter((mv, idx) => !bancoConciliados.has(idx));
+
+      // Detectar posibles matches: monto coincide (±$1) pero fecha fuera de rango
+      const gastosSinConciliar = items.filter(g => !conciliados[clave][g.id]);
+      window._posiblesMatches = [];
+      window._noConcilBanco = noConcilBanco.filter(mv => {
+        const posible = gastosSinConciliar.find(g => Math.abs(g.cantidad - mv.monto) < 1);
+        if (posible) {
+          window._posiblesMatches.push({ banco: mv, gasto: posible });
+          return false; // no va a "no encontrados", va a "posibles"
+        }
+        return true;
+      });
+
+      const concilCount = Object.values(conciliados[clave]).filter(Boolean).length;
+      status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos sin registrar`;
+      renderConciliacion();
+      if (window._noConcilBanco.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
+      return;
+    }
+
+    // ── Sin parser: usar IA via Worker ────────────────────────────
+    status.textContent = '🤖 Conciliando con IA...';
+    const response = await fetch(workerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pdfText: pdfText.slice(0, 8000),
+        gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
+        cuenta: concilCuenta,
+        periodo: concilPeriodo
+      })
+    });
+
+    if (!response.ok) {
+      const errTxt = await response.text().catch(() => '');
+      throw new Error(`Worker error ${response.status}: ${errTxt.slice(0, 200)}`);
+    }
+    const resultado = await response.json();
+    if (resultado.error) throw new Error(resultado.error);
+
+    if (!conciliados[clave]) conciliados[clave] = {};
+    (resultado.conciliados || []).forEach(id => { conciliados[clave][id] = true; });
+    (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
+
+    window._bancMovs = resultado.movimientos_banco || [];
+    window._noConcilBanco = resultado.no_conciliados_banco || [];
+
+    const concilCount = (resultado.conciliados || []).length;
+    status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados automáticamente`;
+    if (resultado.resumen) status.textContent += ` · ${resultado.resumen}`;
+    renderConciliacion();
+    if (window._noConcilBanco?.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
+
+  } catch(e) {
+    status.textContent = `❌ Error: ${e.message}`;
+    showToast('Error al procesar el PDF');
+  }
+
+  // Limpiar input para permitir subir el mismo archivo de nuevo
+  event.target.value = '';
+}
+
+
+// ── Parsers específicos por banco ─────────────────────────────
+
+/**
+ * Detecta el banco a partir del texto extraído del PDF.
+ * Retorna: 'amex' | 'bbva' | 'banamex' | 'banorte' | 'hsbc' | 'santander' | 'mercadolibre' | null
+ */
+function detectarBanco(texto, cuentaExplicita) {
+  // Fuente primaria: nombre de la cuenta seleccionada en el conciliador
+  const nombreCuenta = (cuentaExplicita || concilCuenta || '').toLowerCase();
+  const mapaCuentas = {
+    'banamex':     'banamex',  // antes de 'amex' para evitar falso match
+    'banorte':     'banorte',
+    'bbva':        'bbva',
+    'amex':        'amex',
+    'hsbc':        'hsbc',
+    'santander':   'santander',
+    'mercadopago': 'mercadolibre',
+    'mercado pago':'mercadolibre',
+  };
+  for (const [clave, banco] of Object.entries(mapaCuentas)) {
+    if (nombreCuenta.includes(clave)) return banco;
+  }
+  // Fallback: detectar por keywords en el texto del PDF
+  const t = texto.toLowerCase();
+  if (t.includes('american express') || t.includes('americanexpress.com.mx')) return 'amex';
+  if (t.includes('bbva mexico') || t.includes('bbva.mx') || t.includes('grupo financiero bbva')) return 'bbva';
+  if (t.includes('banamex') || t.includes('costco banamex') || t.includes('citibanamex')) return 'banamex';
+  if (t.includes('banorte') || t.includes('banortel') || t.includes('grupo financiero banorte')) return 'banorte';
+  if (t.includes('hsbc') || t.includes('hsbc mexico') || t.includes('hsbc.com.mx')) return 'hsbc';
+  if (t.includes('santander') || t.includes('banco santander') || t.includes('likeu')) return 'santander';
+  if (t.includes('mercado libre') || t.includes('mercadopago') || t.includes('mercado pago 1')) return 'mercadolibre';
+  return null;
+}
+
+/**
+ * Convierte nombre de mes en español a número (0-11).
+ */
+function mesEsToNum(mes) {
+  const meses = {
+    'enero':0,'febrero':1,'marzo':2,'abril':3,'mayo':4,'junio':5,
+    'julio':6,'agosto':7,'septiembre':8,'octubre':9,'noviembre':10,'diciembre':11,
+    'ene':0,'feb':1,'mar':2,'abr':3,'may':4,'jun':5,
+    'jul':6,'ago':7,'sep':8,'oct':9,'nov':10,'dic':11
+  };
+  return meses[mes.toLowerCase()] ?? null;
+}
+
+/**
+ * Parsea número con formato mexicano: "1,234.56" → 1234.56
+ */
+function parseMonto(str) {
+  return parseFloat(str.replace(/,/g, '')) || 0;
+}
+
+/**
+ * Extrae año del texto del PDF (para inferir año en fechas sin año explícito).
+ */
+function inferirAnio(texto) {
+  const m = texto.match(/20(2[3-9]|[3-9]\d)/);
+  return m ? parseInt(m[0]) : new Date().getFullYear();
+}
+
+/**
+ * Parser American Express — funciona con texto plano (PDF.js).
+ *
+ * Amex tiene dos formatos según la página:
+ * - Página principal titular: fechas agrupadas, descripciones agrupadas, montos al final (columnas)
+ * - Páginas adicionales/tarjetahabiente: fecha-descripción-monto secuencial
+ *
+ * Estrategia: extraer sección de movimientos, detectar bloques de "N fechas seguidas → N montos"
+ * y secciones secuenciales, unirlos en orden.
+ */
+function parsearAmex(texto) {
+  const anio = inferirAnio(texto);
+  const movimientos = [];
+  const lineas = texto.split('\n');
+
+  // Pasada 1: formato layout (una línea por transacción con espacios)
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i];
+    const match = linea.match(/^\s*(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s{3,}([\d,]+\.\d{2})\s*$/i);
+    if (!match) continue;
+    const [, dia, mes, desc, montoStr] = match;
+    const sigLinea = (lineas[i + 1] || '').trim();
+    if (sigLinea === 'CR') continue;
+    if (/^(Total|MONTO A DIFERIR|MESES EN AUTOMÁTICO|Crédito por redención|REVERSION|SERVICIO)/i.test(desc.trim())) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    movimientos.push({
+      fecha: new Date(anio, numMes, parseInt(dia)).toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s{2,}/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  if (movimientos.length > 0) return movimientos;
+
+  // Pasada 2: texto plano — procesar línea por línea con state machine
+  // Estado: cuando vemos "DD de Mes" abrimos una transacción,
+  // recolectamos descripción, y cerramos cuando encontramos un monto suelto.
+  // Para el bloque de página 2 donde las fechas están agrupadas y los montos al final,
+  // usamos una estrategia diferente: detectar bloques de N fechas consecutivas seguidas de N montos.
+
+  const FECHA_RX = /^(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)$/i;
+  const MONTO_SOLO_RX = /^([\d,]+\.\d{2})$/;
+  const SKIP_LINE = /^(Total de|MONTO A DIFERIR|MESES EN AUTOMÁTICO|Crédito por redención|REVERSION|SERVICIO DE FACTURACION|Dólar U\.S\.A\.|Importe en MN|Fecha y Detalle|Estado de Cuenta|Número de Cuenta|Tarjetahabiente|Fecha Siguiente|de Corte|Paga desde|Recuerda|En Canales|Desde la Web|Paga con|El pago|Para mayor|Este no es|RFC[A-Z0-9]{10,}|Página \d)/i;
+
+  // Marcar índices de fechas y montos
+  const fechaIdxs = [];
+  const montoIdxs = [];
+  for (let i = 0; i < lineas.length; i++) {
+    const l = lineas[i].trim();
+    if (FECHA_RX.test(l)) fechaIdxs.push(i);
+    if (MONTO_SOLO_RX.test(l)) montoIdxs.push(i);
+  }
+
+  // Detectar si hay un bloque de fechas consecutivas (página 2 de Amex)
+  // Un bloque es: N líneas de fecha con índices contiguos (diferencia ≤2 entre ellas)
+  let i = 0;
+  while (i < fechaIdxs.length) {
+    // Buscar inicio de bloque de fechas consecutivas
+    let bloqueEnd = i;
+    while (bloqueEnd + 1 < fechaIdxs.length && fechaIdxs[bloqueEnd + 1] - fechaIdxs[bloqueEnd] <= 3) {
+      bloqueEnd++;
+    }
+    const bloqueFechas = fechaIdxs.slice(i, bloqueEnd + 1);
+
+    if (bloqueFechas.length >= 2) {
+      // Bloque de fechas agrupadas — los montos están al final, después de las descripciones
+      // Buscar el bloque de montos que sigue después del último índice del bloque de fechas
+      const despuesDeFechas = fechaIdxs[bloqueEnd];
+      // Los montos del bloque son los que aparecen después de las descripciones
+      // Hay que encontrar N montos consecutivos después del bloque de descripciones
+      // Buscamos el primer grupo de montos consecutivos después del bloque
+      let mStart = -1;
+      for (let m = 0; m < montoIdxs.length; m++) {
+        if (montoIdxs[m] > despuesDeFechas + 5) { // al menos 5 líneas después
+          // Verificar que son consecutivos
+          let count = 1;
+          while (m + count < montoIdxs.length && montoIdxs[m + count] - montoIdxs[m + count - 1] <= 2) count++;
+          if (count >= bloqueFechas.length) { mStart = m; break; }
+        }
+      }
+
+      if (mStart >= 0) {
+        // Tenemos N fechas y N montos, unirlos en orden (saltando CR)
+        let mIdx = mStart;
+        for (let f = 0; f < bloqueFechas.length; f++) {
+          // Buscar siguiente monto que no sea CR
+          while (mIdx < montoIdxs.length) {
+            const sigLinea = (lineas[montoIdxs[mIdx] + 1] || '').trim();
+            if (sigLinea !== 'CR') break;
+            mIdx++; // saltar monto CR
+          }
+          if (mIdx >= montoIdxs.length) break;
+
+          const fIdx = bloqueFechas[f];
+          const fm = lineas[fIdx].trim().match(FECHA_RX);
+          if (!fm) { mIdx++; continue; }
+
+          // Descripción: líneas entre esta fecha y la siguiente fecha del bloque (o fin de bloque)
+          const nextFIdx = f + 1 < bloqueFechas.length ? bloqueFechas[f + 1] : montoIdxs[mStart];
+          const descLineas = [];
+          for (let d = fIdx + 1; d < nextFIdx; d++) {
+            const dl = lineas[d].trim();
+            if (!dl || SKIP_LINE.test(dl) || FECHA_RX.test(dl) || MONTO_SOLO_RX.test(dl) || /^\d+\.\d{2}\s+TC:/.test(dl)) continue;
+            descLineas.push(dl);
+          }
+          const desc = descLineas.slice(0, 2).join(' ').trim();
+          const numMes = mesEsToNum(fm[2]);
+          if (numMes === null || !desc) { mIdx++; continue; }
+
+          movimientos.push({
+            fecha: new Date(anio, numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+            descripcion: desc.replace(/\s{2,}/g, ' '),
+            monto: parseMonto(lineas[montoIdxs[mIdx]].trim())
+          });
+          mIdx++;
+        }
+        i = bloqueEnd + 1;
+        continue;
+      }
+    }
+
+    // Fecha sola (secuencial): fecha → descripción → monto
+    const fIdx = fechaIdxs[i];
+    const fm = lineas[fIdx].trim().match(FECHA_RX);
+    if (fm) {
+      // Buscar el primer monto después de esta fecha
+      const nextFechaIdx = i + 1 < fechaIdxs.length ? fechaIdxs[i + 1] : lineas.length;
+      const montoEvt = montoIdxs.find(m => m > fIdx && m < nextFechaIdx);
+      if (montoEvt) {
+        const sigLinea = (lineas[montoEvt + 1] || '').trim();
+        if (sigLinea !== 'CR') {
+          const descLineas = [];
+          for (let d = fIdx + 1; d < montoEvt; d++) {
+            const dl = lineas[d].trim();
+            if (!dl || SKIP_LINE.test(dl) || /^\d+\.\d{2}\s+TC:/.test(dl)) continue;
+            descLineas.push(dl);
+          }
+          const desc = descLineas.slice(0, 2).join(' ').trim();
+          const numMes = mesEsToNum(fm[2]);
+          if (desc && numMes !== null && !SKIP_LINE.test(desc)) {
+            movimientos.push({
+              fecha: new Date(anio, numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+              descripcion: desc.replace(/\s{2,}/g, ' '),
+              monto: parseMonto(lineas[montoEvt].trim())
+            });
+          }
+        }
+      }
+    }
+    i++;
+  }
+
+  // Eliminar duplicados por fecha+monto
+  const vistos = new Set();
+  return movimientos.filter(m => {
+    const key = m.fecha + '|' + m.monto;
+    if (vistos.has(key)) return false;
+    vistos.add(key);
+    return true;
+  });
+}
+function parsearBBVA(texto) {
+  const movimientos = [];
+  // BBVA: "DD-mmm-AAAA  DD-mmm-AAAA  Descripcion  + / -  $1,234.56"
+  const regex = /(\d{2})-([a-záéíóú]{3,4})-(\d{4})\s+(\d{2})-[a-záéíóú]{3,4}-\d{4}\s+(.+?)\s+[+\-]\s+\$?([\d,]+\.\d{2})/gi;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, , desc, montoStr] = m;
+    if (/ABONO|PAGO|SU ABONO/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  // Fallback: formato simple "DD-mes-AAAA  Descripcion  $1,234.56"
+  if (movimientos.length === 0) {
+    const rx2 = /(\d{2})-([a-záéíóú]{3,4})-(\d{4})\s+(.+?)\s+\+\s+\$?([\d,]+\.\d{2})/gi;
+    while ((m = rx2.exec(texto)) !== null) {
+      const [, dia, mes, anio, desc, montoStr] = m;
+      const numMes = mesEsToNum(mes);
+      if (numMes === null) continue;
+      const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+      movimientos.push({
+        fecha: fecha.toISOString().slice(0, 10),
+        descripcion: desc.trim().replace(/\s+/g, ' '),
+        monto: parseMonto(montoStr)
+      });
+    }
+  }
+  return movimientos;
+}
+
+/**
+ * Parser Banamex (Citibanamex).
+ * Soporta texto con layout y texto plano (PDF.js).
+ * En texto plano: bloques de fechas, luego descripciones, luego signos, luego montos.
+ * En texto layout: "DD-mmm-AAAA  DD-mmm-AAAA  Desc  +  $1,234.00"
+ */
+function parsearBanamex(texto) {
+  const movimientos = [];
+
+  // Pasada 1: texto con layout
+  const rxLayout = /(\d{2})-([a-z]{3})-(\d{4})\s+\d{2}-[a-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/gi;
+  let m;
+  while ((m = rxLayout.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/^(Total cargos|Total abonos)/i.test(desc.trim())) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    movimientos.push({
+      fecha: new Date(parseInt(anio), numMes, parseInt(dia)).toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s{2,}/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  if (movimientos.length > 0) return movimientos;
+
+  // Pasada 2: texto plano — procesar cada sección CARGOS, ABONOS por separado
+  // Cada sección tiene: bloque fechas | bloque descs | bloque signos | bloque montos
+  const lineas = texto.split('\n');
+  const FECHA_RX = /^(\d{2})-([a-z]{3})-(\d{4})$/i;
+  const MONTO_RX = /^\$?(\d[\d,]*\.\d{2})$/;
+  const SIGNO_RX = /^[\+\-]$/;
+  const SKIP = /^(Total cargos|Total abonos|Fecha de la|operación|Fecha|de cargo|Descripción del movimiento|Monto|CARGOS, ABONOS|COMPRAS Y CARGOS|DESGLOSE|Número de tarjeta|Notas|Página \d|NA|SU ABONO)/i;
+
+  // Encontrar índices de inicio de cada sección
+  const seccionIdxs = [];
+  for (let i = 0; i < lineas.length; i++) {
+    if (/CARGOS, ABONOS Y COMPRAS REGULARES/i.test(lineas[i])) seccionIdxs.push(i);
+  }
+  if (seccionIdxs.length === 0) return movimientos;
+
+  // Procesar cada sección
+  seccionIdxs.forEach((secStart, si) => {
+    const secEnd = si + 1 < seccionIdxs.length ? seccionIdxs[si + 1] : lineas.length;
+    const secLineas = lineas.slice(secStart, secEnd);
+
+    // Recolectar fechas, montos y signos dentro de esta sección
+    const fechas = [], montos = [], signos = [], descs = [];
+    let enFechas = false, enDescs = false, enSignos = false, enMontos = false;
+    let fechasVistas = 0;
+
+    for (let i = 0; i < secLineas.length; i++) {
+      const l = secLineas[i].trim();
+      if (!l || SKIP.test(l)) continue;
+      if (FECHA_RX.test(l)) { fechas.push(l); fechasVistas++; enFechas = true; continue; }
+      // Después de las fechas vienen las descripciones
+      if (fechasVistas > 0 && !MONTO_RX.test(l) && !SIGNO_RX.test(l)) { descs.push(l); continue; }
+      if (SIGNO_RX.test(l)) { signos.push(l); continue; }
+      if (MONTO_RX.test(l)) { montos.push(l); continue; }
+    }
+
+    if (fechas.length === 0 || montos.length === 0) return;
+
+    // Agrupar descripciones: 2 líneas por transacción (nombre + referencia)
+    // Pero si hay más descs que fechas*2, ajustar
+    const descsPorTx = Math.max(1, Math.min(2, Math.round(descs.length / fechas.length)));
+
+    let mIdx = 0;
+    for (let f = 0; f < fechas.length; f++) {
+      // Saltear si el signo es negativo (abono)
+      if (signos[f] === '-') { mIdx++; continue; }
+      if (mIdx >= montos.length) break;
+
+      const fm = fechas[f].match(FECHA_RX);
+      if (!fm) { mIdx++; continue; }
+      const numMes = mesEsToNum(fm[2]);
+      if (numMes === null) { mIdx++; continue; }
+
+      const descLineas = descs.slice(f * descsPorTx, f * descsPorTx + descsPorTx);
+      const desc = descLineas.join(' ').trim();
+      if (!desc) { mIdx++; continue; }
+
+      const montoStr = montos[mIdx].replace('$', '');
+      const monto = parseMonto(montoStr);
+      if (monto <= 0) { mIdx++; continue; }
+
+      movimientos.push({
+        fecha: new Date(parseInt(fm[3]), numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+        descripcion: desc.replace(/\s{2,}/g, ' '),
+        monto
+      });
+      mIdx++;
+    }
+  });
+
+  // Deduplicar por fecha+monto
+  const vistos = new Set();
+  return movimientos.filter(mv => {
+    const k = mv.fecha + '|' + mv.monto;
+    if (vistos.has(k)) return false;
+    vistos.add(k); return true;
+  });
+}
+function parsearBanorte(texto) {
+  const movimientos = [];
+  const regex = /(\d{2})-([A-Z]{3})-(\d{4})\s+\d{2}-[A-Z]{3}-\d{4}\s+(.+?)\s+\+\$?([\d,]+\.\d{2})/g;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/ABONO|PAGO/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Parser HSBC.
+ * Texto extraído con PDF.js (no con pdftotext directamente ya que tiene encoding raro).
+ * Formato en DESGLOSE: "DD-Mes-AAAA  DD-Mes-AAAA  Descripcion  + $1,234.00"
+ */
+function parsearHSBC(texto) {
+  const movimientos = [];
+  // Intenta el formato estándar de HSBC con visual
+  const regex = /(\d{2})-([A-Za-záéíóú]{3,4})-(\d{4})\s+\d{2}-[A-Za-záéíóú]{3,4}-\d{4}\s+(.+?)\s+\+\s*\$?([\d,]+\.\d{2})/g;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/ABONO|PAGO|SPEI/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  // Fallback para texto de imagen: buscar "MAG", "APPLE", etc. con monto
+  if (movimientos.length === 0) {
+    const rx2 = /(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2})-[A-Za-z]{3}-\d{4}\s+(.+?)\s+\$\+?\s*([\d,]+\.\d{2})/g;
+    while ((m = rx2.exec(texto)) !== null) {
+      const [, dia, mes, anio, , desc, montoStr] = m;
+      const numMes = mesEsToNum(mes);
+      if (numMes === null) continue;
+      const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+      movimientos.push({
+        fecha: fecha.toISOString().slice(0, 10),
+        descripcion: desc.trim().replace(/\s+/g, ' '),
+        monto: parseMonto(montoStr)
+      });
+    }
+  }
+  return movimientos;
+}
+
+/**
+ * Parser Santander.
+ * Formato: "DD-Mar-AAAA  DD-Mar-AAAA  Descripcion  +  $ 1,234.00"
+ * o "DD-Mar-AAAA  DD-Mar-AAAA  Descripcion LOLA850607FT3  +  $ 644.00"
+ */
+function parsearSantander(texto) {
+  const movimientos = [];
+
+  // Pasada 1: layout — "DD-Mar-AAAA  DD-Mar-AAAA  Desc Ref  +  $ 644.00"
+  const rxLayout = /(\d{2})-([A-Za-z]{3})-(\d{4})\s+\d{2}-[A-Za-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/g;
+  let m;
+  while ((m = rxLayout.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/^(PAGO POR TRANSFERENCIA|SU ABONO|Total de cargos|Total de abonos)/i.test(desc.trim())) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    movimientos.push({
+      fecha: new Date(parseInt(anio), numMes, parseInt(dia)).toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s{2,}/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  if (movimientos.length > 0) return movimientos;
+
+  // Pasada 2: texto plano — misma estructura de columnas que Banamex
+  const lineas = texto.split('\n');
+  const FECHA_RX = /^(\d{2})-([A-Za-z]{3})-(\d{4})$/;
+  const MONTO_RX = /^\$?\s*(\d[\d,]*\.\d{2})$/;
+  const SIGNO_RX = /^[\+\-]$/;
+  const SKIP = /^(Total de cargos|Total de abonos|Fecha de la|operación|Fecha de|cargo|Descripción del movimiento|Monto|CARGOS, ABONOS|DESGLOSE|Número de cuenta|Notas|Página|ATENCIÓN|Tarjeta titular|COMPRAS Y CARGOS)/i;
+
+  const secStart = lineas.findIndex(l => /CARGOS, ABONOS Y COMPRAS REGULARES/i.test(l));
+  const secEnd = lineas.findIndex(l => /ATENCIÓN DE QUEJAS/i.test(l));
+  if (secStart === -1) return movimientos;
+
+  const region = lineas.slice(secStart, secEnd > 0 ? secEnd : lineas.length);
+  const fechas = [], signos = [], montos = [], descs = [];
+  for (const l of region) {
+    const t = l.trim();
+    if (!t || SKIP.test(t)) continue;
+    if (FECHA_RX.test(t)) { fechas.push(t); continue; }
+    if (SIGNO_RX.test(t)) { signos.push(t); continue; }
+    if (MONTO_RX.test(t)) { montos.push(t); continue; }
+    if (fechas.length > 0 && signos.length === 0 && montos.length === 0) descs.push(t);
+  }
+
+  const fechasOp = fechas.filter((_, i) => i % 2 === 0);
+  if (fechasOp.length === 0 || montos.length === 0) return movimientos;
+
+  const descsPorTx = Math.max(1, Math.min(2, Math.round(descs.length / fechasOp.length)));
+  let mIdx = 0;
+  for (let f = 0; f < fechasOp.length; f++) {
+    if (signos[f] === '-') { mIdx++; continue; }
+    if (mIdx >= montos.length) break;
+    const fm = fechasOp[f].match(FECHA_RX);
+    if (!fm) continue;
+    const numMes = mesEsToNum(fm[2]);
+    if (numMes === null) continue;
+    const descLineas = descs.slice(f * descsPorTx, f * descsPorTx + descsPorTx);
+    const desc = descLineas.join(' ').trim();
+    if (!desc || /^(PAGO POR TRANSFERENCIA|SU ABONO)/i.test(desc)) { mIdx++; continue; }
+    const montoStr = montos[mIdx].replace(/\$|\s/g, '');
+    const monto = parseMonto(montoStr);
+    if (monto <= 0) { mIdx++; continue; }
+    movimientos.push({
+      fecha: new Date(parseInt(fm[3]), numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+      descripcion: desc.replace(/\s{2,}/g, ' '),
+      monto
+    });
+    mIdx++;
+  }
+
+  const vistos = new Set();
+  return movimientos.filter(mv => {
+    const k = mv.fecha + '|' + mv.monto;
+    if (vistos.has(k)) return false;
+    vistos.add(k); return true;
+  });
+}
+
+/**
+ * Parser Mercado Libre / Mercado Pago.
+ * Formato en sección "Movimientos": "DD/MM Compra en DESCRIPCION  $ 1,234.56"
+ */
+function parsearMercadoLibre(texto) {
+  const movimientos = [];
+  const anio = inferirAnio(texto);
+  const regex = /(\d{2})\/(\d{2})\s+Compra en\s+(.+?)\s+\$\s*([\d,]+\.\d{2})/gi;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, desc, montoStr] = m;
+    const fecha = new Date(anio, parseInt(mes) - 1, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Punto de entrada principal: detecta banco y llama al parser correcto.
+ * Retorna array de { fecha, descripcion, monto } o null si no detectó banco.
+ */
+function parsearEstadoCuentaBanco(texto, cuentaExplicita) {
+  const banco = detectarBanco(texto, cuentaExplicita);
+  if (!banco) return null;
+  
+  let movimientos = [];
+  switch (banco) {
+    case 'amex':         movimientos = parsearAmex(texto); break;
+    case 'bbva':         movimientos = parsearBBVA(texto); break;
+    case 'banamex':      movimientos = parsearBanamex(texto); break;
+    case 'banorte':      movimientos = parsearBanorte(texto); break;
+    case 'hsbc':         movimientos = parsearHSBC(texto); break;
+    case 'santander':    movimientos = parsearSantander(texto); break;
+    case 'mercadolibre': movimientos = parsearMercadoLibre(texto); break;
+  }
+  
+  return { banco, movimientos };
+}
+
+// ── Extraer texto de PDF (usando PDF.js si disponible) ────────
+async function extraerTextoPDF(base64) {
+  try {
+    if (!window.pdfjsLib) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    const pdfData = atob(base64);
+    const bytes = new Uint8Array(pdfData.length);
+    for (let i = 0; i < pdfData.length; i++) bytes[i] = pdfData.charCodeAt(i);
+    const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
+    let text = '';
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const viewport = page.getViewport({ scale: 1 });
+
+      // Agrupar items por línea usando coordenada Y (tolerancia de 3px)
+      const lineasMap = new Map();
+      for (const item of content.items) {
+        if (!item.str.trim()) continue;
+        const y = Math.round(item.transform[5]); // Y en espacio de página
+        // Buscar línea existente con Y cercana
+        let lineaKey = null;
+        for (const [k] of lineasMap) {
+          if (Math.abs(k - y) <= 3) { lineaKey = k; break; }
+        }
+        if (lineaKey === null) { lineaKey = y; lineasMap.set(y, []); }
+        lineasMap.get(lineaKey).push({ x: item.transform[4], str: item.str });
+      }
+
+      // Ordenar líneas por Y descendente (PDF tiene Y=0 abajo, texto va de arriba a abajo)
+      const lineasOrdenadas = [...lineasMap.entries()]
+        .sort((a, b) => b[0] - a[0]); // Y mayor = parte superior
+
+      for (const [, items] of lineasOrdenadas) {
+        // Ordenar items dentro de la línea por X
+        items.sort((a, b) => a.x - b.x);
+        // Construir línea con espaciado proporcional
+        let linea = '';
+        let prevX = items[0].x;
+        for (const item of items) {
+          // Insertar espacios según la distancia horizontal
+          const espacios = Math.max(1, Math.round((item.x - prevX) / 5));
+          if (linea) linea += ' '.repeat(espacios);
+          linea += item.str;
+          prevX = item.x + item.str.length * 5; // estimado
+        }
+        text += linea + '\n';
+      }
+      text += '\f'; // separador de página
+    }
+    return text;
+  } catch(e) {
+    console.warn('PDF.js error:', e);
+    return null;
+  }
+}
+
+// ── Conciliación asistida sin IA ─────────────────────────────
+function mostrarTextoPDFParaConciliar(pdfText, items) {
+  // Extraer líneas con montos del texto del PDF
+  const lineas = pdfText.split('\n').filter(l => l.trim());
+  const montoRegex = /\$?([\d,]+\.\d{2})/g;
+
+  // Mapear cada línea con su monto
+  const lineasConMonto = [];
+  lineas.forEach(linea => {
+    const montos = [];
+    let m;
+    const rx = /\$?([\d,]+\.\d{2})/g;
+    while ((m = rx.exec(linea)) !== null) {
+      const val = parseFloat(m[1].replace(/,/g,''));
+      if (val > 0 && val < 1000000) montos.push(val);
+    }
+    if (montos.length) {
+      lineasConMonto.push({ texto: linea.trim(), montos });
+    }
+  });
+
+  // Marcar automáticamente los gastos cuyo monto aparece en el PDF
+  const clave = `${concilCuenta}|${concilPeriodo}`;
+  if (!conciliados[clave]) conciliados[clave] = {};
+  let conciliados_count = 0;
+  const montosUsados = new Set();
+
+  items.forEach(g => {
+    const lineaMatch = lineasConMonto.find(l =>
+      l.montos.some(m => Math.abs(m - g.cantidad) < 1)
+    );
+    const encontrado = !!lineaMatch;
+    conciliados[clave][g.id] = encontrado;
+    if (encontrado) {
+      conciliados_count++;
+      // Marcar este monto como usado
+      lineaMatch.montos.forEach(m => {
+        if (Math.abs(m - g.cantidad) < 1) montosUsados.add(m);
+      });
+    }
+  });
+
+  // Encontrar montos del PDF que no coincidieron con ningún gasto
+  window._noConcilBanco = [];
+  lineasConMonto.forEach(linea => {
+    linea.montos.forEach(monto => {
+      // Si este monto no fue usado en ningún gasto
+      const yaUsado = items.some(g => Math.abs(g.cantidad - monto) < 1 && conciliados[clave][g.id]);
+      if (!yaUsado && monto > 0) {
+        // Evitar duplicados
+        const existe = window._noConcilBanco.some(x => Math.abs(x.monto - monto) < 0.01 && x.descripcion === linea.texto.slice(0,60));
+        if (!existe) {
+          window._noConcilBanco.push({
+            fecha: '',
+            descripcion: linea.texto.slice(0, 80),
+            monto
+          });
+        }
+      }
+    });
+  });
+
+  const status = document.getElementById('concil-pdf-status');
+  const noBanco = window._noConcilBanco.length;
+  status.textContent = `✅ ${conciliados_count} de ${items.length} gastos conciliados por monto.`;
+  if (noBanco) status.textContent += ` · ${noBanco} cargo(s) en PDF sin registrar.`;
+  renderConciliacion();
+}
+
+// ── Catálogos ─────────────────────────────────────────────────
+// Sub-tab activo: 'cuentas' | 'motivos'
+let catalogoTab = 'cuentas';
+
+function renderCatalogos() {
+  ['cuentas','motivos','comentarios'].forEach(t => {
+    const btn = document.getElementById('ctab-'+t);
+    if (!btn) return;
+    btn.style.background = catalogoTab === t ? '#0d9488' : 'transparent';
+    btn.style.color      = catalogoTab === t ? 'white'   : '#94a3b8';
+    document.getElementById('cat-panel-'+t).style.display = catalogoTab === t ? '' : 'none';
+  });
+  if (catalogoTab === 'cuentas')    renderCatCuentas();
+  if (catalogoTab === 'motivos')    renderCatMotivos();
+  if (catalogoTab === 'comentarios') renderCatComentarios();
+}
+
+function setCatalogoTab(t) { catalogoTab = t; renderCatalogos(); }
+
+// ── Catálogo de Cuentas ───────────────────────────────────────
+function renderCatCuentas() {
+  const el = document.getElementById('cat-cuentas-list');
+  el.innerHTML = catalogoCuentas.map((c, i) => `
+    <div style="background:var(--bg2);border-radius:10px;border:1px solid var(--border);padding:12px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="width:14px;height:14px;border-radius:50%;background:${c.color};flex-shrink:0;display:inline-block"></span>
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:500;color:var(--text)">${c.nombre}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">
+            ${c.tieneCorte ? `Corte día ${c.diaCorte}` : 'Sin corte (débito)'}
+          </div>
+        </div>
+        <button onclick="editarCuenta(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;font-size:12px;color:var(--text2);cursor:pointer">Editar</button>
+        <button onclick="eliminarCuenta_cat(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
+      </div>
+    </div>`).join('');
+}
+
+function nuevaCuenta_cat() {
+  document.getElementById('cc-nombre').value    = '';
+  document.getElementById('cc-color').value     = '#0d9488';
+  document.getElementById('cc-tiene-corte').checked = false;
+  document.getElementById('cc-dia-wrap').style.display = 'none';
+  document.getElementById('cc-dia').value       = '';
+  document.getElementById('cc-modal-title').textContent = 'Nueva cuenta';
+  window._editCuentaIdx = null;
+  openModal('modal-cat-cuenta');
+}
+
+function editarCuenta(i) {
+  const c = catalogoCuentas[i];
+  document.getElementById('cc-nombre').value    = c.nombre;
+  document.getElementById('cc-color').value     = c.color;
+  document.getElementById('cc-tiene-corte').checked = !!c.tieneCorte;
+  document.getElementById('cc-dia-wrap').style.display = c.tieneCorte ? '' : 'none';
+  document.getElementById('cc-dia').value       = c.diaCorte || '';
+  document.getElementById('cc-modal-title').textContent = 'Editar cuenta';
+  window._editCuentaIdx = i;
+  openModal('modal-cat-cuenta');
+}
+
+async function guardarCuenta_cat() {
+  const nombre = document.getElementById('cc-nombre').value.trim();
+  if (!nombre) { showToast('Ingresa el nombre de la cuenta'); return; }
+  const color      = document.getElementById('cc-color').value;
+  const tieneCorte = document.getElementById('cc-tiene-corte').checked;
+  const diaCorte   = tieneCorte ? parseInt(document.getElementById('cc-dia').value) : null;
+  if (tieneCorte && (!diaCorte || diaCorte < 1 || diaCorte > 31)) {
+    showToast('Ingresa un día de corte válido (1-31)'); return;
+  }
+  const obj = { nombre, color, tieneCorte, diaCorte };
+  if (window._editCuentaIdx !== null) {
+    catalogoCuentas[window._editCuentaIdx] = obj;
+  } else {
+    if (catalogoCuentas.find(c => c.nombre.toLowerCase() === nombre.toLowerCase())) {
+      showToast('Ya existe una cuenta con ese nombre'); return;
+    }
+    catalogoCuentas.push(obj);
+  }
+  saveLocal();
+  closeModal('modal-cat-cuenta');
+  showToast('Cuenta guardada ✓');
+  renderCatCuentas();
+  // Actualizar selects del formulario de gastos
+  actualizarSelectCuentas();
+}
+
+async function eliminarCuenta_cat(i) {
+  const c = catalogoCuentas[i];
+  if (!confirm(`¿Eliminar la cuenta "${c.nombre}"? Los gastos existentes mantendrán el nombre.`)) return;
+  catalogoCuentas.splice(i, 1);
+  await saveData();
+  showToast('Cuenta eliminada');
+  renderCatCuentas();
+  actualizarSelectCuentas();
+}
+
+function actualizarSelectCuentas() {
+  const sel = document.getElementById('f-cuenta');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = getCuentas().map(n => `<option${n===cur?' selected':''}>${n}</option>`).join('');
+}
+
+// ── Catálogo de Motivos ───────────────────────────────────────
+function renderCatMotivos() {
+  const el = document.getElementById('cat-motivos-list');
+  el.innerHTML = catalogoMotivos.map((m, i) => `
+    <div style="background:var(--bg2);border-radius:10px;border:1px solid var(--border);padding:11px 13px;margin-bottom:7px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px">${getMotivoIcon(m)}</span>
+      <span style="flex:1;font-size:13px;font-weight:500;color:var(--text)">${m}</span>
+      <button onclick="editarMotivo(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;font-size:12px;color:var(--text2);cursor:pointer">Editar</button>
+      <button onclick="eliminarMotivo(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
+    </div>`).join('');
+}
+
+function nuevoMotivo() {
+  document.getElementById('cm-nombre').value = '';
+  document.getElementById('cm-modal-title').textContent = 'Nuevo motivo';
+  window._editMotivoIdx = null;
+  openModal('modal-cat-motivo');
+}
+
+function editarMotivo(i) {
+  document.getElementById('cm-nombre').value = catalogoMotivos[i];
+  document.getElementById('cm-modal-title').textContent = 'Editar motivo';
+  window._editMotivoIdx = i;
+  openModal('modal-cat-motivo');
+}
+
+async function guardarMotivo_cat() {
+  const nombre = document.getElementById('cm-nombre').value.trim();
+  if (!nombre) { showToast('Ingresa el nombre del motivo'); return; }
+  if (window._editMotivoIdx !== null) {
+    catalogoMotivos[window._editMotivoIdx] = nombre;
+  } else {
+    if (catalogoMotivos.map(m=>m.toLowerCase()).includes(nombre.toLowerCase())) {
+      showToast('Ya existe ese motivo'); return;
+    }
+    catalogoMotivos.push(nombre);
+  }
+  saveLocal();
+  closeModal('modal-cat-motivo');
+  showToast('Motivo guardado ✓');
+  renderCatMotivos();
+  actualizarSelectMotivos();
+}
+
+async function eliminarMotivo(i) {
+  if (!confirm(`¿Eliminar el motivo "${catalogoMotivos[i]}"?`)) return;
+  catalogoMotivos.splice(i, 1);
+  await saveData();
+  showToast('Motivo eliminado');
+  renderCatMotivos();
+  actualizarSelectMotivos();
+}
+
+function actualizarSelectMotivos() {
+  const sel = document.getElementById('f-motivo');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = catalogoMotivos.map(m => `<option${m===cur?' selected':''}>${m}</option>`).join('');
+}
+
+// El campo comentarios es un combo: dropdown + input libre
+function openComentarioDropdown() {
+  const dropdown = document.getElementById('comentario-dropdown');
+  const input    = document.getElementById('f-comentarios-input');
+  const q        = input.value.trim().toLowerCase();
+
+  // Normalizar: el catálogo puede tener strings u objetos {nombre:...}
+  const todos = (catalogoComentarios || []).map(c =>
+    typeof c === 'string' ? c : (c.nombre || c.Nombre || String(c))
+  ).filter(Boolean);
+
+  const items = q ? todos.filter(c => c.toLowerCase().includes(q)) : todos;
+
+  let html = items.map(c =>
+    `<div onmousedown="event.preventDefault();seleccionarComentario('${c.replace(/'/g,'&#39;').replace(/"/g,'&quot;')}')"
+      style="padding:11px 14px;font-size:14px;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)">${c}</div>`
+  ).join('');
+
+  if (q && !todos.some(c => c.toLowerCase() === q)) {
+    html += `<div onmousedown="event.preventDefault();seleccionarComentario('${input.value.replace(/'/g,'&#39;').replace(/"/g,'&quot;')}')"
+      style="padding:11px 14px;font-size:13px;color:var(--green);cursor:pointer;font-weight:600">+ Usar "${input.value}"</div>`;
+  }
+
+  if (!html) { dropdown.style.display = 'none'; return; }
+  dropdown.innerHTML = html;
+  dropdown.style.display = 'block';
+}
+
+function seleccionarComentario(val) {
+  document.getElementById('f-comentarios-input').value = val;
+  document.getElementById('comentario-dropdown').style.display = 'none';
+}
+
+function cerrarDropdownComentario(e) {
+  const wrap = document.getElementById('comentario-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('comentario-dropdown').style.display = 'none';
+  }
+}
+
+
+// ── Catálogo de Comentarios ───────────────────────────────────
+function renderCatComentarios() {
+  const el = document.getElementById('cat-comentarios-list');
+  el.innerHTML = catalogoComentarios.map((c, i) => `
+    <div style="background:var(--bg2);border-radius:10px;border:1px solid var(--border);padding:11px 13px;margin-bottom:7px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:16px">💬</span>
+      <span style="flex:1;font-size:13px;font-weight:500;color:var(--text)">${c}</span>
+      <button onclick="editarComentario(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;font-size:12px;color:var(--text2);cursor:pointer">Editar</button>
+      <button onclick="eliminarComentario(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
+    </div>`).join('');
+}
+
+function nuevoComentario() {
+  document.getElementById('ccom-nombre').value = '';
+  document.getElementById('ccom-modal-title').textContent = 'Nuevo comentario';
+  window._editComentarioIdx = null;
+  openModal('modal-cat-comentario');
+}
+
+function editarComentario(i) {
+  document.getElementById('ccom-nombre').value = catalogoComentarios[i];
+  document.getElementById('ccom-modal-title').textContent = 'Editar comentario';
+  window._editComentarioIdx = i;
+  openModal('modal-cat-comentario');
+}
+
+async function guardarComentarioCat() {
+  const nombre = document.getElementById('ccom-nombre').value.trim();
+  if (!nombre) { showToast('Ingresa el nombre del comentario'); return; }
+  if (window._editComentarioIdx !== null) {
+    catalogoComentarios[window._editComentarioIdx] = nombre;
+  } else {
+    if (catalogoComentarios.map(c=>c.toLowerCase()).includes(nombre.toLowerCase())) {
+      showToast('Ya existe ese comentario'); return;
+    }
+    catalogoComentarios.push(nombre);
+  }
+  saveLocal();
+  closeModal('modal-cat-comentario');
+  showToast('Comentario guardado ✓');
+  renderCatComentarios();
+}
+
+async function eliminarComentario(i) {
+  if (!confirm(`¿Eliminar "${catalogoComentarios[i]}" del catálogo?`)) return;
+  catalogoComentarios.splice(i, 1);
+  await saveData();
+  showToast('Eliminado');
+  renderCatComentarios();
+}
+
+
+// ── Menú lateral (drawer) ─────────────────────────────────────
+function openDrawer() {
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+}
+
+
+// ── Modo oscuro / claro ───────────────────────────────────────
+function aplicarTema(modo) {
+  const root = document.documentElement;
+  if (modo === 'claro') {
+    root.style.setProperty('--bg',      '#f0f2f5');
+    root.style.setProperty('--bg2',     '#ffffff');
+    root.style.setProperty('--bg3',     '#e8eaf0');
+    root.style.setProperty('--text',    '#1a1d27');
+    root.style.setProperty('--text2',   '#4a5568');
+    root.style.setProperty('--text3',   '#718096');
+    root.style.setProperty('--border',  'rgba(0,0,0,.1)');
+    root.style.setProperty('--border2', 'rgba(0,0,0,.18)');
+    root.style.setProperty('--topbar1', '#4c1d95');
+    root.style.setProperty('--topbar2', '#5b21b6');
+    root.style.setProperty('--accent',  '#6c63ff');
+    root.style.setProperty('--accent2', '#a78bfa');
+    root.style.setProperty('--green',   '#22d3a5');
+    root.style.setProperty('--red',     '#ff5e7a');
+    root.style.setProperty('--orange',  '#ff9f43');
+    document.body.style.background = '#f0f2f5';
+  } else if (modo === 'revolut') {
+    root.style.setProperty('--bg',      '#000000');
+    root.style.setProperty('--bg2',     '#111111');
+    root.style.setProperty('--bg3',     '#1a1a1a');
+    root.style.setProperty('--text',    '#ffffff');
+    root.style.setProperty('--text2',   '#888888');
+    root.style.setProperty('--text3',   '#555555');
+    root.style.setProperty('--border',  'rgba(255,255,255,.06)');
+    root.style.setProperty('--border2', 'rgba(255,255,255,.1)');
+    root.style.setProperty('--topbar1', '#000000');
+    root.style.setProperty('--topbar2', '#111111');
+    root.style.setProperty('--accent',  '#0066ff');
+    root.style.setProperty('--accent2', '#4d94ff');
+    root.style.setProperty('--green',   '#00d09c');
+    root.style.setProperty('--red',     '#ff3d5a');
+    root.style.setProperty('--orange',  '#ff8c00');
+    root.style.setProperty('--purple',  '#7b61ff');
+    document.body.style.background = '#000000';
+  } else {
+    root.style.setProperty('--bg',      '#0f1117');
+    root.style.setProperty('--bg2',     '#1a1d27');
+    root.style.setProperty('--bg3',     '#22263a');
+    root.style.setProperty('--text',    '#f0f2ff');
+    root.style.setProperty('--text2',   '#8b92b0');
+    root.style.setProperty('--text3',   '#555d7a');
+    root.style.setProperty('--border',  'rgba(255,255,255,.07)');
+    root.style.setProperty('--border2', 'rgba(255,255,255,.12)');
+    root.style.setProperty('--topbar1', '#1e1b4b');
+    root.style.setProperty('--topbar2', '#2d1b6e');
+    root.style.setProperty('--accent',  '#6c63ff');
+    root.style.setProperty('--accent2', '#a78bfa');
+    root.style.setProperty('--green',   '#22d3a5');
+    root.style.setProperty('--red',     '#ff5e7a');
+    root.style.setProperty('--orange',  '#ff9f43');
+    document.body.style.background = '#0f1117';
+  }
+  localStorage.setItem('tema', modo);
+  const btn = document.getElementById('btn-tema');
+  const temas = { oscuro: '☀️ Modo claro', claro: '🌑 Tema Revolut', revolut: '🌙 Modo oscuro' };
+  if (btn) btn.textContent = temas[modo] || '☀️ Modo claro';
+}
+function toggleTema() {
+  const actual = localStorage.getItem('tema') || 'oscuro';
+  const siguiente = { oscuro: 'claro', claro: 'revolut', revolut: 'oscuro' };
+  aplicarTema(siguiente[actual] || 'oscuro');
+}
+// ── Ocultar/mostrar total ahorrado ───────────────────────────
+let ahorroVisible = false;
+function toggleAhorroVisible() {
+  ahorroVisible = !ahorroVisible;
+  aplicarVisibilidadAhorros();
+}
+
+function aplicarVisibilidadAhorros() {
+  const blur = ahorroVisible ? '' : 'blur(8px)';
+  // Total grande y grupos en pestaña Ahorros
+  ['ahorro-big','ahorro-grupos-totales'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.filter = blur;
+  });
+  // Saldos en cada tarjeta de ahorro (.ahorro-total)
+  document.querySelectorAll('.ahorro-total').forEach(el => el.style.filter = blur);
+  // Totales de grupo en headers
+  document.querySelectorAll('.ahorro-grupo-total').forEach(el => el.style.filter = blur);
+  // Movimientos en tarjetas
+  document.querySelectorAll('.ahorro-mov-monto').forEach(el => el.style.filter = blur);
+  // Stat card del Menú
+  const sAhorro = document.getElementById('s-ahorro');
+  if (sAhorro) sAhorro.style.filter = blur;
+  // Botones ojito
+  ['btn-eye-ahorro','btn-eye-menu'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.textContent = ahorroVisible ? '👁' : '🙈';
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  try { loadFromLocal(); } catch(e) { console.error('Error cargando datos:', e); }
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main-app').style.display = 'block';
+  actualizarSelectCuentas();
+  actualizarSelectMotivos();
+  // Inicializar fecha
+  const fechaEl = document.getElementById('f-fecha');
+  if (fechaEl) fechaEl.value = new Date().toISOString().slice(0,10);
+  aplicarTema(localStorage.getItem('tema') || 'oscuro');
+  // Renderizar menú con datos locales INMEDIATAMENTE
+  showTab('menu');
+  renderMenu();
+  aplicarVisibilidadAhorros(); // aplicar estado inicial (oculto)
+  document.addEventListener('click', cerrarDropdownComentario);
+  iniciarAutoSync();
+  mostrarBannerActualizar();
+  // Sync con GitHub en segundo plano
+  if (usingGithub()) {
+    downloadSnapshot().then(async ok => {
+      // Re-renderizar siempre con los datos más frescos
+      actualizarSelectCuentas();
+      actualizarSelectMotivos();
+      renderMenu();
+      const tabAct = tabActualGlobal;
+      if (tabAct === 'gastos') renderGastos();
+      // Solo subir si hay cambios locales reales (timestamps con valor)
+      const lm = new Date(localStorage.getItem('localModified')||0).getTime();
+      const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
+      if (lm > 0 && ls > 0 && lm > ls + 3000) {
+        const up = await uploadSnapshot();
+        if (up) {
+          const ts = new Date().toISOString();
+          localStorage.setItem('lastSync', ts);
+          localStorage.setItem('localModified', ts);
+        }
+      }
+      mostrarEstadoSync(true);
+    });
+  } else {
+    mostrarEstadoSync(false);
+  }
+});
+
+function mostrarBannerActualizar() {
+  // Usar sync-status en topbar en vez de banner que ocupa espacio
+  const status = document.getElementById('sync-status');
+  if (status) {
+    status.style.display = 'inline';
+    if (usingGithub()) {
+      status.textContent = '🔄 Sync...';
+      status.style.color = 'var(--text3)';
+    } else {
+      const lastBackup = localStorage.getItem('lastBackup');
+      if (!lastBackup) {
+        status.textContent = '💾 Sin backup';
+        status.style.color = 'var(--orange)';
+      }
+    }
+  }
+  // Ocultar el banner de abajo (no usarlo para no afectar layout)
+  const banner = document.getElementById('banner-actualizar');
+  if (banner) banner.style.display = 'none';
+}
+
+function ocultarBannerActualizar() {
+  const banner = document.getElementById('banner-actualizar');
+  if (banner) banner.style.display = 'none';
+  mostrarEstadoSync(true);
+  // Mostrar hora de sync en topbar
+  const last = localStorage.getItem('lastSync');
+  const status = document.getElementById('sync-status');
+  if (status && last) {
+    const d = new Date(last);
+    status.style.display = 'inline';
+    status.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
+    status.style.color = 'var(--green)';
+  }
+}

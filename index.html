@@ -9,8 +9,8 @@
     // Aplicar tema inmediatamente para evitar flash de colores
     (function() {
       const tema = localStorage.getItem('tema') || 'oscuro';
+      const r = document.documentElement.style;
       if (tema === 'claro') {
-        const r = document.documentElement.style;
         r.setProperty('--bg',      '#f0f2f5');
         r.setProperty('--bg2',     '#ffffff');
         r.setProperty('--bg3',     '#e8eaf0');
@@ -21,6 +21,25 @@
         r.setProperty('--border2', 'rgba(0,0,0,.18)');
         r.setProperty('--topbar1', '#4c1d95');
         r.setProperty('--topbar2', '#5b21b6');
+        r.setProperty('--accent',  '#6c63ff');
+        r.setProperty('--accent2', '#a78bfa');
+      } else if (tema === 'revolut') {
+        r.setProperty('--bg',      '#000000');
+        r.setProperty('--bg2',     '#111111');
+        r.setProperty('--bg3',     '#1a1a1a');
+        r.setProperty('--text',    '#ffffff');
+        r.setProperty('--text2',   '#888888');
+        r.setProperty('--text3',   '#555555');
+        r.setProperty('--border',  'rgba(255,255,255,.06)');
+        r.setProperty('--border2', 'rgba(255,255,255,.1)');
+        r.setProperty('--topbar1', '#000000');
+        r.setProperty('--topbar2', '#111111');
+        r.setProperty('--accent',  '#0066ff');
+        r.setProperty('--accent2', '#4d94ff');
+        r.setProperty('--green',   '#00d09c');
+        r.setProperty('--red',     '#ff3d5a');
+        r.setProperty('--orange',  '#ff8c00');
+        document.documentElement.style.background = '#000000';
       }
     })();
   </script>
