@@ -887,6 +887,8 @@ function saveLocal() {
       clearTimeout(window._autoSyncTimer);
       window._autoSyncTimer = setTimeout(async () => {
         if (_uploadLock) return; // ya hay un sync en curso
+        // Dispositivo nuevo: no subir hasta que se descargue primero
+        if (!localStorage.getItem('lastSync') && (usingGithub() || usingSupabase())) return;
         const [upGH, upSB] = await Promise.all([
           usingGithub() ? uploadSnapshot() : Promise.resolve(true),
           usingSupabase() ? uploadSupabase() : Promise.resolve(true)
@@ -2257,10 +2259,25 @@ function guardarAjustes() {
     if (ghDisabled.checked) localStorage.setItem('githubDisabled', '1');
     else localStorage.removeItem('githubDisabled');
   }
+  // Si es la primera vez que se configura el token (dispositivo nuevo),
+  // descargar remotos ANTES de que el autoSync suba el local
+  const esNuevoToken = !localStorage.getItem('lastSync');
   saveLocal();
   closeModal('modal-ajustes');
   renderMenu();
-  showToast('Ajustes guardados ✓');
+  showToast('Ajustes guardados');
+  if (esNuevoToken && (usingGithub() || usingSupabase())) {
+    showToast('Descargando datos remotos...');
+    syncBloqueado = true;
+    clearTimeout(window._autoSyncTimer);
+    setTimeout(async () => {
+      let ok = false;
+      if (usingSupabase()) ok = await downloadSupabase();
+      if (!ok && usingGithub()) ok = await downloadSnapshot();
+      syncBloqueado = false;
+      if (ok && ok !== 'skip') { showTab(tabActualGlobal || 'menu'); showToast('Datos sincronizados'); }
+    }, 800);
+  }
 }
 
 
