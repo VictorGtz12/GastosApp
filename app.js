@@ -2487,6 +2487,7 @@ async function procesarEstadoCuenta(event) {
 
     // Parser específico por banco
     const parsedForPrompt = parsearEstadoCuentaBanco(pdfText);
+    console.log('[Parser]', parsedForPrompt?.banco, 'movimientos:', parsedForPrompt?.movimientos?.length, 'texto sample:', pdfText.slice(0,200));
     if (parsedForPrompt && parsedForPrompt.movimientos.length > 0) {
       const nombresB = {
         amex: 'American Express', bbva: 'BBVA', banamex: 'Banamex',
