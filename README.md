@@ -1,4 +1,4 @@
-# 💳 Gastos Semanales
+# 💳 Gastos Semanales v2.4
 
 App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
@@ -17,6 +17,48 @@ App web para control de gastos con tarjetas de crédito, ahorros y servicios rec
 - Sincronización con GitHub (multi-dispositivo)
 - Modo oscuro / claro
 - Exportar a Excel y backup JSON
+- **Conciliación bancaria** con estado de cuenta PDF o imagen
+
+---
+
+## 🔄 Conciliación bancaria
+
+Sube el PDF de tu estado de cuenta y la app compara automáticamente los cargos del banco contra tus gastos registrados.
+
+### Bancos soportados
+
+| Banco | Método |
+|-------|--------|
+| Amex | PDF (parser automático) |
+| Banamex | PDF (parser automático) |
+| BBVA | PDF (parser automático) |
+| Banorte | PDF (parser automático) |
+| Mercado Pago | PDF (parser automático) |
+| HSBC | Imagen (PDF sin texto legible) |
+| Santander | Imagen (PDF sin texto legible) |
+
+### Cómo usar
+
+1. Ve a **☰ → Conciliación**
+2. Selecciona la tarjeta y el período
+3. Toca **Conciliar con estado de cuenta PDF**
+4. Si el PDF no tiene texto, aparece la opción de **subir imágenes** de las tablas de movimientos
+
+### Resultados
+
+- ✅ **Verde** — gasto conciliado (monto ±$1, fecha ±3 días)
+- 🟡 **Amarillo** — posible match (mismo monto, fecha diferente) — botón para conciliar manualmente
+- 🔴 **Rojo** — cargo en banco sin registrar en la app
+
+### Configurar Worker (requerido para HSBC, Santander y conciliación con IA)
+
+1. Ve a [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create Worker**
+2. Pega el contenido de `cloudflare-worker.js`
+3. Ve a **Settings → Variables** → agrega variable secreta:
+   - Nombre: `ANTHROPIC_API_KEY`
+   - Valor: tu API key de [console.anthropic.com](https://console.anthropic.com)
+4. Copia la URL del Worker
+5. En la app: **☰ → Ajustes** → pega la URL del Worker → **Guardar**
 
 ---
 
@@ -24,186 +66,111 @@ App web para control de gastos con tarjetas de crédito, ahorros y servicios rec
 
 ### Opción A — GitHub Pages (recomendada, gratis)
 
-#### 1. Crea un repositorio en GitHub
+1. Crea un repo público en GitHub llamado `GastosApp`
+2. Sube todos los archivos del proyecto
+3. Ve a **Settings → Pages → Deploy from branch → main**
+4. Tu app estará en `https://TU_USUARIO.github.io/GastosApp/`
 
-1. Ve a [github.com](https://github.com) e inicia sesión (o crea una cuenta gratis)
-2. Clic en **+** → **New repository**
-3. Configura:
-   - **Repository name**: `GastosApp`
-   - **Visibility**: `Public` ⚠️ (requerido para GitHub Pages gratis)
-4. Clic en **Create repository**
-
-#### 2. Sube los archivos
-
-Desde la página del repo recién creado:
-1. Clic en **uploading an existing file**
-2. Arrastra o selecciona todos los archivos:
-   - `index.html`
-   - `app.js`
-   - `manifest.json`
-   - `sw.js`
-   - `icon-192.png`
-   - `icon-512.png`
-3. Clic en **Commit changes**
-
-#### 3. Activa GitHub Pages
-
-1. Ve a **Settings** en tu repo
-2. Menú izquierdo → **Pages**
-3. **Source**: `Deploy from a branch`
-4. **Branch**: `main` / `/ (root)`
-5. Clic en **Save**
-6. En 1-2 minutos tu app estará en:
-   ```
-   https://TU_USUARIO.github.io/GastosApp/
-   ```
-
----
-
-### Opción B — Netlify (más fácil, sin cuenta de GitHub)
+### Opción B — Netlify
 
 1. Ve a [app.netlify.com/drop](https://app.netlify.com/drop)
-2. Arrastra la carpeta completa del proyecto
-3. Obtienes una URL pública al instante
-
----
-
-### Opción C — Servidor propio o local
-
-1. Copia todos los archivos a cualquier servidor web o carpeta local
-2. Abre `index.html` en el navegador
-3. La sincronización con GitHub funciona desde cualquier origen
+2. Arrastra la carpeta del proyecto → URL pública al instante
 
 ---
 
 ## 📱 Instalar como app en el celular
 
-### iPhone — Safari
-1. Abre la URL en **Safari** (no funciona con Chrome en iPhone)
-2. Toca el botón compartir **(□↑)**
-3. Selecciona **"Agregar a pantalla de inicio"**
-4. Toca **Agregar**
+**iPhone (Safari):** Compartir **(□↑)** → Agregar a pantalla de inicio
 
-### Android — Chrome
-1. Abre la URL en **Chrome**
-2. Toca el menú **(⋮)** → **"Agregar a pantalla de inicio"**
-3. O acepta el banner de instalación que aparece automáticamente
+**Android (Chrome):** Menú **(⋮)** → Agregar a pantalla de inicio
 
 ---
 
 ## 🔑 Sincronización con GitHub
 
-La sincronización permite usar la app en múltiples dispositivos con los mismos datos.
+### Crear token
 
-### Paso 1 — Crear Personal Access Token
+1. GitHub → foto de perfil → **Settings → Developer settings → Fine-grained tokens**
+2. **Generate new token** con permisos **Contents: Read and Write** en tu repo `GastosApp`
+3. Copia el token (`github_pat_...`)
 
-1. En GitHub: foto de perfil → **Settings**
-2. Menú izquierdo → **Developer settings** → **Personal access tokens** → **Fine-grained tokens**
-3. Clic en **Generate new token**
-4. Configura:
-   - **Token name**: `GastosApp`
-   - **Expiration**: la duración que prefieras
-   - **Repository access**: `Only select repositories` → selecciona `GastosApp`
-   - **Permissions** → **Contents**: `Read and Write`
-5. Clic en **Generate token**
-6. **Copia el token** (empieza con `github_pat_...`) — solo se muestra una vez
+### Configurar
 
-### Paso 2 — Configurar en la app
+En la app: **☰ → GitHub Sync → Configurar token** → pega el token
 
-1. En la app: **☰** → **GitHub Sync** → **Configurar token**
-2. Pega tu token → **Guardar**
-3. La app sincroniza automáticamente:
-   - Si GitHub tiene datos → los descarga
-   - Si GitHub está vacío → sube tus datos locales
-
-### Paso 3 — Otros dispositivos
-
-Repite el Paso 2 en cada dispositivo adicional. Los datos de GitHub tienen prioridad al configurar por primera vez.
-
-### Cómo funciona el sync
+### Comportamiento del sync
 
 | Evento | Acción |
 |--------|--------|
-| Abrir la app | Descarga cambios de GitHub en segundo plano |
-| Guardar un gasto | Aparece `⬆️ Sin subir` en el topbar |
-| Sincronizar ahora | Sube todos los cambios a GitHub |
-| Auto-sync | Cada 5 minutos sube cambios pendientes |
+| Guardar un gasto | Sube automáticamente en 1.5 segundos |
+| Abrir la app | Descarga cambios remotos |
+| Conflicto de versión | Reintenta con SHA actualizado automáticamente |
 | Sin internet | Guarda local, sube al reconectarse |
 
 ---
 
-## ⚙️ Personalización inicial
+## ⚙️ Personalización
 
-### Cambiar propietario del repositorio
-En `app.js` edita las líneas al inicio del archivo:
+Edita en `app.js`:
 ```javascript
-const GITHUB_OWNER  = 'TU_USUARIO_GITHUB';
-const GITHUB_REPO   = 'TU_REPO';
+const GITHUB_OWNER = 'TU_USUARIO_GITHUB';
+const GITHUB_REPO  = 'TU_REPO';
 ```
-
-### Cambiar presupuesto semanal
-En la app: **☰ → Ajustes → Presupuesto semanal**
-
-### Configurar cuentas y días de corte
-En la app: **☰ → Catálogos → Cuentas**
 
 ### Cuentas y cortes predeterminados
 
-| Cuenta      | Día de corte |
-|-------------|:------------:|
-| Banamex     | 3            |
-| Santander   | 4            |
-| HSBC        | 12           |
-| Amex        | 13           |
-| BBVA        | 21           |
-| MercadoPago | 21           |
-| Banorte     | 25           |
-| Débito      | Sin corte    |
+| Cuenta | Día de corte |
+|--------|:------------:|
+| Banamex | 3 |
+| Santander | 4 |
+| HSBC | 12 |
+| Amex | 13 |
+| BBVA | 21 |
+| MercadoPago | 21 |
+| Banorte | 25 |
+| Débito | Sin corte |
 
 ---
 
-## 📁 Archivos del proyecto
+## 📁 Archivos
 
-| Archivo          | Descripción                                |
-|------------------|--------------------------------------------|
-| `index.html`     | Estructura, estilos y modales de la app    |
-| `app.js`         | Toda la lógica y funcionalidades           |
-| `manifest.json`  | Configuración PWA para instalar como app   |
-| `sw.js`          | Service worker (funcionalidad offline)     |
-| `icon-192.png`   | Ícono 192×192 px                           |
-| `icon-512.png`   | Ícono 512×512 px                           |
+| Archivo | Descripción |
+|---------|-------------|
+| `index.html` | Estructura, estilos y modales |
+| `app.js` | Toda la lógica |
+| `cloudflare-worker.js` | Proxy IA para conciliación con imagen |
+| `manifest.json` | Configuración PWA |
+| `sw.js` | Service worker (offline) |
+| `icon-192.png` / `icon-512.png` | Íconos |
 
 ---
 
-## 💾 Respaldo de datos
+## 💾 Backup
 
-**Backup manual:** `☰ → Backup JSON` — descarga archivo `.json` con todos tus datos
-
-**Restaurar:** `☰ → Restaurar backup JSON` — carga un archivo de backup
-
-**Historial en GitHub:** cada sync guarda un commit en tu repo. Para ver versiones anteriores: repo → archivo `datos.json` → **History**
-
-**Exportar a Excel:** `☰ → Exportar Excel` — genera `.xlsx` con todas las pestañas
+- **Backup JSON:** `☰ → Backup JSON` — descarga con todos los datos
+- **Restaurar:** `☰ → Restaurar backup JSON` — carga con confirmación
+- **Excel:** `☰ → Exportar Excel` — pestañas: Gastos, Historial, Ahorros, Recurrentes, Deudas
+- **GitHub:** cada sync es un commit — ve al historial de `datos.json` para versiones anteriores
 
 ---
 
 ## ⚠️ Seguridad
 
-- El token de GitHub vive en `localStorage` de cada dispositivo — no se sube al código
-- Si limpias el caché del navegador, necesitas volver a pegar el token
-- El archivo `datos.json` en tu repo contiene todos tus datos — no compartas el repo con personas no autorizadas
-- **Nunca** pongas el token directamente en el código fuente si el repo es público
+- Token de GitHub y URL del Worker se guardan en `localStorage` — no en el código
+- La API key de Anthropic solo vive en variables secretas de Cloudflare Workers
+- No compartas tu repo `GastosApp` si tiene datos sensibles
 
 ---
 
-## 🛠️ Tecnologías utilizadas
+## 🛠️ Tecnologías
 
-- HTML + CSS + JavaScript puro (sin frameworks ni dependencias)
-- `localStorage` para almacenamiento local
-- GitHub API para sincronización
-- SheetJS para exportación a Excel
+- HTML + CSS + JS puro (sin frameworks)
+- GitHub API para sync
+- PDF.js para extracción de texto
+- SheetJS para Excel
+- Cloudflare Workers + Anthropic API para conciliación con IA
 - Web App Manifest + Service Worker (PWA)
 
 ---
 
-*Versión 2.1*
+*Versión 2.4*

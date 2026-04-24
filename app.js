@@ -199,27 +199,43 @@ async function uploadSnapshot() {
   try {
     const snap    = compressSnap(buildSnapshot());
     const content = btoa(unescape(encodeURIComponent(JSON.stringify(snap))));
-    // Siempre obtener SHA fresco antes de subir
-    let sha = null;
-    const getMeta = await fetch(githubApiUrl(), { headers: githubHeaders() });
-    if (getMeta.ok) { const d = await getMeta.json(); sha = d.sha; }
-    else if (getMeta.status !== 404) throw new Error(`GET HTTP ${getMeta.status}`);
-    const res = await fetch(githubApiUrl(), {
-      method: 'PUT', headers: githubHeaders(),
-      body: JSON.stringify({
-        message: `sync ${new Date().toISOString().slice(0,16).replace('T',' ')}`,
-        content, branch: GITHUB_BRANCH, ...(sha ? {sha} : {})
-      })
-    });
-    if (!res.ok) { const e = await res.json(); throw new Error(e.message||`HTTP ${res.status}`); }
-    const result = await res.json();
-    // Guardar el SHA nuevo para que downloadSnapshot sepa que ya está actualizado
-    const newSha = result.content?.sha;
-    if (newSha) localStorage.setItem('githubSha', newSha);
-    const ts = new Date().toISOString();
-    localStorage.setItem('lastSync', ts);
-    localStorage.setItem('localModified', ts);
-    return true;
+
+    // Intentar subir — reintentar una vez si hay conflicto de SHA (409)
+    for (let intento = 0; intento < 2; intento++) {
+      // Obtener SHA fresco en cada intento
+      let sha = null;
+      const getMeta = await fetch(githubApiUrl(), { headers: githubHeaders() });
+      if (getMeta.ok) { const d = await getMeta.json(); sha = d.sha; }
+      else if (getMeta.status !== 404) throw new Error(`GET HTTP ${getMeta.status}`);
+
+      const res = await fetch(githubApiUrl(), {
+        method: 'PUT', headers: githubHeaders(),
+        body: JSON.stringify({
+          message: `sync ${new Date().toISOString().slice(0,16).replace('T',' ')}`,
+          content, branch: GITHUB_BRANCH, ...(sha ? {sha} : {})
+        })
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        const newSha = result.content?.sha;
+        if (newSha) localStorage.setItem('githubSha', newSha);
+        const ts = new Date().toISOString();
+        localStorage.setItem('lastSync', ts);
+        localStorage.setItem('localModified', ts);
+        return true;
+      }
+
+      const e = await res.json();
+      // Si es conflicto de SHA y es el primer intento, reintentar
+      if (res.status === 409 && intento === 0) {
+        console.warn('SHA conflict, retrying...');
+        localStorage.removeItem('githubSha');
+        continue;
+      }
+      throw new Error(e.message || `HTTP ${res.status}`);
+    }
+    return false;
   } catch(e) { console.warn('upload error:', e.message); return false; }
 }
 
@@ -1547,7 +1563,7 @@ function showToast(msg) {
 function exportarBackup() {
   const data = {
     version: 2, savedAt: new Date().toISOString(), fecha: today(),
-    gastos, historico, nextId, nextAhorroId,
+    gastos, historico, nextId, nextAhorroId, nextMovId,
     cuentasAhorro, excepciones,
     catalogoCuentas, catalogoMotivos, catalogoComentarios,
     presupuesto: PRESUPUESTO,
