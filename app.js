@@ -118,9 +118,60 @@ const GITHUB_FILE   = 'datos.json';
 const GITHUB_BRANCH = 'main';
 
 function getGithubToken() { return localStorage.getItem('githubToken') || ''; }
-function usingGithub()    { return !!getGithubToken(); }
-// Alias para compatibilidad con código existente
+function usingGithub()    { return !!getGithubToken() && localStorage.getItem('githubDisabled') !== '1'; }
 const usingSheets = usingGithub;
+
+// ── Supabase Sync ────────────────────────────────────────────
+const SUPABASE_URL  = 'https://iskzbiozycpvnkkverfg.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
+
+function getSupabaseDeviceId() {
+  let id = localStorage.getItem('supabaseDeviceId');
+  if (!id) { id = 'device_' + Math.random().toString(36).slice(2) + Date.now(); localStorage.setItem('supabaseDeviceId', id); }
+  return id;
+}
+function usingSupabase() { return localStorage.getItem('supabaseEnabled') === '1'; }
+
+async function uploadSupabase() {
+  if (!usingSupabase()) return false;
+  try {
+    const snap = compressSnap(buildSnapshot());
+    const deviceId = getSupabaseDeviceId();
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ device_id: deviceId, data: snap, updated_at: new Date().toISOString() })
+    });
+    if (!res.ok) { const e = await res.text(); throw new Error(e); }
+    localStorage.setItem('lastSyncSupabase', new Date().toISOString());
+    return true;
+  } catch(e) { console.warn('Supabase upload error:', e.message); return false; }
+}
+
+async function downloadSupabase() {
+  if (!usingSupabase()) return false;
+  try {
+    const deviceId = getSupabaseDeviceId();
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?device_id=eq.${deviceId}&select=data,updated_at`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    if (!rows.length) return false;
+    const snap = decompressSnap(rows[0].data);
+    const ok = applySnapshot(snap);
+    if (ok) {
+      saveLocal();
+      localStorage.setItem('lastSyncSupabase', new Date().toISOString());
+    }
+    return ok;
+  } catch(e) { console.warn('Supabase download error:', e.message); return false; }
+}
 
 function githubApiUrl() {
   return `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
@@ -326,6 +377,11 @@ async function downloadSnapshot() {
 function saveData(opts = {}) { saveLocal(); }
 
 async function refreshData() {
+  // Supabase sync (download primero, luego upload)
+  if (usingSupabase()) {
+    await downloadSupabase();
+    await uploadSupabase();
+  }
   if (!usingGithub()) {
     loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
     showTab(tabActualGlobal);
@@ -483,17 +539,19 @@ function saveLocal() {
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
     // Sincronizar automáticamente en segundo plano
-    if (usingGithub() && !syncBloqueado) {
+    if (!syncBloqueado) {
       clearTimeout(window._autoSyncTimer);
       window._autoSyncTimer = setTimeout(async () => {
-        const up = await uploadSnapshot();
+        const [upGH, upSB] = await Promise.all([
+          usingGithub() ? uploadSnapshot() : Promise.resolve(true),
+          usingSupabase() ? uploadSupabase() : Promise.resolve(true)
+        ]);
+        const up = upGH && upSB;
         if (up) {
           mostrarEstadoSync(true);
-          // Ocultar banner si estaba visible
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'none';
         } else {
-          // Solo mostrar aviso si falló la red
           const syncEl = document.getElementById('sync-status');
           if (syncEl) {
             syncEl.style.display = 'inline';
@@ -505,7 +563,7 @@ function saveLocal() {
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'flex';
         }
-      }, 1500); // esperar 1.5s por si hay más cambios seguidos
+      }, 1500);
     }
   } catch(e) {
     console.warn('saveLocal error:', e);
@@ -1809,6 +1867,13 @@ function abrirAjustes() {
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
+  // Supabase
+  const sbEnabled = document.getElementById('ajuste-supabase-enabled');
+  const ghDisabled = document.getElementById('ajuste-github-disabled');
+  const deviceIdEl = document.getElementById('supabase-device-id');
+  if (sbEnabled) sbEnabled.checked = usingSupabase();
+  if (ghDisabled) ghDisabled.checked = localStorage.getItem('githubDisabled') === '1';
+  if (deviceIdEl) deviceIdEl.textContent = getSupabaseDeviceId();
   openModal('modal-ajustes');
 }
 
@@ -1821,6 +1886,17 @@ function guardarAjustes() {
     const workerVal = wu.value.trim();
     if (workerVal) localStorage.setItem('workerUrl', workerVal);
     else localStorage.removeItem('workerUrl');
+  }
+  // Supabase
+  const sbEnabled = document.getElementById('ajuste-supabase-enabled');
+  const ghDisabled = document.getElementById('ajuste-github-disabled');
+  if (sbEnabled) {
+    if (sbEnabled.checked) localStorage.setItem('supabaseEnabled', '1');
+    else localStorage.removeItem('supabaseEnabled');
+  }
+  if (ghDisabled) {
+    if (ghDisabled.checked) localStorage.setItem('githubDisabled', '1');
+    else localStorage.removeItem('githubDisabled');
   }
   saveLocal();
   closeModal('modal-ajustes');

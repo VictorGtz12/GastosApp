@@ -685,6 +685,18 @@
       <input type="url" id="ajuste-worker-url" placeholder="https://gastos-proxy.tu-usuario.workers.dev" style="font-size:13px">
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Opcional — permite conciliar PDFs automáticamente con IA</div>
     </div>
+    <div class="field">
+      <label>Supabase <span style="font-size:10px;color:var(--text3)">(sync alternativo)</span></label>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <input type="checkbox" id="ajuste-supabase-enabled" style="width:16px;height:16px;cursor:pointer">
+        <label for="ajuste-supabase-enabled" style="font-size:13px;cursor:pointer">Activar sync con Supabase</label>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="ajuste-github-disabled" style="width:16px;height:16px;cursor:pointer">
+        <label for="ajuste-github-disabled" style="font-size:13px;cursor:pointer">Deshabilitar sync con GitHub</label>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">ID dispositivo: <span id="supabase-device-id" style="font-family:monospace;font-size:10px"></span></div>
+    </div>
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-ajustes')">Cancelar</button>
       <button class="mbtn prim" onclick="guardarAjustes()">Guardar</button>
