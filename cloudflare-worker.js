@@ -43,7 +43,43 @@ export default {
 
     try {
       const body = await request.json();
-      const { pdfText, prompt: clientPrompt, gastos, cuenta, periodo, movimientosBanco } = body;
+      const { pdfText, prompt: clientPrompt, gastos, cuenta, periodo, movimientosBanco, imagenes, modo } = body;
+
+      // Modo imagen: usar Claude vision para extraer movimientos
+      if (modo === 'imagen' && imagenes?.length > 0) {
+        const promptImg = `Analiza estas imágenes de un estado de cuenta bancario mexicano.
+Extrae TODOS los cargos/movimientos de débito (signo +). Ignora pagos/abonos (signo -).
+
+Mis gastos registrados para ${cuenta} del período ${periodo}:
+${gastos.map(g => `- ID:${g.id} | ${g.fecha} | ${g.motivo}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
+
+Devuelve SOLO un JSON con este formato exacto:
+{
+  "movimientos_banco": [{ "fecha": "YYYY-MM-DD", "descripcion": "...", "monto": 123.45 }],
+  "conciliados": [id1, id2],
+  "no_conciliados_banco": [{ "fecha": "YYYY-MM-DD", "descripcion": "...", "monto": 123.45 }],
+  "no_conciliados_app": [id3],
+  "resumen": "breve resumen"
+}
+Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
+
+        const content = [
+          ...imagenes.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.tipo, data: img.base64 } })),
+          { type: 'text', text: promptImg }
+        ];
+
+        const imgResponse = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, messages: [{ role: 'user', content }] })
+        });
+        if (!imgResponse.ok) return json({ error: `Vision error: ${imgResponse.status}` }, 502);
+        const imgData = await imgResponse.json();
+        const imgText = imgData.content?.[0]?.text || '';
+        const imgMatch = imgText.match(/\{[\s\S]*\}/);
+        if (!imgMatch) return json({ error: 'No se pudo parsear respuesta de visión', raw: imgText }, 500);
+        return json(JSON.parse(imgMatch[0]));
+      }
 
       // Si el cliente envió un prompt ya construido (con movimientos parseados), lo usamos
       // Si no, construimos el prompt aquí (compatibilidad hacia atrás)

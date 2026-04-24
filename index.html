@@ -506,6 +506,7 @@
         <span>📄</span> <span>Conciliar con estado de cuenta PDF</span>
       </button>
       <input type="file" id="concil-pdf-input" accept=".pdf" style="display:none" onchange="procesarEstadoCuenta(event)">
+      <input type="file" id="concil-img-input" accept="image/*" multiple style="display:none" onchange="procesarImagenesConciliacion(event)">
       <div id="concil-pdf-status" style="font-size:11px;color:var(--text3);text-align:center;margin-top:6px;display:none"></div>
     </div>
     <div id="concil-results"></div>

@@ -2423,6 +2423,74 @@ function toggleConcil(gastoId) {
   renderConciliacion();
 }
 
+function mostrarSubirImagenes() {
+  document.getElementById('concil-img-input').click();
+}
+
+async function procesarImagenesConciliacion(event) {
+  const files = Array.from(event.target.files);
+  if (!files.length) return;
+  const status = document.getElementById('concil-pdf-status');
+
+  const workerUrl = localStorage.getItem('workerUrl') || '';
+  if (!workerUrl) {
+    status.textContent = '❌ Configura el Worker en Ajustes para procesar imágenes.';
+    event.target.value = ''; return;
+  }
+
+  status.textContent = `📷 Leyendo ${files.length} imagen(es)...`;
+
+  try {
+    const imagenes = await Promise.all(files.map(f => new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res({ base64: r.result.split(',')[1], tipo: f.type });
+      r.onerror = rej;
+      r.readAsDataURL(f);
+    })));
+
+    const clave = `${concilCuenta}|${concilPeriodo}`;
+    const [, hasta] = concilPeriodo.split('|');
+    const desde = periodoDesde(concilPeriodo);
+    const all = [...gastos, ...historico];
+    const items = gastosEnPeriodo(all, concilCuenta,
+      new Date(desde + 'T00:00:00'), new Date(hasta + 'T23:59:59'));
+
+    status.textContent = '🤖 Analizando imágenes con IA...';
+
+    const response = await fetch(workerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imagenes,
+        gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
+        cuenta: concilCuenta,
+        periodo: concilPeriodo,
+        modo: 'imagen'
+      })
+    });
+
+    if (!response.ok) throw new Error(`Worker error ${response.status}`);
+    const resultado = await response.json();
+    if (resultado.error) throw new Error(resultado.error);
+
+    if (!conciliados[clave]) conciliados[clave] = {};
+    (resultado.conciliados || []).forEach(id => { conciliados[clave][id] = true; });
+    (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
+
+    window._bancMovs = resultado.movimientos_banco || [];
+    window._noConcilBanco = resultado.no_conciliados_banco || [];
+    window._posiblesMatches = [];
+
+    const concilCount = (resultado.conciliados || []).length;
+    status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos sin registrar`;
+    renderConciliacion();
+
+  } catch(e) {
+    status.textContent = `❌ Error: ${e.message}`;
+  }
+  event.target.value = '';
+}
+
 function conciliarPosible(gastoId) {
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
@@ -2474,7 +2542,7 @@ async function procesarEstadoCuenta(event) {
     status.textContent = '📄 Extrayendo texto del PDF...';
     const pdfText = await extraerTextoPDF(base64);
     if (!pdfText || pdfText.length < 50) {
-      status.textContent = '⚠️ Este PDF no tiene texto extraíble. Santander genera PDFs sin capa de texto — intenta exportar el estado de cuenta en formato Excel o CSV desde la app/web de Santander.';
+      status.innerHTML = '📷 Este PDF no tiene texto extraíble. <a href="#" onclick="mostrarSubirImagenes();return false" style="color:var(--accent2);text-decoration:underline">Subir imágenes de los movimientos</a>';
       event.target.value = '';
       return;
     }
