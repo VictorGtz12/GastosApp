@@ -2436,12 +2436,19 @@ async function procesarEstadoCuenta(event) {
       new Date(hasta + 'T23:59:59')
     );
 
-    const prompt = `Eres un asistente de conciliación bancaria. Analiza este estado de cuenta bancario en PDF y extrae todos los cargos/movimientos de débito.
+    // Construir prompt — si ya tenemos movimientos parseados, los incluimos directamente
+    const parsedForPrompt = parsearEstadoCuentaBanco(pdfText);
+    const movsParsedStr = (parsedForPrompt && parsedForPrompt.movimientos.length > 0)
+      ? `\nMOVIMIENTOS DEL BANCO (ya extraídos por parser específico ${parsedForPrompt.banco.toUpperCase()}):\n` +
+        parsedForPrompt.movimientos.map(mv => `- ${mv.fecha} | ${mv.descripcion} | $${mv.monto}`).join('\n')
+      : `\nESTADO DE CUENTA (texto extraído del PDF):\n${pdfText.slice(0, 6000)}`;
+
+    const prompt = `Eres un asistente de conciliación bancaria.${movsParsedStr}
 
 Mis gastos registrados para el período ${desde} al ${hasta} en cuenta ${concilCuenta} son:
 ${items.map(g => `- ID:${g.id} | ${g.fecha} | ${g.motivo}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
 
-Del PDF extrae todos los cargos y compáralos con mis gastos. Devuelve SOLO un JSON con este formato exacto, sin texto adicional:
+Compara los cargos del banco con mis gastos. Devuelve SOLO un JSON con este formato exacto, sin texto adicional:
 {
   "movimientos_banco": [
     { "fecha": "YYYY-MM-DD", "descripcion": "descripcion del cargo", "monto": 123.45 }
@@ -2461,6 +2468,18 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
     const pdfText = await extraerTextoPDF(base64);
     if (!pdfText || pdfText.length < 50) throw new Error('No se pudo extraer texto del PDF');
 
+    // Intentar parser específico por banco
+    const parsed = parsearEstadoCuentaBanco(pdfText);
+    if (parsed && parsed.movimientos.length > 0) {
+      const nombresB = {
+        amex: 'American Express', bbva: 'BBVA', banamex: 'Banamex',
+        banorte: 'Banorte', hsbc: 'HSBC', santander: 'Santander', mercadolibre: 'Mercado Libre'
+      };
+      status.textContent = `🏦 ${nombresB[parsed.banco]} detectado — ${parsed.movimientos.length} movimientos extraídos`;
+      window._bancoDetectado = parsed.banco;
+      window._bancMovs = parsed.movimientos;
+    }
+
     status.textContent = '🤖 Analizando con IA...';
 
     // Llamar al Worker de Cloudflare como proxy
@@ -2475,10 +2494,14 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        pdfText,
+        pdfText: parsedForPrompt?.movimientos.length > 0
+          ? '' // El prompt ya incluye los movimientos estructurados
+          : pdfText,
+        prompt, // Enviar prompt pre-construido con movimientos ya parseados
         gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
         cuenta: concilCuenta,
-        periodo: concilPeriodo
+        periodo: concilPeriodo,
+        movimientosBanco: parsedForPrompt?.movimientos || []
       })
     });
 
@@ -2526,6 +2549,275 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
   event.target.value = '';
 }
 
+
+// ── Parsers específicos por banco ─────────────────────────────
+
+/**
+ * Detecta el banco a partir del texto extraído del PDF.
+ * Retorna: 'amex' | 'bbva' | 'banamex' | 'banorte' | 'hsbc' | 'santander' | 'mercadolibre' | null
+ */
+function detectarBanco(texto) {
+  const t = texto.toLowerCase();
+  if (t.includes('american express') || t.includes('americanexpress.com.mx')) return 'amex';
+  if (t.includes('bbva mexico') || t.includes('bbva.mx') || t.includes('grupo financiero bbva')) return 'bbva';
+  if (t.includes('banamex') || t.includes('costco banamex') || t.includes('citibanamex')) return 'banamex';
+  if (t.includes('banorte') || t.includes('banortel') || t.includes('grupo financiero banorte')) return 'banorte';
+  if (t.includes('hsbc') || t.includes('hsbc mexico') || t.includes('hsbc.com.mx')) return 'hsbc';
+  if (t.includes('santander') || t.includes('banco santander') || t.includes('likeu')) return 'santander';
+  if (t.includes('mercado libre') || t.includes('mercadopago') || t.includes('mercado pago 1')) return 'mercadolibre';
+  return null;
+}
+
+/**
+ * Convierte nombre de mes en español a número (0-11).
+ */
+function mesEsToNum(mes) {
+  const meses = {
+    'enero':0,'febrero':1,'marzo':2,'abril':3,'mayo':4,'junio':5,
+    'julio':6,'agosto':7,'septiembre':8,'octubre':9,'noviembre':10,'diciembre':11,
+    'ene':0,'feb':1,'mar':2,'abr':3,'may':4,'jun':5,
+    'jul':6,'ago':7,'sep':8,'oct':9,'nov':10,'dic':11
+  };
+  return meses[mes.toLowerCase()] ?? null;
+}
+
+/**
+ * Parsea número con formato mexicano: "1,234.56" → 1234.56
+ */
+function parseMonto(str) {
+  return parseFloat(str.replace(/,/g, '')) || 0;
+}
+
+/**
+ * Extrae año del texto del PDF (para inferir año en fechas sin año explícito).
+ */
+function inferirAnio(texto) {
+  const m = texto.match(/20(2[3-9]|[3-9]\d)/);
+  return m ? parseInt(m[0]) : new Date().getFullYear();
+}
+
+/**
+ * Parser American Express.
+ * Formato: "DD de Mes    DESCRIPCION     LUGAR    1,234.56"
+ * Las líneas con CR al final son créditos, se omiten.
+ */
+function parsearAmex(texto) {
+  const anio = inferirAnio(texto);
+  const movimientos = [];
+  const regex = /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s+([\d,]+\.\d{2})/gi;
+  let m;
+  const lineas = texto.split('\n');
+  
+  for (const linea of lineas) {
+    const match = linea.match(/^\s*(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s+([\d,]+\.\d{2})\s*$/i);
+    if (!match) continue;
+    const [, dia, mes, desc, montoStr] = match;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    // Ignorar líneas de crédito/pago
+    if (/PAGO|ABONO|CREDITOCR|CR$/i.test(desc)) continue;
+    const fecha = new Date(anio, numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Parser BBVA.
+ * Formato: "DD-mes-AAAA  Descripción  $1,234.56" o con fecha de cargo separada.
+ * Detecta sección DESGLOSE DE MOVIMIENTOS.
+ */
+function parsearBBVA(texto) {
+  const movimientos = [];
+  // BBVA: "DD-mmm-AAAA  DD-mmm-AAAA  Descripcion  + / -  $1,234.56"
+  const regex = /(\d{2})-([a-záéíóú]{3,4})-(\d{4})\s+(\d{2})-[a-záéíóú]{3,4}-\d{4}\s+(.+?)\s+[+\-]\s+\$?([\d,]+\.\d{2})/gi;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, , desc, montoStr] = m;
+    if (/ABONO|PAGO|SU ABONO/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  // Fallback: formato simple "DD-mes-AAAA  Descripcion  $1,234.56"
+  if (movimientos.length === 0) {
+    const rx2 = /(\d{2})-([a-záéíóú]{3,4})-(\d{4})\s+(.+?)\s+\+\s+\$?([\d,]+\.\d{2})/gi;
+    while ((m = rx2.exec(texto)) !== null) {
+      const [, dia, mes, anio, desc, montoStr] = m;
+      const numMes = mesEsToNum(mes);
+      if (numMes === null) continue;
+      const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+      movimientos.push({
+        fecha: fecha.toISOString().slice(0, 10),
+        descripcion: desc.trim().replace(/\s+/g, ' '),
+        monto: parseMonto(montoStr)
+      });
+    }
+  }
+  return movimientos;
+}
+
+/**
+ * Parser Banamex (Citibanamex).
+ * Formato: "   DD-mmm-AAAA   DD-mmm-AAAA   Descripcion  +  $1,234.00"
+ */
+function parsearBanamex(texto) {
+  const movimientos = [];
+  const regex = /(\d{2})-([a-z]{3})-(\d{4})\s+\d{2}-[a-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$?([\d,]+\.\d{2})/gi;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/ABONO|PAGO|SU ABONO/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Parser Banorte.
+ * Formato en desglose: "DD-MMM-AAAA  DD-MMM-AAAA  Descripcion  +$1,234.58"
+ */
+function parsearBanorte(texto) {
+  const movimientos = [];
+  const regex = /(\d{2})-([A-Z]{3})-(\d{4})\s+\d{2}-[A-Z]{3}-\d{4}\s+(.+?)\s+\+\$?([\d,]+\.\d{2})/g;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/ABONO|PAGO/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Parser HSBC.
+ * Texto extraído con PDF.js (no con pdftotext directamente ya que tiene encoding raro).
+ * Formato en DESGLOSE: "DD-Mes-AAAA  DD-Mes-AAAA  Descripcion  + $1,234.00"
+ */
+function parsearHSBC(texto) {
+  const movimientos = [];
+  // Intenta el formato estándar de HSBC con visual
+  const regex = /(\d{2})-([A-Za-záéíóú]{3,4})-(\d{4})\s+\d{2}-[A-Za-záéíóú]{3,4}-\d{4}\s+(.+?)\s+\+\s*\$?([\d,]+\.\d{2})/g;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/ABONO|PAGO|SPEI/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  // Fallback para texto de imagen: buscar "MAG", "APPLE", etc. con monto
+  if (movimientos.length === 0) {
+    const rx2 = /(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2})-[A-Za-z]{3}-\d{4}\s+(.+?)\s+\$\+?\s*([\d,]+\.\d{2})/g;
+    while ((m = rx2.exec(texto)) !== null) {
+      const [, dia, mes, anio, , desc, montoStr] = m;
+      const numMes = mesEsToNum(mes);
+      if (numMes === null) continue;
+      const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+      movimientos.push({
+        fecha: fecha.toISOString().slice(0, 10),
+        descripcion: desc.trim().replace(/\s+/g, ' '),
+        monto: parseMonto(montoStr)
+      });
+    }
+  }
+  return movimientos;
+}
+
+/**
+ * Parser Santander.
+ * Formato: "DD-Mar-AAAA  DD-Mar-AAAA  Descripcion  +  $ 1,234.00"
+ * o "DD-Mar-AAAA  DD-Mar-AAAA  Descripcion LOLA850607FT3  +  $ 644.00"
+ */
+function parsearSantander(texto) {
+  const movimientos = [];
+  const regex = /(\d{2})-([A-Za-z]{3})-(\d{4})\s+\d{2}-[A-Za-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/g;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, anio, desc, montoStr] = m;
+    if (/TRANSFERENCIA.*PAGO|SU ABONO/i.test(desc)) continue;
+    const numMes = mesEsToNum(mes);
+    if (numMes === null) continue;
+    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Parser Mercado Libre / Mercado Pago.
+ * Formato en sección "Movimientos": "DD/MM Compra en DESCRIPCION  $ 1,234.56"
+ */
+function parsearMercadoLibre(texto) {
+  const movimientos = [];
+  const anio = inferirAnio(texto);
+  const regex = /(\d{2})\/(\d{2})\s+Compra en\s+(.+?)\s+\$\s*([\d,]+\.\d{2})/gi;
+  let m;
+  while ((m = regex.exec(texto)) !== null) {
+    const [, dia, mes, desc, montoStr] = m;
+    const fecha = new Date(anio, parseInt(mes) - 1, parseInt(dia));
+    movimientos.push({
+      fecha: fecha.toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s+/g, ' '),
+      monto: parseMonto(montoStr)
+    });
+  }
+  return movimientos;
+}
+
+/**
+ * Punto de entrada principal: detecta banco y llama al parser correcto.
+ * Retorna array de { fecha, descripcion, monto } o null si no detectó banco.
+ */
+function parsearEstadoCuentaBanco(texto) {
+  const banco = detectarBanco(texto);
+  if (!banco) return null;
+  
+  let movimientos = [];
+  switch (banco) {
+    case 'amex':         movimientos = parsearAmex(texto); break;
+    case 'bbva':         movimientos = parsearBBVA(texto); break;
+    case 'banamex':      movimientos = parsearBanamex(texto); break;
+    case 'banorte':      movimientos = parsearBanorte(texto); break;
+    case 'hsbc':         movimientos = parsearHSBC(texto); break;
+    case 'santander':    movimientos = parsearSantander(texto); break;
+    case 'mercadolibre': movimientos = parsearMercadoLibre(texto); break;
+  }
+  
+  return { banco, movimientos };
+}
 
 // ── Extraer texto de PDF (usando PDF.js si disponible) ────────
 async function extraerTextoPDF(base64) {
