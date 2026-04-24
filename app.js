@@ -2473,7 +2473,11 @@ async function procesarEstadoCuenta(event) {
     // Extraer texto del PDF
     status.textContent = '📄 Extrayendo texto del PDF...';
     const pdfText = await extraerTextoPDF(base64);
-    if (!pdfText || pdfText.length < 50) throw new Error('No se pudo extraer texto del PDF');
+    if (!pdfText || pdfText.length < 50) {
+      status.textContent = '⚠️ Este PDF no tiene texto extraíble. Santander genera PDFs sin capa de texto — intenta exportar el estado de cuenta en formato Excel o CSV desde la app/web de Santander.';
+      event.target.value = '';
+      return;
+    }
 
     // Obtener gastos del período actual
     const clave = `${concilCuenta}|${concilPeriodo}`;
