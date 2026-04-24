@@ -2622,10 +2622,10 @@ function detectarBanco(texto, cuentaExplicita) {
   // Fuente primaria: nombre de la cuenta seleccionada en el conciliador
   const nombreCuenta = (cuentaExplicita || concilCuenta || '').toLowerCase();
   const mapaCuentas = {
-    'amex':        'amex',
-    'bbva':        'bbva',
-    'banamex':     'banamex',
+    'banamex':     'banamex',  // antes de 'amex' para evitar falso match
     'banorte':     'banorte',
+    'bbva':        'bbva',
+    'amex':        'amex',
     'hsbc':        'hsbc',
     'santander':   'santander',
     'mercadopago': 'mercadolibre',
