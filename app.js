@@ -137,13 +137,14 @@ async function uploadSupabase() {
   try {
     const snap = compressSnap(buildSnapshot());
     const deviceId = getSupabaseDeviceId();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots`, {
+    // Usar UPSERT correcto de Supabase: POST con Prefer: resolution=merge-duplicates y onConflict
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?on_conflict=device_id`, {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
       },
       body: JSON.stringify({ device_id: deviceId, data: snap, updated_at: new Date().toISOString() })
     });
