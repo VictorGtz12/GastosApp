@@ -2373,11 +2373,14 @@ function renderConciliacion() {
     ${(window._noConcilBanco || []).length ? `
       <div style="background:rgba(255,94,122,.08);border:1px solid rgba(255,94,122,.25);border-radius:12px;padding:12px 14px;margin-top:14px">
         <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">⚠️ En banco pero no registrados en app</div>
-        ${(window._noConcilBanco || []).map(m => `
+        ${(window._noConcilBanco || []).map((m, i) => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div>
-              <div style="font-size:12px;font-weight:500;color:var(--text)">${m.descripcion}</div>
-              <div style="font-size:10px;color:var(--text3)">${m.fecha}</div>
+            <div style="display:flex;align-items:flex-start;gap:8px">
+              <span style="font-size:10px;color:var(--text3);min-width:16px;padding-top:2px">${i + 1}.</span>
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text)">${m.descripcion}</div>
+                <div style="font-size:10px;color:var(--text3)">${m.fecha}</div>
+              </div>
             </div>
             <span style="font-size:13px;font-weight:700;color:var(--red);flex-shrink:0">${fmt(m.monto)}</span>
           </div>`).join('')}
