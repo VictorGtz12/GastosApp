@@ -2871,21 +2871,24 @@ function parsearBBVA(texto) {
 
 /**
  * Parser Banamex (Citibanamex).
- * Formato: "   DD-mmm-AAAA   DD-mmm-AAAA   Descripcion  +  $1,234.00"
+ * Formato real: "DD-mmm-AAAA  DD-mmm-AAAA  DESCRIPCION RFC/REF  +  $1,234.00"
+ * El signo + o - y el $ están separados por espacios del monto.
+ * Ignorar líneas con - (abonos/pagos).
  */
 function parsearBanamex(texto) {
   const movimientos = [];
-  const regex = /(\d{2})-([a-z]{3})-(\d{4})\s+\d{2}-[a-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$?([\d,]+\.\d{2})/gi;
+  // Captura: fecha-op, fecha-cargo, descripción, signo +/-, monto con $
+  const regex = /(\d{2})-([a-záéíóú]{3})-(\d{4})\s+\d{2}-[a-záéíóú]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/gi;
   let m;
   while ((m = regex.exec(texto)) !== null) {
     const [, dia, mes, anio, desc, montoStr] = m;
-    if (/ABONO|PAGO|SU ABONO/i.test(desc)) continue;
+    if (/^(Total cargos|Total abonos)/i.test(desc.trim())) continue;
     const numMes = mesEsToNum(mes);
     if (numMes === null) continue;
     const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
     movimientos.push({
       fecha: fecha.toISOString().slice(0, 10),
-      descripcion: desc.trim().replace(/\s+/g, ' '),
+      descripcion: desc.trim().replace(/\s{2,}/g, ' '),
       monto: parseMonto(montoStr)
     });
   }
