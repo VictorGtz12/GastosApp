@@ -411,9 +411,7 @@ async function refreshData() {
 }
 
 function configurarGithub() {
-  const input = document.getElementById('input-github-token');
-  if (input) input.value = getGithubToken();
-  openModal('modal-github-token');
+  abrirAjustes();
 }
 
 function guardarGithubToken() {
@@ -2047,6 +2045,9 @@ function abrirAjustes() {
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
+  // GitHub token
+  const gt = document.getElementById('ajuste-github-token');
+  if (gt) gt.value = getGithubToken() ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : '';
   // Supabase
   const sbEnabled = document.getElementById('ajuste-supabase-enabled');
   const ghDisabled = document.getElementById('ajuste-github-disabled');
@@ -2066,6 +2067,14 @@ function guardarAjustes() {
     const workerVal = wu.value.trim();
     if (workerVal) localStorage.setItem('workerUrl', workerVal);
     else localStorage.removeItem('workerUrl');
+  }
+  // GitHub token
+  const gt = document.getElementById('ajuste-github-token');
+  if (gt) {
+    const tkVal = gt.value.trim();
+    // Solo guardar si no es el placeholder de puntos
+    if (tkVal && !tkVal.startsWith('\u2022')) localStorage.setItem('githubToken', tkVal);
+    else if (!tkVal) localStorage.removeItem('githubToken');
   }
   // Supabase
   const sbEnabled = document.getElementById('ajuste-supabase-enabled');
