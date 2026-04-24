@@ -150,6 +150,7 @@ async function uploadSupabase() {
     });
     if (!res.ok) { const e = await res.text(); throw new Error(e); }
     localStorage.setItem('lastSyncSupabase', new Date().toISOString());
+    registrarEntradaHistorialSync('subida', 'supabase');
     return true;
   } catch(e) { console.warn('Supabase upload error:', e.message); return false; }
 }
@@ -169,6 +170,7 @@ async function downloadSupabase() {
     if (ok) {
       saveLocal();
       localStorage.setItem('lastSyncSupabase', new Date().toISOString());
+      registrarEntradaHistorialSync('descarga', 'supabase');
     }
     return ok;
   } catch(e) { console.warn('Supabase download error:', e.message); return false; }
@@ -247,17 +249,16 @@ function applySnapshot(snap) {
 }
 
 // ── Historial de Sync ───────────────────────────────────────
-function registrarEntradaHistorialSync(tipo) {
+function registrarEntradaHistorialSync(tipo, fuente = 'github') {
   try {
     const hist = JSON.parse(localStorage.getItem('syncHistorial') || '[]');
     const snap = buildSnapshot();
     hist.unshift({
-      tipo,                                          // 'subida' | 'descarga'
+      tipo,    // 'subida' | 'descarga'
+      fuente,  // 'github' | 'supabase'
       ts: new Date().toISOString(),
       gastos: (snap.gastos?.length || 0) + (snap.historico?.length || 0),
-      ahorros: snap.cuentasAhorro?.length || 0,
     });
-    // Mantener solo los últimos 50 registros
     localStorage.setItem('syncHistorial', JSON.stringify(hist.slice(0, 50)));
   } catch(e) {}
 }
@@ -274,11 +275,13 @@ function verHistorialSync() {
       const dia   = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
       const icono = h.tipo === 'subida' ? '⬆️' : '⬇️';
       const color = h.tipo === 'subida' ? 'var(--accent2)' : 'var(--green)';
+      const fuenteLabel = h.fuente === 'supabase' ? '🗄️ Supabase' : '🐙 GitHub';
+      const accion = h.tipo === 'subida' ? 'Subida' : 'Descarga';
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:18px">${icono}</span>
           <div>
-            <div style="font-size:13px;font-weight:600;color:${color}">${h.tipo === 'subida' ? 'Subida a GitHub' : 'Descarga de GitHub'}</div>
+            <div style="font-size:13px;font-weight:600;color:${color}">${accion} · ${fuenteLabel}</div>
             <div style="font-size:11px;color:var(--text3)">${dia} · ${hora}</div>
           </div>
         </div>
