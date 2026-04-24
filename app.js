@@ -2557,6 +2557,22 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
  * Retorna: 'amex' | 'bbva' | 'banamex' | 'banorte' | 'hsbc' | 'santander' | 'mercadolibre' | null
  */
 function detectarBanco(texto) {
+  // Fuente primaria: nombre de la cuenta seleccionada en el conciliador
+  const nombreCuenta = (concilCuenta || '').toLowerCase();
+  const mapaCuentas = {
+    'amex':        'amex',
+    'bbva':        'bbva',
+    'banamex':     'banamex',
+    'banorte':     'banorte',
+    'hsbc':        'hsbc',
+    'santander':   'santander',
+    'mercadopago': 'mercadolibre',
+    'mercado pago':'mercadolibre',
+  };
+  for (const [clave, banco] of Object.entries(mapaCuentas)) {
+    if (nombreCuenta.includes(clave)) return banco;
+  }
+  // Fallback: detectar por keywords en el texto del PDF
   const t = texto.toLowerCase();
   if (t.includes('american express') || t.includes('americanexpress.com.mx')) return 'amex';
   if (t.includes('bbva mexico') || t.includes('bbva.mx') || t.includes('grupo financiero bbva')) return 'bbva';
