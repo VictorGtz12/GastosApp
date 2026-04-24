@@ -262,6 +262,12 @@
     <div class="drawer-item" onclick="closeDrawer();importarBackup()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restaurar backup JSON
     </div>
+    <div class="drawer-item" onclick="closeDrawer();guardarVersionHistorial('manual');showToast('Version guardada ✓')">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Guardar version ahora
+    </div>
+    <div class="drawer-item" onclick="closeDrawer();verVersionHistorial()">
+      <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/><polyline points="7 2 2 7 7 12"/></svg>Historial de versiones
+    </div>
     <div class="drawer-header" style="margin-top:8px">GitHub Sync</div>
     <div class="drawer-item" onclick="closeDrawer();refreshData()">
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Sincronizar ahora
