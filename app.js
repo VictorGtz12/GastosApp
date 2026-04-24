@@ -237,8 +237,9 @@ function applySnapshot(snap, opts = {}) {
   if (!snap || snap.version < 2) return false;
 
   // Proteccion: no sobrescribir datos locales mas nuevos con remotos mas viejos
-  // a menos que se fuerce (opts.force) o que local este vacio
-  if (!opts.force && gastos.length > 0 && snap.savedAt) {
+  // EXCEPCIONES: forzado, local vacio, o dispositivo nunca ha sincronizado con este remoto
+  const yaSync = !!localStorage.getItem('lastSync');
+  if (!opts.force && gastos.length > 0 && snap.savedAt && yaSync) {
     const remoteSavedAt = new Date(snap.savedAt).getTime();
     const localSavedAt  = new Date(localStorage.getItem('lastSync') || 0).getTime();
     const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
@@ -247,6 +248,10 @@ function applySnapshot(snap, opts = {}) {
       console.warn('[Sync] Remoto mas antiguo que local, ignorando. Remoto:', snap.savedAt, 'Local:', new Date(localTs).toISOString());
       return 'skip';
     }
+  }
+  // Dispositivo nuevo (sin lastSync): siempre aplicar remoto
+  if (!yaSync && gastos.length > 0) {
+    console.log('[Sync] Dispositivo nuevo, aplicando remoto sin comparar timestamps');
   }
 
   // Guardar snapshot anterior en historial antes de aplicar
@@ -380,8 +385,9 @@ async function downloadSnapshot() {
     const meta      = await res.json();
     const remoteSha = meta.sha;
     const cachedSha = localStorage.getItem('githubSha');
-    // Si el SHA coincide Y hay datos locales -> sin cambios remotos, no aplicar
-    if (remoteSha && remoteSha === cachedSha && gastos.length > 0) {
+    // Si el SHA coincide Y hay datos locales Y ya hubo sync previo -> sin cambios remotos, no aplicar
+    const dispositivoSync = !!localStorage.getItem('lastSync');
+    if (remoteSha && remoteSha === cachedSha && gastos.length > 0 && dispositivoSync) {
       return true;
     }
     // Hay cambios o no hay datos -> aplicar snapshot
@@ -595,7 +601,7 @@ function restaurarVersionCache(idx) {
   const snap = JSON.parse(v.snap);
   const ok = applySnapshot(snap, { force: true });
   if (ok && ok !== 'skip') {
-    saveLocal(); closeModal('modal-version-historial'); renderAll();
+    saveLocal(); closeModal('modal-version-historial'); showTab(tabActualGlobal || 'menu');
     showToast('Version restaurada');
     setTimeout(() => { uploadSnapshot(); uploadSupabase(); }, 1500);
   }
@@ -613,7 +619,7 @@ function restaurarVersion(idx) {
   if (ok && ok !== 'skip') {
     saveLocal();
     closeModal('modal-version-historial');
-    renderAll();
+    showTab(tabActualGlobal || 'menu');
     showToast('Version restaurada');
     setTimeout(() => { uploadSnapshot(); uploadSupabase(); }, 1500);
   }
