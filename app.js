@@ -3038,21 +3038,77 @@ function parsearHSBC(texto) {
  */
 function parsearSantander(texto) {
   const movimientos = [];
-  const regex = /(\d{2})-([A-Za-z]{3})-(\d{4})\s+\d{2}-[A-Za-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/g;
+
+  // Pasada 1: layout — "DD-Mar-AAAA  DD-Mar-AAAA  Desc Ref  +  $ 644.00"
+  const rxLayout = /(\d{2})-([A-Za-z]{3})-(\d{4})\s+\d{2}-[A-Za-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/g;
   let m;
-  while ((m = regex.exec(texto)) !== null) {
+  while ((m = rxLayout.exec(texto)) !== null) {
     const [, dia, mes, anio, desc, montoStr] = m;
-    if (/TRANSFERENCIA.*PAGO|SU ABONO/i.test(desc)) continue;
+    if (/^(PAGO POR TRANSFERENCIA|SU ABONO|Total de cargos|Total de abonos)/i.test(desc.trim())) continue;
     const numMes = mesEsToNum(mes);
     if (numMes === null) continue;
-    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
     movimientos.push({
-      fecha: fecha.toISOString().slice(0, 10),
-      descripcion: desc.trim().replace(/\s+/g, ' '),
+      fecha: new Date(parseInt(anio), numMes, parseInt(dia)).toISOString().slice(0, 10),
+      descripcion: desc.trim().replace(/\s{2,}/g, ' '),
       monto: parseMonto(montoStr)
     });
   }
-  return movimientos;
+  if (movimientos.length > 0) return movimientos;
+
+  // Pasada 2: texto plano — misma estructura de columnas que Banamex
+  const lineas = texto.split('\n');
+  const FECHA_RX = /^(\d{2})-([A-Za-z]{3})-(\d{4})$/;
+  const MONTO_RX = /^\$?\s*(\d[\d,]*\.\d{2})$/;
+  const SIGNO_RX = /^[\+\-]$/;
+  const SKIP = /^(Total de cargos|Total de abonos|Fecha de la|operación|Fecha de|cargo|Descripción del movimiento|Monto|CARGOS, ABONOS|DESGLOSE|Número de cuenta|Notas|Página|ATENCIÓN|Tarjeta titular|COMPRAS Y CARGOS)/i;
+
+  const secStart = lineas.findIndex(l => /CARGOS, ABONOS Y COMPRAS REGULARES/i.test(l));
+  const secEnd = lineas.findIndex(l => /ATENCIÓN DE QUEJAS/i.test(l));
+  if (secStart === -1) return movimientos;
+
+  const region = lineas.slice(secStart, secEnd > 0 ? secEnd : lineas.length);
+  const fechas = [], signos = [], montos = [], descs = [];
+  for (const l of region) {
+    const t = l.trim();
+    if (!t || SKIP.test(t)) continue;
+    if (FECHA_RX.test(t)) { fechas.push(t); continue; }
+    if (SIGNO_RX.test(t)) { signos.push(t); continue; }
+    if (MONTO_RX.test(t)) { montos.push(t); continue; }
+    if (fechas.length > 0 && signos.length === 0 && montos.length === 0) descs.push(t);
+  }
+
+  const fechasOp = fechas.filter((_, i) => i % 2 === 0);
+  if (fechasOp.length === 0 || montos.length === 0) return movimientos;
+
+  const descsPorTx = Math.max(1, Math.min(2, Math.round(descs.length / fechasOp.length)));
+  let mIdx = 0;
+  for (let f = 0; f < fechasOp.length; f++) {
+    if (signos[f] === '-') { mIdx++; continue; }
+    if (mIdx >= montos.length) break;
+    const fm = fechasOp[f].match(FECHA_RX);
+    if (!fm) continue;
+    const numMes = mesEsToNum(fm[2]);
+    if (numMes === null) continue;
+    const descLineas = descs.slice(f * descsPorTx, f * descsPorTx + descsPorTx);
+    const desc = descLineas.join(' ').trim();
+    if (!desc || /^(PAGO POR TRANSFERENCIA|SU ABONO)/i.test(desc)) { mIdx++; continue; }
+    const montoStr = montos[mIdx].replace(/\$|\s/g, '');
+    const monto = parseMonto(montoStr);
+    if (monto <= 0) { mIdx++; continue; }
+    movimientos.push({
+      fecha: new Date(parseInt(fm[3]), numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+      descripcion: desc.replace(/\s{2,}/g, ' '),
+      monto
+    });
+    mIdx++;
+  }
+
+  const vistos = new Set();
+  return movimientos.filter(mv => {
+    const k = mv.fecha + '|' + mv.monto;
+    if (vistos.has(k)) return false;
+    vistos.add(k); return true;
+  });
 }
 
 /**
