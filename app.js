@@ -769,6 +769,7 @@ function renderGastos() {
           ${!g.ignorar && iP ? '<span class="badge ext-paid">✅ Cobrado</span>' : ''}
           ${!iE && !iP ? `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>` : ''}
           ${gastoPendienteSync(g) ? '<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);border:1px solid rgba(255,159,67,.3);padding:1px 6px;border-radius:6px;font-weight:600">⬆️ Sin sync</span>' : ''}
+          ${g.desdeConciliador ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Banco</span>' : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
@@ -1424,6 +1425,7 @@ async function guardarGasto() {
     ahorroDesc:   descontarAhorro ? ahorroSelNombre : '',
     updatedAt:    new Date().toISOString(),
     periodoCorte: calcularPeriodoCorte(document.getElementById('f-cuenta').value, document.getElementById('f-fecha')?.value || today()),
+    desdeConciliador: window._desdeConciliador ? true : undefined,
   };
 
   if (isEditing) {
@@ -2554,7 +2556,8 @@ function renderConciliacion() {
 
 function registrarDesdeBanco(mv) {
   // Pre-llenar formulario con los datos del movimiento bancario
-  showTab('form');
+  window._desdeConciliador = mv; // marcar origen
+  showTab('nuevo');
   setTimeout(() => {
     const fCantidad = document.getElementById('f-cantidad');
     const fFecha    = document.getElementById('f-fecha');
@@ -2563,13 +2566,12 @@ function registrarDesdeBanco(mv) {
     if (fCantidad) fCantidad.value = mv.monto;
     if (fFecha && mv.fecha) fFecha.value = mv.fecha;
     if (fComent) fComent.value = mv.descripcion || '';
-    // Seleccionar la cuenta activa en conciliación
     if (fCuenta && concilCuenta) {
       const opt = Array.from(fCuenta.options).find(o => o.value === concilCuenta);
       if (opt) fCuenta.value = concilCuenta;
     }
-    showToast('Completa el motivo y guarda el gasto');
-  }, 100);
+    showToast('Completa el motivo y guarda el gasto ✓');
+  }, 150);
 }
 
 function toggleConcil(gastoId) {
