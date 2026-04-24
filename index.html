@@ -251,9 +251,7 @@
     <div class="drawer-item" onclick="closeDrawer();abrirAjustes()">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Ajustes
     </div>
-    <div class="drawer-item" onclick="closeDrawer();configurarGithub()">
-      <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Configurar token GitHub
-    </div>
+
     <div class="drawer-header" style="margin-top:8px">Backup y datos</div>
     <div class="drawer-item" onclick="closeDrawer();exportarBackup()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Backup JSON
@@ -703,6 +701,11 @@
       <label>Cloudflare Worker URL <span style="font-size:10px;color:var(--text3)">(conciliación con IA)</span></label>
       <input type="url" id="ajuste-worker-url" placeholder="https://gastos-proxy.tu-usuario.workers.dev" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none">
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Opcional — permite conciliar PDFs automáticamente con IA</div>
+    </div>
+    <div class="field">
+      <label>Token GitHub <span style="font-size:10px;color:var(--text3)">(sync)</span></label>
+      <input type="password" id="ajuste-github-token" placeholder="github_pat_..." style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Fine-grained token con permiso Contents: Read &amp; Write. Déjalo vacío para desactivar.</div>
     </div>
     <div class="field">
       <label>Supabase <span style="font-size:10px;color:var(--text3)">(sync alternativo)</span></label>
