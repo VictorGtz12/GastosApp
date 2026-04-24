@@ -2488,39 +2488,54 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
     const movsBanco = parsedForPrompt?.movimientos || [];
     const tieneParseo = movsBanco.length > 0;
 
-    // Si el parser extrajo movimientos, la IA solo hace el matching — no genera movimientos_banco
-    // Si no hay parser, la IA hace todo desde el texto del PDF
+    if (tieneParseo) {
+      // ── Matching local sin IA ──────────────────────────────────
+      // Conciliar por monto (±$1) y fecha (±3 días)
+      if (!conciliados[clave]) conciliados[clave] = {};
+      const bancoConciliados = new Set();
+
+      items.forEach(g => {
+        const match = movsBanco.find((mv, idx) =>
+          !bancoConciliados.has(idx) &&
+          Math.abs(g.cantidad - mv.monto) < 1 &&
+          Math.abs(new Date(g.fecha) - new Date(mv.fecha)) <= 3 * 86400000
+        );
+        if (match) {
+          conciliados[clave][g.id] = true;
+          bancoConciliados.add(movsBanco.indexOf(match));
+        }
+      });
+
+      window._bancMovs = movsBanco;
+      window._noConcilBanco = movsBanco.filter((mv, idx) => !bancoConciliados.has(idx));
+
+      const concilCount = Object.values(conciliados[clave]).filter(Boolean).length;
+      status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos en banco sin registrar`;
+      renderConciliacion();
+      if (window._noConcilBanco.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
+      return;
+    }
+
+    // ── Sin parser: usar IA via Worker ────────────────────────────
     status.textContent = '🤖 Conciliando con IA...';
     const response = await fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        pdfText: tieneParseo ? '' : pdfText,
-        prompt,
+        pdfText: pdfText.slice(0, 8000),
         gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
         cuenta: concilCuenta,
-        periodo: concilPeriodo,
-        movimientosBanco: movsBanco
+        periodo: concilPeriodo
       })
     });
 
-    if (!response.ok) throw new Error(`Worker error: ${response.status}`);
+    if (!response.ok) {
+      const errTxt = await response.text().catch(() => '');
+      throw new Error(`Worker error ${response.status}: ${errTxt.slice(0, 200)}`);
+    }
     const resultado = await response.json();
     if (resultado.error) throw new Error(resultado.error);
 
-    // Si el parser encontró movimientos, usarlos como fuente de verdad
-    // no_conciliados_banco = movimientos del banco que no tienen ningún gasto registrado en la app con monto+fecha similar
-    if (tieneParseo) {
-      resultado.movimientos_banco = movsBanco;
-      resultado.no_conciliados_banco = movsBanco.filter(mv => {
-        return !items.some(g =>
-          Math.abs(g.cantidad - mv.monto) < 1 &&
-          Math.abs(new Date(g.fecha) - new Date(mv.fecha)) <= 3 * 86400000
-        );
-      });
-    }
-
-    // Aplicar conciliación
     if (!conciliados[clave]) conciliados[clave] = {};
     (resultado.conciliados || []).forEach(id => { conciliados[clave][id] = true; });
     (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
@@ -2531,11 +2546,8 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
     const concilCount = (resultado.conciliados || []).length;
     status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados automáticamente`;
     if (resultado.resumen) status.textContent += ` · ${resultado.resumen}`;
-
     renderConciliacion();
-    if (window._noConcilBanco?.length) {
-      showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
-    }
+    if (window._noConcilBanco?.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
 
   } catch(e) {
     status.textContent = `❌ Error: ${e.message}`;

@@ -78,6 +78,9 @@ Criterios:
 - "no_conciliados_banco" son cargos en el banco que NO encontré en mis gastos`;
       }
 
+      // Limitar tamaño del prompt (Cloudflare Workers: 1MB request limit)
+      const promptTrimmed = prompt.length > 12000 ? prompt.slice(0, 12000) + '\n...[truncado]' : prompt;
+
       // Llamar a la API de Anthropic
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -89,7 +92,7 @@ Criterios:
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001', // Haiku: rápido y barato para esta tarea
           max_tokens: 1500,
-          messages: [{ role: 'user', content: prompt }]
+          messages: [{ role: 'user', content: promptTrimmed }]
         })
       });
 
@@ -115,7 +118,7 @@ Criterios:
       return json(resultado);
 
     } catch (e) {
-      return json({ error: e.message }, 500);
+      return json({ error: e.message, stack: e.stack?.slice(0, 200) }, 500);
     }
   }
 };
