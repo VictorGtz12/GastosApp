@@ -167,6 +167,11 @@ async function downloadSupabase() {
     if (!rows.length) return false;
     const snap = decompressSnap(rows[0].data);
     const ok = applySnapshot(snap);
+    if (ok === 'skip') {
+      console.log('[Sync Supabase] Local mas nuevo, subiendo...');
+      await uploadSupabase();
+      return true;
+    }
     if (ok) {
       saveLocal();
       localStorage.setItem('lastSyncSupabase', new Date().toISOString());
@@ -228,8 +233,24 @@ function buildSnapshot() {
   };
 }
 
-function applySnapshot(snap) {
+function applySnapshot(snap, opts = {}) {
   if (!snap || snap.version < 2) return false;
+
+  // Proteccion: no sobrescribir datos locales mas nuevos con remotos mas viejos
+  // a menos que se fuerce (opts.force) o que local este vacio
+  if (!opts.force && gastos.length > 0 && snap.savedAt) {
+    const remoteSavedAt = new Date(snap.savedAt).getTime();
+    const localSavedAt  = new Date(localStorage.getItem('lastSync') || 0).getTime();
+    const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
+    const localTs = Math.max(localSavedAt, localModified);
+    if (remoteSavedAt < localTs - 5000) { // 5s de tolerancia
+      console.warn('[Sync] Remoto mas antiguo que local, ignorando. Remoto:', snap.savedAt, 'Local:', new Date(localTs).toISOString());
+      return 'skip';
+    }
+  }
+
+  // Guardar snapshot anterior en historial antes de aplicar
+  if (gastos.length > 0) guardarVersionHistorial('auto');
   if (snap.gastos)              gastos              = snap.gastos.map(normGasto);
   if (snap.historico)           historico           = snap.historico.map(normGasto);
   if (snap.nextId)              nextId              = snap.nextId;
@@ -466,6 +487,75 @@ function mostrarBannerActualizar() {
   }
 }
 function ocultarBannerActualizar()    { mostrarEstadoSync(true); }
+
+// Historial de versiones
+const MAX_VERSIONES = 20;
+
+function guardarVersionHistorial(origen) {
+  try {
+    const snap = buildSnapshot();
+    snap.savedAt = new Date().toISOString();
+    const versiones = JSON.parse(localStorage.getItem('versionHistorial') || '[]');
+    versiones.unshift({
+      savedAt:   snap.savedAt,
+      origen:    origen || 'manual',
+      gastos:    snap.gastos.length,
+      historico: snap.historico.length,
+      snap:      JSON.stringify(snap)
+    });
+    localStorage.setItem('versionHistorial', JSON.stringify(versiones.slice(0, MAX_VERSIONES)));
+  } catch(e) { console.warn('Error guardando version:', e); }
+}
+
+function verVersionHistorial() {
+  const versiones = JSON.parse(localStorage.getItem('versionHistorial') || '[]');
+  const body = document.getElementById('version-historial-body');
+  if (!body) return;
+  if (!versiones.length) {
+    body.innerHTML = '<div class="empty">Sin versiones guardadas</div>';
+  } else {
+    body.innerHTML = versiones.map((v, i) => {
+      const fecha = new Date(v.savedAt);
+      const hora  = fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+      const dia   = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+      const origenIco = v.origen === 'auto' ? 'sync' : v.origen === 'manual' ? 'guardado' : 'nube';
+      return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${dia} ${hora}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${v.gastos} gastos | ${v.historico} hist | ${origenIco}</div>
+          </div>
+          <button onclick="restaurarVersion(${i})" style="padding:5px 12px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent2);font-size:11px;cursor:pointer;font-weight:600">Restaurar</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  openModal('modal-version-historial');
+}
+
+function restaurarVersion(idx) {
+  const versiones = JSON.parse(localStorage.getItem('versionHistorial') || '[]');
+  const v = versiones[idx];
+  if (!v) return;
+  const fecha = new Date(v.savedAt).toLocaleString('es-MX');
+  if (!confirm('Restaurar version del ' + fecha + '?')) return;
+  guardarVersionHistorial('manual');
+  const snap = JSON.parse(v.snap);
+  const ok = applySnapshot(snap, { force: true });
+  if (ok && ok !== 'skip') {
+    saveLocal();
+    closeModal('modal-version-historial');
+    renderAll();
+    showToast('Version restaurada');
+    setTimeout(() => { uploadSnapshot(); uploadSupabase(); }, 1500);
+  }
+}
+
+function limpiarVersionHistorial() {
+  if (!confirm('Limpiar todo el historial de versiones?')) return;
+  localStorage.removeItem('versionHistorial');
+  verVersionHistorial();
+}
 
 // Exportar conciliacion
 function exportarConciliacion() {

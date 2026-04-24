@@ -793,6 +793,19 @@
   </div>
 </div>
 
+<!-- MODAL: Historial de versiones -->
+<div class="overlay" id="modal-version-historial" onclick="if(event.target===this)closeModal('modal-version-historial')">
+  <div class="modal" style="max-height:85vh;display:flex;flex-direction:column">
+    <h2>📸 Historial de versiones</h2>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Guarda hasta 20 versiones automáticamente antes de cada sync. Toca Restaurar para volver a cualquier punto.</div>
+    <div id="version-historial-body" style="flex:1;overflow-y:auto"></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="mbtn sec" onclick="limpiarVersionHistorial()">Limpiar</button>
+      <button class="mbtn" onclick="closeModal('modal-version-historial')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Alertas de corte -->
 <div class="overlay" id="modal-alertas" onclick="if(event.target===this)closeModal('modal-alertas')">
   <div class="modal">
