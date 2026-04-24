@@ -194,6 +194,56 @@ function applySnapshot(snap) {
   return true;
 }
 
+// ── Historial de Sync ───────────────────────────────────────
+function registrarEntradaHistorialSync(tipo) {
+  try {
+    const hist = JSON.parse(localStorage.getItem('syncHistorial') || '[]');
+    const snap = buildSnapshot();
+    hist.unshift({
+      tipo,                                          // 'subida' | 'descarga'
+      ts: new Date().toISOString(),
+      gastos: (snap.gastos?.length || 0) + (snap.historico?.length || 0),
+      ahorros: snap.cuentasAhorro?.length || 0,
+    });
+    // Mantener solo los últimos 50 registros
+    localStorage.setItem('syncHistorial', JSON.stringify(hist.slice(0, 50)));
+  } catch(e) {}
+}
+
+function verHistorialSync() {
+  const hist = JSON.parse(localStorage.getItem('syncHistorial') || '[]');
+  const body = document.getElementById('historial-sync-body');
+  if (!hist.length) {
+    body.innerHTML = '<div class="empty">Sin sincronizaciones registradas</div>';
+  } else {
+    body.innerHTML = hist.map(h => {
+      const fecha = new Date(h.ts);
+      const hora  = fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+      const dia   = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+      const icono = h.tipo === 'subida' ? '⬆️' : '⬇️';
+      const color = h.tipo === 'subida' ? 'var(--accent2)' : 'var(--green)';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">${icono}</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:${color}">${h.tipo === 'subida' ? 'Subida a GitHub' : 'Descarga de GitHub'}</div>
+            <div style="font-size:11px;color:var(--text3)">${dia} · ${hora}</div>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:11px;color:var(--text3)">
+          <div>${h.gastos} gastos</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  openModal('modal-historial-sync');
+}
+
+function limpiarHistorialSync() {
+  localStorage.removeItem('syncHistorial');
+  verHistorialSync();
+}
+
 async function uploadSnapshot() {
   if (!usingGithub()) return false;
   try {
@@ -223,6 +273,7 @@ async function uploadSnapshot() {
         const ts = new Date().toISOString();
         localStorage.setItem('lastSync', ts);
         localStorage.setItem('localModified', ts);
+        registrarEntradaHistorialSync('subida');
         return true;
       }
 
@@ -614,6 +665,66 @@ function renderMenu() {
 }
 
 // ── Gastos ────────────────────────────────────────────────────
+// ── Edición masiva ──────────────────────────────────────────
+let modoMasivo = false;
+const seleccionMasiva = new Set();
+
+function toggleEdicionMasiva() {
+  modoMasivo = !modoMasivo;
+  seleccionMasiva.clear();
+  const toolbar = document.getElementById('toolbar-masiva');
+  const btn = document.getElementById('btn-edicion-masiva');
+  if (toolbar) toolbar.style.display = modoMasivo ? 'flex' : 'none';
+  if (btn) { btn.textContent = modoMasivo ? '✕ Editar' : '✏️ Editar'; btn.style.borderColor = modoMasivo ? 'var(--accent)' : 'var(--border2)'; btn.style.color = modoMasivo ? 'var(--accent2)' : 'var(--text2)'; }
+  if (modoMasivo) {
+    // Llenar selects
+    const sc = document.getElementById('masiva-cuenta');
+    const sm = document.getElementById('masiva-motivo');
+    if (sc) sc.innerHTML = '<option value="">— Cuenta —</option>' + getCuentas().map(c => `<option value="${c}">${c}</option>`).join('');
+    if (sm) sm.innerHTML = '<option value="">— Motivo —</option>' + catalogoMotivos.map(m => `<option value="${m}">${m}</option>`).join('');
+  }
+  actualizarConteoMasiva();
+  renderGastos();
+}
+
+function toggleSeleccionMasiva(id) {
+  if (seleccionMasiva.has(id)) seleccionMasiva.delete(id);
+  else seleccionMasiva.add(id);
+  actualizarConteoMasiva();
+  renderGastos();
+}
+
+function actualizarConteoMasiva() {
+  const el = document.getElementById('masiva-count');
+  if (el) el.textContent = `${seleccionMasiva.size} seleccionado${seleccionMasiva.size !== 1 ? 's' : ''}`;
+}
+
+function aplicarEdicionMasiva() {
+  if (!seleccionMasiva.size) { showToast('Selecciona al menos un gasto'); return; }
+  const cuenta  = document.getElementById('masiva-cuenta')?.value;
+  const motivo  = document.getElementById('masiva-motivo')?.value;
+  const estado  = document.getElementById('masiva-estado')?.value;
+  if (!cuenta && !motivo && !estado) { showToast('Selecciona al menos un campo a cambiar'); return; }
+
+  let count = 0;
+  gastos.forEach(g => {
+    if (!seleccionMasiva.has(g.id)) return;
+    if (cuenta) g.cuenta = cuenta;
+    if (motivo) g.motivo = motivo;
+    if (estado === 'abonado')    { g.abonado = true; }
+    if (estado === 'pendiente')  { g.abonado = false; }
+    if (estado === 'ignorar')    { g.ignorar = true; }
+    if (estado === 'no-ignorar') { g.ignorar = false; }
+    g.updatedAt = new Date().toISOString();
+    count++;
+  });
+
+  saveLocal();
+  showToast(`${count} gastos actualizados ✓`);
+  toggleEdicionMasiva();
+  renderMenu();
+}
+
 function renderGastos() {
   const q = (document.getElementById('search-in').value || '').toLowerCase();
   let list = gastos.filter(g => {
@@ -643,9 +754,13 @@ function renderGastos() {
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos registrados</div>'; return; }
   el.innerHTML = list.map(g => {
     const iE = g.externo === 'externo', iP = g.externo === 'pagado';
-    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" style="${g.ignorar?'opacity:.55':''}">
-      <div class="gasto-icon" onclick="openDetail(${g.id})">${getMotivoIcon(g.motivo)||'📋'}</div>
-      <div class="gasto-info" onclick="openDetail(${g.id})">
+    const seleccionado = modoMasivo && seleccionMasiva.has(g.id);
+    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" style="${g.ignorar?'opacity:.55':''}${seleccionado?';border-color:var(--accent);background:rgba(108,99,255,.08)':''}" onclick="${modoMasivo?`toggleSeleccionMasiva(${g.id})`:''}">
+      ${modoMasivo
+        ? `<div style="width:22px;height:22px;border-radius:6px;border:2px solid ${seleccionado?'var(--accent)':'var(--border2)'};background:${seleccionado?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${seleccionado?'<span style="color:white;font-size:12px">✓</span>':''}</div>`
+        : `<div class="gasto-icon" onclick="openDetail(${g.id})">${getMotivoIcon(g.motivo)||'📋'}</div>`
+      }
+      <div class="gasto-info" onclick="${modoMasivo?`toggleSeleccionMasiva(${g.id})`:`openDetail(${g.id})`}">
         <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}</div>
         <div class="gasto-meta">${g.cuenta}${g.comentarios?' · '+g.comentarios:''} · ${g.fecha}</div>
         <div class="badges">
@@ -658,7 +773,7 @@ function renderGastos() {
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <div class="gasto-monto" onclick="openDetail(${g.id})" style="${g.ignorar||iP?'text-decoration:line-through;color:var(--text2)':iE?'color:var(--orange)':''}">${fmt(g.cantidad)}</div>
-        ${!g._esHistorico?`<button onclick="editarDirecto(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
+        ${!g._esHistorico&&!modoMasivo?`<button onclick="editarDirecto(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
       </div>
     </div>`;
   }).join('');
