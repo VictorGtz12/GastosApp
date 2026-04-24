@@ -497,7 +497,7 @@
       </div>
       <div style="flex:1">
         <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Período</label>
-        <select id="concil-periodo" onchange="renderConciliacion()" style="width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;font-family:inherit"></select>
+        <select id="concil-periodo" onchange="window._bancMovs=[];window._noConcilBanco=[];window._posiblesMatches=[];(document.getElementById('concil-pdf-status')||{}).textContent='';renderConciliacion()" style="width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;font-family:inherit"></select>
       </div>
     </div>
     <!-- Botón subir estado de cuenta -->

@@ -2299,6 +2299,12 @@ function actualizarPeriodosConcil() {
     return `<option value="${p}">${periodoDesde(p)} → ${hasta}</option>`;
   }).join('');
   concilPeriodo = selP.value;
+  // Limpiar resultados de conciliación anterior al cambiar tarjeta/período
+  window._bancMovs = [];
+  window._noConcilBanco = [];
+  window._posiblesMatches = [];
+  const st = document.getElementById('concil-pdf-status');
+  if (st) st.textContent = '';
   renderConciliacion();
 }
 
