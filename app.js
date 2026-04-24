@@ -2871,34 +2871,106 @@ function parsearBBVA(texto) {
 
 /**
  * Parser Banamex (Citibanamex).
- * Formato real: "DD-mmm-AAAA  DD-mmm-AAAA  DESCRIPCION RFC/REF  +  $1,234.00"
- * El signo + o - y el $ están separados por espacios del monto.
- * Ignorar líneas con - (abonos/pagos).
+ * Soporta texto con layout y texto plano (PDF.js).
+ * En texto plano: bloques de fechas, luego descripciones, luego signos, luego montos.
+ * En texto layout: "DD-mmm-AAAA  DD-mmm-AAAA  Desc  +  $1,234.00"
  */
 function parsearBanamex(texto) {
   const movimientos = [];
-  // Captura: fecha-op, fecha-cargo, descripción, signo +/-, monto con $
-  const regex = /(\d{2})-([a-záéíóú]{3})-(\d{4})\s+\d{2}-[a-záéíóú]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/gi;
+
+  // Pasada 1: texto con layout
+  const rxLayout = /(\d{2})-([a-z]{3})-(\d{4})\s+\d{2}-[a-z]{3}-\d{4}\s+(.+?)\s+\+\s+\$\s*([\d,]+\.\d{2})/gi;
   let m;
-  while ((m = regex.exec(texto)) !== null) {
+  while ((m = rxLayout.exec(texto)) !== null) {
     const [, dia, mes, anio, desc, montoStr] = m;
     if (/^(Total cargos|Total abonos)/i.test(desc.trim())) continue;
     const numMes = mesEsToNum(mes);
     if (numMes === null) continue;
-    const fecha = new Date(parseInt(anio), numMes, parseInt(dia));
     movimientos.push({
-      fecha: fecha.toISOString().slice(0, 10),
+      fecha: new Date(parseInt(anio), numMes, parseInt(dia)).toISOString().slice(0, 10),
       descripcion: desc.trim().replace(/\s{2,}/g, ' '),
       monto: parseMonto(montoStr)
     });
   }
-  return movimientos;
-}
+  if (movimientos.length > 0) return movimientos;
 
-/**
- * Parser Banorte.
- * Formato en desglose: "DD-MMM-AAAA  DD-MMM-AAAA  Descripcion  +$1,234.58"
- */
+  // Pasada 2: texto plano — procesar cada sección CARGOS, ABONOS por separado
+  // Cada sección tiene: bloque fechas | bloque descs | bloque signos | bloque montos
+  const lineas = texto.split('\n');
+  const FECHA_RX = /^(\d{2})-([a-z]{3})-(\d{4})$/i;
+  const MONTO_RX = /^\$?(\d[\d,]*\.\d{2})$/;
+  const SIGNO_RX = /^[\+\-]$/;
+  const SKIP = /^(Total cargos|Total abonos|Fecha de la|operación|Fecha|de cargo|Descripción del movimiento|Monto|CARGOS, ABONOS|COMPRAS Y CARGOS|DESGLOSE|Número de tarjeta|Notas|Página \d|NA|SU ABONO)/i;
+
+  // Encontrar índices de inicio de cada sección
+  const seccionIdxs = [];
+  for (let i = 0; i < lineas.length; i++) {
+    if (/CARGOS, ABONOS Y COMPRAS REGULARES/i.test(lineas[i])) seccionIdxs.push(i);
+  }
+  if (seccionIdxs.length === 0) return movimientos;
+
+  // Procesar cada sección
+  seccionIdxs.forEach((secStart, si) => {
+    const secEnd = si + 1 < seccionIdxs.length ? seccionIdxs[si + 1] : lineas.length;
+    const secLineas = lineas.slice(secStart, secEnd);
+
+    // Recolectar fechas, montos y signos dentro de esta sección
+    const fechas = [], montos = [], signos = [], descs = [];
+    let enFechas = false, enDescs = false, enSignos = false, enMontos = false;
+    let fechasVistas = 0;
+
+    for (let i = 0; i < secLineas.length; i++) {
+      const l = secLineas[i].trim();
+      if (!l || SKIP.test(l)) continue;
+      if (FECHA_RX.test(l)) { fechas.push(l); fechasVistas++; enFechas = true; continue; }
+      // Después de las fechas vienen las descripciones
+      if (fechasVistas > 0 && !MONTO_RX.test(l) && !SIGNO_RX.test(l)) { descs.push(l); continue; }
+      if (SIGNO_RX.test(l)) { signos.push(l); continue; }
+      if (MONTO_RX.test(l)) { montos.push(l); continue; }
+    }
+
+    if (fechas.length === 0 || montos.length === 0) return;
+
+    // Agrupar descripciones: 2 líneas por transacción (nombre + referencia)
+    // Pero si hay más descs que fechas*2, ajustar
+    const descsPorTx = Math.max(1, Math.min(2, Math.round(descs.length / fechas.length)));
+
+    let mIdx = 0;
+    for (let f = 0; f < fechas.length; f++) {
+      // Saltear si el signo es negativo (abono)
+      if (signos[f] === '-') { mIdx++; continue; }
+      if (mIdx >= montos.length) break;
+
+      const fm = fechas[f].match(FECHA_RX);
+      if (!fm) { mIdx++; continue; }
+      const numMes = mesEsToNum(fm[2]);
+      if (numMes === null) { mIdx++; continue; }
+
+      const descLineas = descs.slice(f * descsPorTx, f * descsPorTx + descsPorTx);
+      const desc = descLineas.join(' ').trim();
+      if (!desc) { mIdx++; continue; }
+
+      const montoStr = montos[mIdx].replace('$', '');
+      const monto = parseMonto(montoStr);
+      if (monto <= 0) { mIdx++; continue; }
+
+      movimientos.push({
+        fecha: new Date(parseInt(fm[3]), numMes, parseInt(fm[1])).toISOString().slice(0, 10),
+        descripcion: desc.replace(/\s{2,}/g, ' '),
+        monto
+      });
+      mIdx++;
+    }
+  });
+
+  // Deduplicar por fecha+monto
+  const vistos = new Set();
+  return movimientos.filter(mv => {
+    const k = mv.fecha + '|' + mv.monto;
+    if (vistos.has(k)) return false;
+    vistos.add(k); return true;
+  });
+}
 function parsearBanorte(texto) {
   const movimientos = [];
   const regex = /(\d{2})-([A-Z]{3})-(\d{4})\s+\d{2}-[A-Z]{3}-\d{4}\s+(.+?)\s+\+\$?([\d,]+\.\d{2})/g;
