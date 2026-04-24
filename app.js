@@ -2478,8 +2478,15 @@ async function procesarImagenesConciliacion(event) {
     (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
 
     window._bancMovs = resultado.movimientos_banco || [];
-    window._noConcilBanco = resultado.no_conciliados_banco || [];
+
+    // Calcular posibles matches y no conciliados
+    const gastosSinConciliar = items.filter(g => !conciliados[clave][g.id]);
     window._posiblesMatches = [];
+    window._noConcilBanco = (resultado.no_conciliados_banco || []).filter(mv => {
+      const posible = gastosSinConciliar.find(g => Math.abs(g.cantidad - mv.monto) < 1);
+      if (posible) { window._posiblesMatches.push({ banco: mv, gasto: posible }); return false; }
+      return true;
+    });
 
     const concilCount = (resultado.conciliados || []).length;
     status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos sin registrar`;

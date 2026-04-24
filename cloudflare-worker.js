@@ -71,9 +71,9 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
         const imgResponse = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, messages: [{ role: 'user', content }] })
+          body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content }] })
         });
-        if (!imgResponse.ok) return json({ error: `Vision error: ${imgResponse.status}` }, 502);
+        if (!imgResponse.ok) { const errTxt = await imgResponse.text(); return json({ error: `Vision error: ${imgResponse.status} — ${errTxt.slice(0,300)}` }, 502); }
         const imgData = await imgResponse.json();
         const imgText = imgData.content?.[0]?.text || '';
         const imgMatch = imgText.match(/\{[\s\S]*\}/);
