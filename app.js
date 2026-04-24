@@ -523,33 +523,109 @@ async function solicitarPermisosNotificacion() {
 
 async function programarAlertasCorte() {
   const ok = await solicitarPermisosNotificacion();
-  if (!ok) { showToast('Activa las notificaciones para recibir alertas de corte'); return; }
+  if (!ok) { showToast('Activa las notificaciones para recibir alertas'); return; }
+  // Abrir modal de configuracion
   const cfg = getCortesConfig();
+  const cuentas = Object.keys(cfg);
+  const alertCfg = JSON.parse(localStorage.getItem('alertasConfig') || '{}');
+
+  // Render cuentas checkboxes
+  const elCuentas = document.getElementById('alertas-cuentas');
+  if (elCuentas) {
+    elCuentas.innerHTML = '<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Tarjetas</div>' +
+      cuentas.map(c => {
+        const checked = alertCfg[c] !== false;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <input type="checkbox" id="alerta-${c}" ${checked?'checked':''} style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+          <label for="alerta-${c}" style="font-size:13px;cursor:pointer;flex:1">${c}</label>
+        </div>`;
+      }).join('');
+  }
+
+  // Render dias chips
+  const diasSeleccionados = JSON.parse(localStorage.getItem('alertasDias') || '[1,3]');
+  const opcionesDias = [1,2,3,5,7,10,14];
+  const elDias = document.getElementById('alertas-dias-chips');
+  if (elDias) {
+    elDias.innerHTML = opcionesDias.map(d =>
+      `<div class="chip ${diasSeleccionados.includes(d)?'active':''}" id="alerta-dia-${d}"
+        onclick="toggleAlertaDia(${d})"
+        style="padding:6px 14px;border-radius:20px;border:1px solid var(--border2);background:${diasSeleccionados.includes(d)?'var(--accent)':'var(--bg3)'};color:${diasSeleccionados.includes(d)?'white':'var(--text2)'};font-size:12px;cursor:pointer;font-weight:500">
+        ${d} dia${d>1?'s':''}
+      </div>`
+    ).join('');
+  }
+
+  // Hora guardada
+  const hora = localStorage.getItem('alertasHora') || '09:00';
+  const elHora = document.getElementById('alertas-hora');
+  if (elHora) elHora.value = hora;
+
+  openModal('modal-alertas');
+}
+
+function toggleAlertaDia(d) {
+  const dias = JSON.parse(localStorage.getItem('alertasDias') || '[1,3]');
+  const idx = dias.indexOf(d);
+  if (idx >= 0) dias.splice(idx, 1); else dias.push(d);
+  localStorage.setItem('alertasDias', JSON.stringify(dias));
+  // Update chip style
+  const el = document.getElementById('alerta-dia-' + d);
+  if (el) {
+    const activo = dias.includes(d);
+    el.style.background = activo ? 'var(--accent)' : 'var(--bg3)';
+    el.style.color = activo ? 'white' : 'var(--text2)';
+    el.style.borderColor = activo ? 'var(--accent)' : 'var(--border2)';
+  }
+}
+
+async function guardarAlertasCorte() {
+  const cfg = getCortesConfig();
+  const cuentas = Object.keys(cfg);
+  const dias = JSON.parse(localStorage.getItem('alertasDias') || '[1,3]');
+  const hora = document.getElementById('alertas-hora')?.value || '09:00';
+  const [hh, mm] = hora.split(':').map(Number);
+
+  // Guardar config de cuentas
+  const alertCfg = {};
+  cuentas.forEach(c => {
+    alertCfg[c] = document.getElementById('alerta-' + c)?.checked !== false;
+  });
+  localStorage.setItem('alertasConfig', JSON.stringify(alertCfg));
+  localStorage.setItem('alertasHora', hora);
+
+  if (!dias.length) { showToast('Selecciona al menos un dia de anticipacion'); return; }
+
   const sw = navigator.serviceWorker?.controller;
   let programadas = 0;
-  Object.entries(cfg).forEach(([cuenta, c]) => {
+
+  cuentas.forEach(cuenta => {
+    if (alertCfg[cuenta] === false) return;
     const key = getPeriodoActualKey(cuenta);
     if (!key) return;
     const hasta = key.split('|')[1];
     if (!hasta) return;
     const fechaCorte = new Date(hasta + 'T12:00:00');
-    [3, 1].forEach(dias => {
+
+    dias.forEach(d => {
       const alertDate = new Date(fechaCorte);
-      alertDate.setDate(alertDate.getDate() - dias);
-      alertDate.setHours(9, 0, 0, 0);
+      alertDate.setDate(alertDate.getDate() - d);
+      alertDate.setHours(hh, mm, 0, 0);
       const delay = alertDate - Date.now();
       if (delay <= 0) return;
-      const title = 'Corte de ' + cuenta + ' en ' + dias + ' dia' + (dias > 1 ? 's' : '');
-      const body  = 'Tu corte es el ' + hasta + '. Revisa tus gastos.';
+      const title = 'Corte de ' + cuenta + ' en ' + d + ' dia' + (d > 1 ? 's' : '');
+      const body  = 'Tu corte es el ' + hasta + '. Revisa tus gastos pendientes.';
       if (sw) {
-        sw.postMessage({ type: 'SCHEDULE_NOTIFICATION', title, body, delay, tag: 'corte-'+cuenta+'-'+dias });
+        sw.postMessage({ type: 'SCHEDULE_NOTIFICATION', title, body, delay, tag: 'corte-'+cuenta+'-'+d });
       } else {
         setTimeout(() => new Notification(title, { body, icon: 'icon-192.png' }), delay);
       }
       programadas++;
     });
   });
-  showToast(programadas + ' alertas de corte programadas');
+
+  closeModal('modal-alertas');
+  showToast(programadas + ' alerta' + (programadas !== 1 ? 's' : '') + ' de corte programada' + (programadas !== 1 ? 's' : ''));
 }
 
 // Indicador offline
