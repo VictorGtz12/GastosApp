@@ -2478,8 +2478,6 @@ Devuelve SOLO un JSON con este formato exacto:
 }
 Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
 
-    status.textContent = '🤖 Analizando con IA...';
-
     // Llamar al Worker de Cloudflare
     const workerUrl = localStorage.getItem('workerUrl') || '';
     if (!workerUrl) {
@@ -2487,50 +2485,58 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
       return;
     }
 
+    const movsBanco = parsedForPrompt?.movimientos || [];
+    const tieneParseo = movsBanco.length > 0;
+
+    // Si el parser extrajo movimientos, la IA solo hace el matching — no genera movimientos_banco
+    // Si no hay parser, la IA hace todo desde el texto del PDF
+    status.textContent = '🤖 Conciliando con IA...';
     const response = await fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        pdfText: parsedForPrompt?.movimientos.length > 0 ? '' : pdfText,
+        pdfText: tieneParseo ? '' : pdfText,
         prompt,
         gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
         cuenta: concilCuenta,
         periodo: concilPeriodo,
-        movimientosBanco: parsedForPrompt?.movimientos || []
+        movimientosBanco: movsBanco
       })
     });
 
     if (!response.ok) throw new Error(`Worker error: ${response.status}`);
     const resultado = await response.json();
     if (resultado.error) throw new Error(resultado.error);
-    const text = JSON.stringify(resultado);
 
-    // resultado ya viene como objeto JSON del Worker
+    // Si el parser encontró movimientos, usarlos directamente (no los de la IA)
+    if (tieneParseo) {
+      resultado.movimientos_banco = movsBanco;
+      // Recalcular no_conciliados_banco: movimientos del banco sin match en conciliados_app
+      const idsApp = new Set((resultado.conciliados || []).map(id => String(id)));
+      const gastosMap = {};
+      items.forEach(g => { gastosMap[g.id] = g; });
+      // no_conciliados_banco = movimientos del banco que no matchean ningún gasto conciliado
+      const montosApp = (resultado.conciliados || []).map(id => {
+        const g = gastosMap[id]; return g ? g.cantidad : 0;
+      });
+      resultado.no_conciliados_banco = movsBanco.filter(mv => {
+        return !montosApp.some(m => Math.abs(m - mv.monto) < 1);
+      });
+    }
 
-    // Aplicar conciliación automática
+    // Aplicar conciliación
     if (!conciliados[clave]) conciliados[clave] = {};
-    (resultado.conciliados || []).forEach(id => {
-      conciliados[clave][id] = true;
-    });
-    // Los no conciliados quedan desmarcados (false o undefined)
-    (resultado.no_conciliados_app || []).forEach(id => {
-      conciliados[clave][id] = false;
-    });
+    (resultado.conciliados || []).forEach(id => { conciliados[clave][id] = true; });
+    (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
 
-    // Guardar movimientos del banco para mostrar
     window._bancMovs = resultado.movimientos_banco || [];
     window._noConcilBanco = resultado.no_conciliados_banco || [];
 
     const concilCount = (resultado.conciliados || []).length;
-    const totalBanco = (resultado.movimientos_banco || []).length;
     status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados automáticamente`;
-    if (resultado.resumen) {
-      status.textContent += ` · ${resultado.resumen}`;
-    }
+    if (resultado.resumen) status.textContent += ` · ${resultado.resumen}`;
 
     renderConciliacion();
-
-    // Mostrar movimientos del banco no encontrados si hay
     if (window._noConcilBanco?.length) {
       showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
     }
