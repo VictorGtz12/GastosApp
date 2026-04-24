@@ -1334,8 +1334,8 @@ async function guardarGasto() {
   }
 
   // Guardar todo junto
-  saveLocal();
   syncBloqueado = false;
+  saveLocal();
   resetForm(); editingId=null; showTab('gastos');
   showToast('Gasto guardado ✓');
 }
@@ -1683,10 +1683,16 @@ function guardarAjustes() {
   const val = parseFloat(document.getElementById('ajuste-presupuesto').value);
   if (!val || val <= 0) { showToast('Ingresa un presupuesto válido'); return; }
   PRESUPUESTO = val;
+  const wu = document.getElementById('ajuste-worker-url');
+  if (wu) {
+    const workerVal = wu.value.trim();
+    if (workerVal) localStorage.setItem('workerUrl', workerVal);
+    else localStorage.removeItem('workerUrl');
+  }
   saveLocal();
   closeModal('modal-ajustes');
   renderMenu();
-  showToast('Presupuesto actualizado ✓');
+  showToast('Ajustes guardados ✓');
 }
 
 
@@ -2424,9 +2430,12 @@ async function procesarEstadoCuenta(event) {
       r.readAsDataURL(file);
     });
 
-    status.textContent = '🤖 Analizando con IA...';
+    // Extraer texto del PDF
+    status.textContent = '📄 Extrayendo texto del PDF...';
+    const pdfText = await extraerTextoPDF(base64);
+    if (!pdfText || pdfText.length < 50) throw new Error('No se pudo extraer texto del PDF');
 
-    // Obtener gastos del período actual para contexto
+    // Obtener gastos del período actual
     const clave = `${concilCuenta}|${concilPeriodo}`;
     const [, hasta] = concilPeriodo.split('|');
     const desde = periodoDesde(concilPeriodo);
@@ -2436,56 +2445,44 @@ async function procesarEstadoCuenta(event) {
       new Date(hasta + 'T23:59:59')
     );
 
-    // Construir prompt — si ya tenemos movimientos parseados, los incluimos directamente
+    // Parser específico por banco
     const parsedForPrompt = parsearEstadoCuentaBanco(pdfText);
+    if (parsedForPrompt && parsedForPrompt.movimientos.length > 0) {
+      const nombresB = {
+        amex: 'American Express', bbva: 'BBVA', banamex: 'Banamex',
+        banorte: 'Banorte', hsbc: 'HSBC', santander: 'Santander', mercadolibre: 'Mercado Libre'
+      };
+      status.textContent = `🏦 ${nombresB[parsedForPrompt.banco]} — ${parsedForPrompt.movimientos.length} movimientos extraídos`;
+      window._bancoDetectado = parsedForPrompt.banco;
+      window._bancMovs = parsedForPrompt.movimientos;
+    }
+
+    // Construir prompt
     const movsParsedStr = (parsedForPrompt && parsedForPrompt.movimientos.length > 0)
-      ? `\nMOVIMIENTOS DEL BANCO (ya extraídos por parser específico ${parsedForPrompt.banco.toUpperCase()}):\n` +
+      ? `\nMOVIMIENTOS DEL BANCO (parser ${parsedForPrompt.banco.toUpperCase()}):\n` +
         parsedForPrompt.movimientos.map(mv => `- ${mv.fecha} | ${mv.descripcion} | $${mv.monto}`).join('\n')
-      : `\nESTADO DE CUENTA (texto extraído del PDF):\n${pdfText.slice(0, 6000)}`;
+      : `\nESTADO DE CUENTA (texto PDF):\n${pdfText.slice(0, 6000)}`;
 
     const prompt = `Eres un asistente de conciliación bancaria.${movsParsedStr}
 
 Mis gastos registrados para el período ${desde} al ${hasta} en cuenta ${concilCuenta} son:
 ${items.map(g => `- ID:${g.id} | ${g.fecha} | ${g.motivo}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
 
-Compara los cargos del banco con mis gastos. Devuelve SOLO un JSON con este formato exacto, sin texto adicional:
+Devuelve SOLO un JSON con este formato exacto:
 {
-  "movimientos_banco": [
-    { "fecha": "YYYY-MM-DD", "descripcion": "descripcion del cargo", "monto": 123.45 }
-  ],
-  "conciliados": [id_gasto1, id_gasto2],
-  "no_conciliados_banco": [
-    { "fecha": "YYYY-MM-DD", "descripcion": "cargo en banco no encontrado en app", "monto": 123.45 }
-  ],
-  "no_conciliados_app": [id_gasto3, id_gasto4],
-  "resumen": "breve explicación de lo encontrado"
+  "movimientos_banco": [{ "fecha": "YYYY-MM-DD", "descripcion": "...", "monto": 123.45 }],
+  "conciliados": [id1, id2],
+  "no_conciliados_banco": [{ "fecha": "YYYY-MM-DD", "descripcion": "...", "monto": 123.45 }],
+  "no_conciliados_app": [id3],
+  "resumen": "breve resumen"
 }
-
-Criterios de conciliación: considera conciliado si el monto coincide exactamente o tiene diferencia menor a $1, y la fecha está dentro de ±3 días. Si hay descripción similar al motivo o comentario, úsalo como pista adicional.`;
-
-    // Extraer texto del PDF usando PDF.js
-    status.textContent = '📄 Extrayendo texto del PDF...';
-    const pdfText = await extraerTextoPDF(base64);
-    if (!pdfText || pdfText.length < 50) throw new Error('No se pudo extraer texto del PDF');
-
-    // Intentar parser específico por banco
-    const parsed = parsearEstadoCuentaBanco(pdfText);
-    if (parsed && parsed.movimientos.length > 0) {
-      const nombresB = {
-        amex: 'American Express', bbva: 'BBVA', banamex: 'Banamex',
-        banorte: 'Banorte', hsbc: 'HSBC', santander: 'Santander', mercadolibre: 'Mercado Libre'
-      };
-      status.textContent = `🏦 ${nombresB[parsed.banco]} detectado — ${parsed.movimientos.length} movimientos extraídos`;
-      window._bancoDetectado = parsed.banco;
-      window._bancMovs = parsed.movimientos;
-    }
+Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
 
     status.textContent = '🤖 Analizando con IA...';
 
-    // Llamar al Worker de Cloudflare como proxy
+    // Llamar al Worker de Cloudflare
     const workerUrl = localStorage.getItem('workerUrl') || '';
     if (!workerUrl) {
-      // Sin Worker configurado: conciliación por monto
       mostrarTextoPDFParaConciliar(pdfText, items);
       return;
     }
@@ -2494,10 +2491,8 @@ Criterios de conciliación: considera conciliado si el monto coincide exactament
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        pdfText: parsedForPrompt?.movimientos.length > 0
-          ? '' // El prompt ya incluye los movimientos estructurados
-          : pdfText,
-        prompt, // Enviar prompt pre-construido con movimientos ya parseados
+        pdfText: parsedForPrompt?.movimientos.length > 0 ? '' : pdfText,
+        prompt,
         gastos: items.map(g => ({ id: g.id, fecha: g.fecha, motivo: g.motivo, comentarios: g.comentarios, cantidad: g.cantidad })),
         cuenta: concilCuenta,
         periodo: concilPeriodo,
