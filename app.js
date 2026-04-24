@@ -2655,7 +2655,7 @@ function setStatTab(tab) {
 function renderStatTab() {
   const el = document.getElementById('stat-content');
   if (!el) return;
-  const all = [...gastos, ...historico].filter(g => !g.ignorar && !g.externo);
+  const all = [...gastos, ...historico].filter(g => !g.ignorar && g.externo !== 'externo');
   switch (_statTab) {
     case 'semanas':    el.innerHTML = renderStatSemanas(all); break;
     case 'meses':      el.innerHTML = renderStatMeses(all); break;
