@@ -2609,28 +2609,41 @@ function inferirAnio(texto) {
 
 /**
  * Parser American Express.
- * Formato: "DD de Mes    DESCRIPCION     LUGAR    1,234.56"
- * Las líneas con CR al final son créditos, se omiten.
+ * Formato real del PDF (layout):
+ * "24 de Marzo     UBER EATS           HTTPS://HELP.UB                                                             715.55"
+ * El monto está al extremo derecho. La línea siguiente puede tener "CR" (crédito → ignorar)
+ * o "Dólar U.S.A. XX.XX TC:YY.YY" (transacción en USD → incluir con monto en MXN)
  */
 function parsearAmex(texto) {
   const anio = inferirAnio(texto);
   const movimientos = [];
-  const regex = /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s+([\d,]+\.\d{2})/gi;
-  let m;
   const lineas = texto.split('\n');
-  
-  for (const linea of lineas) {
-    const match = linea.match(/^\s*(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s+([\d,]+\.\d{2})\s*$/i);
+
+  // Ignorar líneas fuera de la sección de movimientos
+  // La sección empieza con "Fecha y Detalle de las operaciones"
+  // y también hay secciones de tarjetas adicionales
+  const SKIP = /^(Estado de Cuenta|Tarjetahabiente|Número de Cuenta|Fecha Siguiente|de Corte|Total de|Paga desde|Recuerda|En Canales|Desde|Paga con|El pago|Para mayor|Este no|Período|Resumen|Tasa|CAT|Interés|Comision|Tiempo|Pago apr|Nuevas|Favor|En caso|Estimado|Fecha lím|Pago mín)/i;
+
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i];
+    // Línea de transacción: empieza con "DD de Mes" y termina con número
+    const match = linea.match(/^\s*(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(.+?)\s{2,}([\d,]+\.\d{2})\s*$/i);
     if (!match) continue;
     const [, dia, mes, desc, montoStr] = match;
+
+    // Verificar si la SIGUIENTE línea tiene "CR" → crédito, ignorar
+    const sigLinea = (lineas[i + 1] || '').trim();
+    if (sigLinea === 'CR') continue;
+
+    // Ignorar totales y líneas de resumen
+    if (/^Total|MONTO A DIFERIR|MESES EN AUTOMÁTICO|Crédito por redención|REVERSION|SERVICIO DE FACTURACION/i.test(desc.trim())) continue;
+
     const numMes = mesEsToNum(mes);
     if (numMes === null) continue;
-    // Ignorar líneas de crédito/pago
-    if (/PAGO|ABONO|CREDITOCR|CR$/i.test(desc)) continue;
     const fecha = new Date(anio, numMes, parseInt(dia));
     movimientos.push({
       fecha: fecha.toISOString().slice(0, 10),
-      descripcion: desc.trim().replace(/\s+/g, ' '),
+      descripcion: desc.trim().replace(/\s{2,}/g, ' '),
       monto: parseMonto(montoStr)
     });
   }
