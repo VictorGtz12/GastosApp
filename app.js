@@ -2370,6 +2370,28 @@ function renderConciliacion() {
           }).join('')
       }
     </div>
+    ${(window._posiblesMatches || []).length ? `
+      <div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);border-radius:12px;padding:12px 14px;margin-top:14px">
+        <div style="font-size:11px;font-weight:700;color:#ca8a04;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">🔍 Posible coincidencia — mismo monto, fecha diferente</div>
+        ${(window._posiblesMatches || []).map((p, i) => `
+          <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;gap:8px;align-items:flex-start">
+                <span style="font-size:10px;color:var(--text3);min-width:16px;padding-top:2px">${i+1}.</span>
+                <div>
+                  <div style="font-size:11px;color:#ca8a04;font-weight:600">Banco: ${p.banco.descripcion}</div>
+                  <div style="font-size:10px;color:var(--text3)">${p.banco.fecha}</div>
+                  <div style="font-size:11px;color:var(--text2);margin-top:3px">App: ${p.gasto.motivo}${p.gasto.comentarios?' · '+p.gasto.comentarios:''}</div>
+                  <div style="font-size:10px;color:var(--text3)">${p.gasto.fecha} · diferencia ${Math.round(Math.abs(new Date(p.banco.fecha)-new Date(p.gasto.fecha))/86400000)} días</div>
+                </div>
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-size:13px;font-weight:700;color:#ca8a04">${fmt(p.banco.monto)}</div>
+                <button onclick="conciliarPosible(${p.gasto.id})" style="margin-top:4px;font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid #ca8a04;background:transparent;color:#ca8a04;cursor:pointer">Conciliar</button>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
     ${(window._noConcilBanco || []).length ? `
       <div style="background:rgba(255,94,122,.08);border:1px solid rgba(255,94,122,.25);border-radius:12px;padding:12px 14px;margin-top:14px">
         <div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">⚠️ En banco pero no registrados en app</div>
@@ -2392,6 +2414,15 @@ function toggleConcil(gastoId) {
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
   conciliados[clave][gastoId] = !conciliados[clave][gastoId];
+  renderConciliacion();
+}
+
+function conciliarPosible(gastoId) {
+  const clave = `${concilCuenta}|${concilPeriodo}`;
+  if (!conciliados[clave]) conciliados[clave] = {};
+  conciliados[clave][gastoId] = true;
+  // Mover de posibles a conciliados
+  window._posiblesMatches = (window._posiblesMatches || []).filter(p => p.gasto.id !== gastoId);
   renderConciliacion();
 }
 
@@ -2510,10 +2541,22 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
       });
 
       window._bancMovs = movsBanco;
-      window._noConcilBanco = movsBanco.filter((mv, idx) => !bancoConciliados.has(idx));
+      const noConcilBanco = movsBanco.filter((mv, idx) => !bancoConciliados.has(idx));
+
+      // Detectar posibles matches: monto coincide (±$1) pero fecha fuera de rango
+      const gastosSinConciliar = items.filter(g => !conciliados[clave][g.id]);
+      window._posiblesMatches = [];
+      window._noConcilBanco = noConcilBanco.filter(mv => {
+        const posible = gastosSinConciliar.find(g => Math.abs(g.cantidad - mv.monto) < 1);
+        if (posible) {
+          window._posiblesMatches.push({ banco: mv, gasto: posible });
+          return false; // no va a "no encontrados", va a "posibles"
+        }
+        return true;
+      });
 
       const concilCount = Object.values(conciliados[clave]).filter(Boolean).length;
-      status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos en banco sin registrar`;
+      status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos sin registrar`;
       renderConciliacion();
       if (window._noConcilBanco.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
       return;
