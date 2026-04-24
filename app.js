@@ -2508,19 +2508,20 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
     const resultado = await response.json();
     if (resultado.error) throw new Error(resultado.error);
 
-    // Si el parser encontró movimientos, usarlos directamente (no los de la IA)
+    // Si el parser encontró movimientos, usarlos como fuente de verdad para movimientos_banco
+    // no_conciliados_banco = movimientos del banco sin match con los gastos conciliados por la IA
     if (tieneParseo) {
       resultado.movimientos_banco = movsBanco;
-      // Recalcular no_conciliados_banco: movimientos del banco sin match en conciliados_app
-      const idsApp = new Set((resultado.conciliados || []).map(id => String(id)));
       const gastosMap = {};
       items.forEach(g => { gastosMap[g.id] = g; });
-      // no_conciliados_banco = movimientos del banco que no matchean ningún gasto conciliado
-      const montosApp = (resultado.conciliados || []).map(id => {
-        const g = gastosMap[id]; return g ? g.cantidad : 0;
-      });
+      const conciliadosSet = new Set((resultado.conciliados || []).map(id => Number(id)));
+      // Montos y fechas de los gastos que la IA sí concilió
+      const matcheados = (resultado.conciliados || []).map(id => gastosMap[id]).filter(Boolean);
       resultado.no_conciliados_banco = movsBanco.filter(mv => {
-        return !montosApp.some(m => Math.abs(m - mv.monto) < 1);
+        return !matcheados.some(g =>
+          Math.abs(g.cantidad - mv.monto) < 1 &&
+          Math.abs(new Date(g.fecha) - new Date(mv.fecha)) <= 3 * 86400000
+        );
       });
     }
 
