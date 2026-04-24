@@ -2230,53 +2230,55 @@ function abrirAjustes() {
   openModal('modal-ajustes');
 }
 
-function guardarAjustes() {
+async function guardarAjustes() {
   const val = parseFloat(document.getElementById('ajuste-presupuesto').value);
-  if (!val || val <= 0) { showToast('Ingresa un presupuesto válido'); return; }
+  if (!val || val <= 0) { showToast('Presupuesto inválido'); return; }
   PRESUPUESTO = val;
+
+  // Guardar config directamente en localStorage sin disparar autoSync
   const wu = document.getElementById('ajuste-worker-url');
-  if (wu) {
-    const workerVal = wu.value.trim();
-    if (workerVal) localStorage.setItem('workerUrl', workerVal);
-    else localStorage.removeItem('workerUrl');
-  }
-  // GitHub token
+  if (wu) { const v = wu.value.trim(); v ? localStorage.setItem('workerUrl', v) : localStorage.removeItem('workerUrl'); }
+
   const gt = document.getElementById('ajuste-github-token');
   if (gt) {
-    const tkVal = gt.value.trim();
-    // Solo guardar si no es el placeholder de puntos
-    if (tkVal && !tkVal.startsWith('\u2022')) localStorage.setItem('githubToken', tkVal);
-    else if (!tkVal) localStorage.removeItem('githubToken');
+    const tk = gt.value.trim();
+    if (tk && !tk.startsWith('•')) localStorage.setItem('githubToken', tk);
+    else if (!tk) localStorage.removeItem('githubToken');
   }
-  // Supabase
-  const sbEnabled = document.getElementById('ajuste-supabase-enabled');
-  const ghDisabled = document.getElementById('ajuste-github-disabled');
-  if (sbEnabled) {
-    if (sbEnabled.checked) localStorage.setItem('supabaseEnabled', '1');
-    else localStorage.removeItem('supabaseEnabled');
-  }
-  if (ghDisabled) {
-    if (ghDisabled.checked) localStorage.setItem('githubDisabled', '1');
-    else localStorage.removeItem('githubDisabled');
-  }
-  // Si es la primera vez que se configura el token (dispositivo nuevo),
-  // descargar remotos ANTES de que el autoSync suba el local
-  const esNuevoToken = !localStorage.getItem('lastSync');
-  saveLocal();
+
+  const sbEl = document.getElementById('ajuste-supabase-enabled');
+  const ghEl = document.getElementById('ajuste-github-disabled');
+  if (sbEl) sbEl.checked ? localStorage.setItem('supabaseEnabled','1') : localStorage.removeItem('supabaseEnabled');
+  if (ghEl) ghEl.checked ? localStorage.setItem('githubDisabled','1') : localStorage.removeItem('githubDisabled');
+
+  const esNuevo = !localStorage.getItem('lastSync');
   closeModal('modal-ajustes');
-  renderMenu();
-  showToast('Ajustes guardados');
-  if (esNuevoToken && (usingGithub() || usingSupabase())) {
-    showToast('Descargando datos remotos...');
+
+  if (esNuevo && (usingGithub() || usingSupabase())) {
+    // Dispositivo nuevo: descargar PRIMERO, luego guardar local
     syncBloqueado = true;
     clearTimeout(window._autoSyncTimer);
-    setTimeout(async () => {
-      let ok = false;
-      if (usingSupabase()) ok = await downloadSupabase();
-      if (!ok && usingGithub()) ok = await downloadSnapshot();
-      syncBloqueado = false;
-      if (ok && ok !== 'skip') { showTab(tabActualGlobal || 'menu'); showToast('Datos sincronizados'); }
-    }, 800);
+    showToast('🔄 Descargando datos de la nube...');
+
+    let ok = false;
+    if (usingSupabase()) ok = await downloadSupabase();
+    if (!ok || ok === 'skip') ok = await downloadSnapshot();
+
+    syncBloqueado = false;
+    // saveLocal con sync bloqueado para no disparar upload
+    syncBloqueado = true;
+    saveLocal();
+    syncBloqueado = false;
+    showTab('menu');
+    renderMenu();
+    showToast(ok && ok !== 'skip' ? '✅ Sincronizado correctamente' : '⚠️ Sin datos remotos, usando local');
+  } else {
+    // Dispositivo conocido: guardar normal
+    syncBloqueado = true;
+    saveLocal();
+    syncBloqueado = false;
+    renderMenu();
+    showToast('Ajustes guardados ✓');
   }
 }
 
