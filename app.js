@@ -2554,6 +2554,15 @@ async function procesarEstadoCuenta(event) {
       return;
     }
 
+    // Detectar encoding corrupto (HSBC usa Xenos D2eVision con caracteres ilegibles)
+    const charRaros = (pdfText.match(/[^ -À-ÿÀ-ɏ -~]/g) || []).length;
+    const ratioCorrupto = charRaros / pdfText.length;
+    if (ratioCorrupto > 0.15) {
+      status.innerHTML = '📷 Este PDF tiene codificación no estándar (HSBC). <a href="#" onclick="mostrarSubirImagenes();return false" style="color:var(--accent2);text-decoration:underline">Subir imágenes de los movimientos</a>';
+      event.target.value = '';
+      return;
+    }
+
     // Obtener gastos del período actual
     const clave = `${concilCuenta}|${concilPeriodo}`;
     const [, hasta] = concilPeriodo.split('|');
