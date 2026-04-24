@@ -43,12 +43,16 @@ export default {
 
     try {
       const body = await request.json();
-      const { pdfText, gastos, cuenta, periodo } = body;
+      const { pdfText, prompt: clientPrompt, gastos, cuenta, periodo, movimientosBanco } = body;
 
-      if (!pdfText) return json({ error: 'Falta el texto del PDF' }, 400);
-
-      // Construir prompt para Claude
-      const prompt = `Eres un asistente de conciliación bancaria experto. Analiza el siguiente texto extraído de un estado de cuenta bancario.
+      // Si el cliente envió un prompt ya construido (con movimientos parseados), lo usamos
+      // Si no, construimos el prompt aquí (compatibilidad hacia atrás)
+      let prompt;
+      if (clientPrompt) {
+        prompt = clientPrompt;
+      } else {
+        if (!pdfText) return json({ error: 'Falta el texto del PDF o el prompt' }, 400);
+        prompt = `Eres un asistente de conciliación bancaria experto. Analiza el siguiente texto extraído de un estado de cuenta bancario.
 
 ESTADO DE CUENTA (texto extraído del PDF):
 ${pdfText.slice(0, 8000)}
@@ -72,6 +76,7 @@ Criterios:
 - Usa la descripción del banco como pista adicional al motivo/comentario
 - Los IDs en "conciliados" y "no_conciliados_app" son los IDs de MIS GASTOS
 - "no_conciliados_banco" son cargos en el banco que NO encontré en mis gastos`;
+      }
 
       // Llamar a la API de Anthropic
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -101,6 +106,12 @@ Criterios:
       if (!match) return json({ error: 'No se pudo parsear respuesta de IA', raw: text }, 500);
 
       const resultado = JSON.parse(match[0]);
+      
+      // Si el cliente envió movimientos ya parseados, agregarlos al resultado
+      if (movimientosBanco && movimientosBanco.length > 0 && !resultado.movimientos_banco?.length) {
+        resultado.movimientos_banco = movimientosBanco;
+      }
+      
       return json(resultado);
 
     } catch (e) {
