@@ -325,8 +325,12 @@ function limpiarHistorialSync() {
   verHistorialSync();
 }
 
+let _uploadLock = false;
+
 async function uploadSnapshot() {
   if (!usingGithub()) return false;
+  if (_uploadLock) { console.log('[Sync] ya subiendo, ignorando'); return false; }
+  _uploadLock = true;
   try {
     const snap    = compressSnap(buildSnapshot());
     const content = btoa(unescape(encodeURIComponent(JSON.stringify(snap))));
@@ -369,6 +373,7 @@ async function uploadSnapshot() {
     }
     return false;
   } catch(e) { console.warn('upload error:', e.message); return false; }
+  finally { _uploadLock = false; }
 }
 
 async function downloadSnapshot() {
@@ -881,6 +886,7 @@ function saveLocal() {
     if (!syncBloqueado) {
       clearTimeout(window._autoSyncTimer);
       window._autoSyncTimer = setTimeout(async () => {
+        if (_uploadLock) return; // ya hay un sync en curso
         const [upGH, upSB] = await Promise.all([
           usingGithub() ? uploadSnapshot() : Promise.resolve(true),
           usingSupabase() ? uploadSupabase() : Promise.resolve(true)
@@ -902,7 +908,7 @@ function saveLocal() {
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'flex';
         }
-      }, 1500);
+      }, 3000);
     }
   } catch(e) {
     console.warn('saveLocal error:', e);
