@@ -2486,8 +2486,8 @@ async function procesarEstadoCuenta(event) {
     );
 
     // Parser específico por banco
-    const parsedForPrompt = parsearEstadoCuentaBanco(pdfText);
-    console.log('[Parser]', parsedForPrompt?.banco, 'movimientos:', parsedForPrompt?.movimientos?.length, 'texto sample:', pdfText.slice(0,200));
+    const parsedForPrompt = parsearEstadoCuentaBanco(pdfText, concilCuenta);
+    console.log('[Parser] cuenta:', concilCuenta, 'banco:', parsedForPrompt?.banco, 'movimientos:', parsedForPrompt?.movimientos?.length);
     if (parsedForPrompt && parsedForPrompt.movimientos.length > 0) {
       const nombresB = {
         amex: 'American Express', bbva: 'BBVA', banamex: 'Banamex',
@@ -2618,9 +2618,9 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
  * Detecta el banco a partir del texto extraído del PDF.
  * Retorna: 'amex' | 'bbva' | 'banamex' | 'banorte' | 'hsbc' | 'santander' | 'mercadolibre' | null
  */
-function detectarBanco(texto) {
+function detectarBanco(texto, cuentaExplicita) {
   // Fuente primaria: nombre de la cuenta seleccionada en el conciliador
-  const nombreCuenta = (concilCuenta || '').toLowerCase();
+  const nombreCuenta = (cuentaExplicita || concilCuenta || '').toLowerCase();
   const mapaCuentas = {
     'amex':        'amex',
     'bbva':        'bbva',
@@ -3080,8 +3080,8 @@ function parsearMercadoLibre(texto) {
  * Punto de entrada principal: detecta banco y llama al parser correcto.
  * Retorna array de { fecha, descripcion, monto } o null si no detectó banco.
  */
-function parsearEstadoCuentaBanco(texto) {
-  const banco = detectarBanco(texto);
+function parsearEstadoCuentaBanco(texto, cuentaExplicita) {
+  const banco = detectarBanco(texto, cuentaExplicita);
   if (!banco) return null;
   
   let movimientos = [];
