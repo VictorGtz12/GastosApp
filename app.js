@@ -2607,6 +2607,8 @@ function abrirNuevaDeuda() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  const pagadosEl = document.getElementById('deuda-pagados');
+  if (pagadosEl) pagadosEl.value = '0';
   const dCta = document.getElementById('deuda-cuenta');
   dCta.innerHTML = getCuentas().map(n=>`<option>${n}</option>`).join('');
   dCta.value = getCuentas()[0] || '';
@@ -2624,6 +2626,7 @@ function editarDeuda(i) {
   document.getElementById('deuda-cuota').value   = d.cuota;
   document.getElementById('deuda-meses').value   = d.mesesTotal;
   document.getElementById('deuda-dia').value     = d.diaCorte;
+  document.getElementById('deuda-pagados').value = d.mesesPagados || 0;
   openModal('modal-deuda');
 }
 
@@ -2640,10 +2643,11 @@ function guardarDeuda() {
   const cuota   = parseFloat(document.getElementById('deuda-cuota').value);
   const meses   = parseInt(document.getElementById('deuda-meses').value);
   const dia     = parseInt(document.getElementById('deuda-dia').value);
+  const pagados = parseInt(document.getElementById('deuda-pagados').value) || 0;
   if (!nombre||!total||!cuota||!meses||!dia) { showToast('Completa todos los campos'); return; }
-  const obj = { nombre, cuenta, total, cuota, mesesTotal: meses, mesesPagados: 0, diaCorte: dia, fechaInicio: today() };
+  if (pagados >= meses) { showToast('Los meses pagados no pueden ser mayores al total'); return; }
+  const obj = { nombre, cuenta, total, cuota, mesesTotal: meses, mesesPagados: pagados, diaCorte: dia, fechaInicio: today() };
   if (window._editDeudaIdx !== null) {
-    obj.mesesPagados = deudas[window._editDeudaIdx].mesesPagados;
     obj.id = deudas[window._editDeudaIdx].id;
     deudas[window._editDeudaIdx] = obj;
   } else {

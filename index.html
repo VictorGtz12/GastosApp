@@ -688,6 +688,7 @@
     <div class="field"><label>Número de meses <span class="req">*</span></label><input type="number" id="deuda-meses" placeholder="Ej. 12" min="1" max="60" inputmode="numeric" oninput="calcularCuotaDeuda()"></div>
     <div class="field"><label>Cuota mensual <span class="req">*</span></label><input type="number" id="deuda-cuota" placeholder="Se calcula automático" step="0.01" min="0" inputmode="decimal"></div>
     <div class="field"><label>Día de corte de la tarjeta <span class="req">*</span></label><input type="number" id="deuda-dia" placeholder="Ej. 21" min="1" max="31" inputmode="numeric"></div>
+    <div class="field"><label>Meses ya pagados <span style="font-size:10px;color:var(--text3)">(para compras anteriores)</span></label><input type="number" id="deuda-pagados" placeholder="0" min="0" max="60" inputmode="numeric" value="0"></div>
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-deuda')">Cancelar</button>
       <button class="mbtn prim" onclick="guardarDeuda()">Guardar</button>
