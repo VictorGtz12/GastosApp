@@ -2256,7 +2256,8 @@ async function guardarAjustes() {
   if (sbEl) sbEl.checked ? localStorage.setItem('supabaseEnabled','1') : localStorage.removeItem('supabaseEnabled');
   if (ghEl) ghEl.checked ? localStorage.setItem('githubDisabled','1') : localStorage.removeItem('githubDisabled');
 
-  const esNuevo = !localStorage.getItem('lastSync');
+  // Dispositivo nuevo O sin datos: forzar descarga remota
+  const esNuevo = !localStorage.getItem('lastSync') || gastos.length === 0;
   closeModal('modal-ajustes');
 
   if (esNuevo && (usingGithub() || usingSupabase())) {
