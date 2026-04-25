@@ -155,18 +155,23 @@ async function uploadSupabase() {
   } catch(e) { console.warn('Supabase upload error:', e.message); return false; }
 }
 
-async function downloadSupabase() {
+async function downloadSupabase(force = false) {
   if (!usingSupabase()) return false;
   try {
     const deviceId = getSupabaseDeviceId();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?device_id=eq.${deviceId}&select=data,updated_at`, {
+    // En dispositivo nuevo (force=true): buscar el snapshot mas reciente de CUALQUIER device
+    // En dispositivo conocido: buscar solo el propio
+    const url = force
+      ? `${SUPABASE_URL}/rest/v1/snapshots?select=data,updated_at&order=updated_at.desc&limit=1`
+      : `${SUPABASE_URL}/rest/v1/snapshots?device_id=eq.${deviceId}&select=data,updated_at`;
+    const res = await fetch(url, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const rows = await res.json();
     if (!rows.length) return false;
     const snap = decompressSnap(rows[0].data);
-    const ok = applySnapshot(snap);
+    const ok = applySnapshot(snap, { force });
     if (ok === 'skip') {
       console.log('[Sync Supabase] Local mas nuevo, subiendo...');
       await uploadSupabase();
@@ -376,9 +381,9 @@ async function uploadSnapshot() {
   finally { _uploadLock = false; }
 }
 
-async function downloadSnapshot() {
+async function downloadSnapshot(force = false) {
   if (!usingGithub()) return false;
-  if (syncBloqueado) return false;
+  if (syncBloqueado && !force) return false;
   try {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 15000);
@@ -398,7 +403,7 @@ async function downloadSnapshot() {
     // Hay cambios o no hay datos -> aplicar snapshot
     const decoded = decodeURIComponent(escape(atob(meta.content.replace(/\n/g,''))));
     const snap    = decompressSnap(JSON.parse(decoded));
-    const ok      = applySnapshot(snap);
+    const ok      = applySnapshot(snap, { force });
     if (ok) {
       saveLocal();
       localStorage.setItem('githubSha', remoteSha);
@@ -2261,8 +2266,9 @@ async function guardarAjustes() {
     showToast('🔄 Descargando datos de la nube...');
 
     let ok = false;
-    if (usingSupabase()) ok = await downloadSupabase();
-    if (!ok || ok === 'skip') ok = await downloadSnapshot();
+    // force=true: ignorar timestamps, bajar el mas reciente sin importar device_id
+    if (usingSupabase()) ok = await downloadSupabase(true);
+    if (!ok || ok === 'skip') ok = await downloadSnapshot(true);
 
     syncBloqueado = false;
     // saveLocal con sync bloqueado para no disparar upload
