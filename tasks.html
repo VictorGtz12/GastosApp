@@ -265,14 +265,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <div class="prio-chip" data-p="baja" onclick="setPrio('baja')">🟢 Baja</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px">
-        <div class="field" style="flex:1">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="field">
           <label>Fecha</label>
-          <input type="date" id="f-fecha">
+          <input type="date" id="f-fecha" style="width:100%;min-width:0">
         </div>
-        <div class="field" style="flex:1" id="field-hora">
+        <div class="field" id="field-hora">
           <label>Hora</label>
-          <input type="time" id="f-hora">
+          <input type="time" id="f-hora" style="width:100%;min-width:0">
         </div>
       </div>
       <div style="display:flex;gap:8px">

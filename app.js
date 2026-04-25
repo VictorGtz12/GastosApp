@@ -1747,12 +1747,20 @@ async function eliminarCuenta(id) {
 }
 
 // ── Histórico ─────────────────────────────────────────────────
+let histView = 'semana';
+
 function renderHistorico() {
   const el = document.getElementById('historico-list');
   if (!historico.length) {
     el.innerHTML = '<div class="empty">Sin historial aún.<br>Haz tu primer corte semanal.</div>';
     return;
   }
+  // Update button styles
+  const btnSem = document.getElementById('hv-semana');
+  const btnMes = document.getElementById('hv-mes');
+  if (btnSem) { btnSem.style.background = histView==='semana'?'var(--accent)':'transparent'; btnSem.style.color = histView==='semana'?'white':'var(--text2)'; }
+  if (btnMes) { btnMes.style.background = histView==='mes'?'var(--accent)':'transparent'; btnMes.style.color = histView==='mes'?'white':'var(--text2)'; }
+  if (histView === 'mes') { renderHistoricoMes(el); return; }
   const bySem = {};
   historico.forEach(g => { if(!bySem[g.semana])bySem[g.semana]=[]; bySem[g.semana].push(g); });
   el.innerHTML = Object.keys(bySem).sort((a,b)=>b.localeCompare(a)).map(sem => {
@@ -1760,13 +1768,16 @@ function renderHistorico() {
     const total = items.filter(g=>!g.ignorar).reduce((s,g)=>s+g.cantidad,0);
     return `<div class="semana-group">
       <div class="semana-header"><span>Semana ${sem}</span><span>${fmt(total)}</span></div>
-      ${items.map(g=>`<div class="hist-item" style="${g.ignorar?'opacity:.5':''}">
+      ${items.map(g=>`<div class="hist-item" style="${g.ignorar?'opacity:.5':''}" onclick="editarHistorico(${g.id})">
         <div style="font-size:17px">${getMotivoIcon(g.motivo)||'📋'}</div>
         <div class="hist-info">
           <div class="hist-motivo">${g.motivo}${g.externo!=='no'?` <span style="font-size:9px;color:${g.externo==='pagado'?'#0d9488':'#d97706'}">${g.externo==='pagado'?'✅':'📤'}</span>`:''}</div>
           <div class="hist-meta">${g.cuenta} · ${g.fecha}</div>
         </div>
-        <div class="hist-monto" style="${g.ignorar?'text-decoration:line-through':''}">${fmt(g.cantidad)}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="hist-monto" style="${g.ignorar?'text-decoration:line-through':''}">${fmt(g.cantidad)}</div>
+          <button onclick="event.stopPropagation();editarHistorico(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:4px 7px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>
+        </div>
       </div>`).join('')}
     </div>`;
   }).join('');
@@ -1823,6 +1834,7 @@ async function guardarGasto() {
   }
 
   const isEditing = !!editingId;
+  const isHistorico = window._editandoHistorico === true;
   const gasto = {
     id:           editingId || nextId++,
     fecha:        document.getElementById('f-fecha')?.value || today(),
@@ -1838,6 +1850,19 @@ async function guardarGasto() {
     desdeConciliador: window._desdeConciliador ? true : undefined,
   };
 
+  if (isEditing && isHistorico) {
+    window._editandoHistorico = false;
+    const idx = historico.findIndex(x=>x.id===editingId);
+    if (idx >= 0) historico[idx] = {...historico[idx], ...gasto, semana: historico[idx].semana};
+    const _volverConcil = !!window._desdeConciliador;
+    window._desdeConciliador = null;
+    syncBloqueado = false;
+    resetForm(); editingId=null;
+    saveLocal();
+    showTab('historico');
+    showToast('Gasto del historial actualizado ✓');
+    return;
+  }
   if (isEditing) {
     const idx = gastos.findIndex(x=>x.id===editingId);
     const gastoAnterior = idx >= 0 ? gastos[idx] : null;
@@ -1928,6 +1953,31 @@ function openDetail(id) {
       <button class="mbtn prim" onclick="editar(${g.id})">Editar</button>
     </div>`;
   openModal('modal-detail');
+}
+
+function editarHistorico(id) {
+  const g = historico.find(x => x.id === id);
+  if (!g) return;
+  // Mover temporalmente a gastos para editar
+  editingId = id;
+  // Llenar el formulario
+  showTab('nuevo');
+  setTimeout(() => {
+    document.getElementById('f-cantidad').value = g.cantidad;
+    document.getElementById('f-fecha').value    = g.fecha;
+    document.getElementById('f-cuenta').value   = g.cuenta;
+    // Motivo
+    const motSel = document.getElementById('f-motivo');
+    if (motSel) { motSel.value = g.motivo; renderComentarios(); }
+    const coSel = document.getElementById('f-comentarios-input');
+    if (coSel) coSel.value = g.comentarios || '';
+    setAb(g.abonado !== false);
+    setIg(!!g.ignorar);
+    setExt(g.externo || 'no');
+    // Marcar que es del historico
+    window._editandoHistorico = true;
+    showToast('Editando gasto del historial');
+  }, 150);
 }
 
 function editarDirecto(id) {
