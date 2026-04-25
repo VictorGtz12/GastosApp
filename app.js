@@ -1772,7 +1772,12 @@ function renderHistorico() {
         <div style="font-size:17px">${getMotivoIcon(g.motivo)||'📋'}</div>
         <div class="hist-info">
           <div class="hist-motivo">${g.motivo}${g.externo!=='no'?` <span style="font-size:9px;color:${g.externo==='pagado'?'#0d9488':'#d97706'}">${g.externo==='pagado'?'✅':'📤'}</span>`:''}</div>
-          <div class="hist-meta">${g.cuenta} · ${g.fecha}</div>
+          <div class="hist-meta">${g.cuenta} · ${g.fecha}${g.comentarios?' · '+g.comentarios:''}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">
+            ${g.abonado?'<span style="font-size:9px;background:rgba(34,211,165,.15);color:var(--green);padding:1px 5px;border-radius:6px;font-weight:600">✓ Abonado</span>':''}
+            ${g.ignorar?'<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">Ignorado</span>':''}
+            ${g.desdeConciliador?'<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);padding:1px 5px;border-radius:6px;font-weight:600">🏦 Banco</span>':''}
+          </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <div class="hist-monto" style="${g.ignorar?'text-decoration:line-through':''}">${fmt(g.cantidad)}</div>
@@ -1968,7 +1973,7 @@ function editarHistorico(id) {
     document.getElementById('f-cuenta').value   = g.cuenta;
     // Motivo
     const motSel = document.getElementById('f-motivo');
-    if (motSel) { motSel.value = g.motivo; renderComentarios(); }
+    if (motSel) { motSel.value = g.motivo; }
     const coSel = document.getElementById('f-comentarios-input');
     if (coSel) coSel.value = g.comentarios || '';
     setAb(g.abonado !== false);

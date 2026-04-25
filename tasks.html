@@ -265,15 +265,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <div class="prio-chip" data-p="baja" onclick="setPrio('baja')">🟢 Baja</div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div class="field">
-          <label>Fecha</label>
-          <input type="date" id="f-fecha" style="width:100%;min-width:0">
-        </div>
-        <div class="field" id="field-hora">
-          <label>Hora</label>
-          <input type="time" id="f-hora" style="width:100%;min-width:0">
-        </div>
+      <div class="field">
+        <label>Fecha</label>
+        <input type="date" id="f-fecha" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="field" id="field-hora" style="display:none">
+        <label>Hora</label>
+        <input type="time" id="f-hora" style="width:100%;box-sizing:border-box">
       </div>
       <div style="display:flex;gap:8px">
         <div class="field" style="flex:1">
@@ -862,6 +860,7 @@ function setTipo(tipo) {
   const esNota = tipo === 'nota';
   document.getElementById('fields-no-nota').style.display = esNota ? 'none' : 'block';
   document.getElementById('field-hora').style.display = tipo === 'recordatorio' ? 'block' : 'none';
+  if (tipo !== 'recordatorio') document.getElementById('f-hora').value = '';
   document.getElementById('lbl-titulo').textContent = esNota ? 'Título de la nota' : 'Título';
 }
 
