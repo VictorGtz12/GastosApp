@@ -364,7 +364,7 @@ function init() {
   document.getElementById('f-fecha').value = today();
   renderAll();
   checkNotificaciones();
-  syncDown();
+  syncDown(); // auto-force si no hay datos o no ha sincronizado
 }
 
 function today() { return new Date().toISOString().slice(0,10); }
@@ -951,7 +951,10 @@ function scheduleSync() {
   _syncTimer = setTimeout(syncUp, 2000);
 }
 
+let _taskSyncLock = false;
 async function syncUp() {
+  if (_taskSyncLock) return;
+  _taskSyncLock = true;
   const data = { tasks, proyectos, updatedAt: new Date().toISOString() };
   const content = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
   if (usingGithub()) {
@@ -977,24 +980,33 @@ async function syncUp() {
         body:JSON.stringify({device_id:deviceId,data:{tasks,proyectos},updated_at:new Date().toISOString()})});
     } catch(e){}
   }
+  localStorage.setItem('mr_lastSync', new Date().toISOString());
+  _taskSyncLock = false;
 }
 
-async function syncDown() {
+async function syncDown(force = false) {
+  // force=true: buscar el snapshot mas reciente sin importar device_id
+  // Condicion de forzar: sin lastSync o sin datos
+  const debeForce = force || !localStorage.getItem('mr_lastSync') || (tasks.length === 0 && proyectos.length === 0);
+
   if (localStorage.getItem('supabaseEnabled')==='1') {
     try {
       const deviceId = localStorage.getItem('supabaseDeviceId')||'tasks_device';
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/task_snapshots?device_id=eq.${deviceId}&select=data`,
-        {headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
+      const url = debeForce
+        ? `${SUPABASE_URL}/rest/v1/task_snapshots?select=data,updated_at&order=updated_at.desc&limit=1`
+        : `${SUPABASE_URL}/rest/v1/task_snapshots?device_id=eq.${deviceId}&select=data,updated_at`;
+      const res = await fetch(url, {headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
       if (res.ok) {
         const rows = await res.json();
         if (rows[0]?.data) {
-          const d=rows[0].data;
+          const d = rows[0].data;
           if(d.tasks) tasks=d.tasks;
           if(d.proyectos) proyectos=d.proyectos;
+          localStorage.setItem('mr_lastSync', new Date().toISOString());
           saveLocal(); renderAll(); return;
         }
       }
-    } catch(e){}
+    } catch(e){ console.warn('Supabase tasks download:', e); }
   }
   if (usingGithub()) {
     try {
@@ -1005,9 +1017,10 @@ async function syncDown() {
         const d=JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g,'')))));
         if(d.tasks) tasks=d.tasks;
         if(d.proyectos) proyectos=d.proyectos;
+        localStorage.setItem('mr_lastSync', new Date().toISOString());
         saveLocal(); renderAll();
       }
-    } catch(e){}
+    } catch(e){ console.warn('GitHub tasks download:', e); }
   }
 }
 
