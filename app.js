@@ -4648,4 +4648,35 @@ function ocultarBannerActualizar() {
     status.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
     status.style.color = 'var(--green)';
   }
+}function renderHistoricoMes(el) {
+  const byMes = {};
+  historico.forEach(g => {
+    const mes = (g.fecha || '').slice(0, 7);
+    if (!byMes[mes]) byMes[mes] = [];
+    byMes[mes].push(g);
+  });
+  const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  el.innerHTML = Object.keys(byMes).sort((a,b)=>b.localeCompare(a)).map(mes => {
+    const items = byMes[mes].filter(g => !g.ignorar);
+    const total = items.reduce((s,g)=>s+g.cantidad, 0);
+    const [y, m] = mes.split('-');
+    const label = (meses[parseInt(m)-1]||m) + ' ' + y;
+    const porCuenta = {};
+    items.forEach(g => { porCuenta[g.cuenta] = (porCuenta[g.cuenta]||0) + g.cantidad; });
+    const porMotivo = {};
+    items.forEach(g => { porMotivo[g.motivo] = (porMotivo[g.motivo]||0) + g.cantidad; });
+    const topMotivos = Object.entries(porMotivo).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    return `<div class="semana-group">
+      <div class="semana-header"><span>${label}</span><span>${fmt(total)}</span></div>
+      <div style="padding:8px 12px;display:flex;flex-direction:column;gap:4px">
+        ${Object.entries(porCuenta).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)">
+            <span>${c}</span><span>${fmt(v)}</span>
+          </div>`).join('')}
+        ${topMotivos.length ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+          ${topMotivos.map(([m,v])=>`<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3)"><span>${m}</span><span>${fmt(v)}</span></div>`).join('')}
+        </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
 }
