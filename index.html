@@ -400,6 +400,7 @@
         <div class="chip active" id="f-todos" onclick="setFilter('todos')">Todos</div>
       <div class="chip" id="f-pendiente" onclick="setFilter('pendiente')">Sin abonar</div>
       <div class="chip" id="f-abonado" onclick="setFilter('abonado')">Abonados</div>
+      <div class="chip" id="f-hist-pendiente" onclick="setFilter('hist-pendiente')">Historial pendiente</div>
       <div class="chip" id="f-ignorar" onclick="setFilter('ignorar')">Ignorados</div>
       <div class="chip" id="f-externo" onclick="setFilter('externo')">Externos</div>
       </div>
@@ -419,6 +420,13 @@
       </select>
       <button onclick="aplicarEdicionMasiva()" style="padding:5px 12px;border-radius:6px;border:none;background:var(--accent);color:white;font-size:11px;cursor:pointer;font-weight:600">Aplicar</button>
       <button onclick="toggleEdicionMasiva()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer">Cancelar</button>
+    </div>
+    <div id="gastos-hist-pend-alert" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.28);border-radius:10px;padding:9px 12px;margin-bottom:8px;align-items:center;justify-content:space-between;gap:8px">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--orange)">Historial con gastos sin abonar</div>
+        <div id="gastos-hist-pend-text" style="font-size:11px;color:var(--text2);margin-top:2px"></div>
+      </div>
+      <button onclick="setFilter('hist-pendiente')" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,159,67,.4);background:rgba(255,159,67,.14);color:var(--orange);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0">Ver</button>
     </div>
     <div id="gastos-list"></div>
   </div>
@@ -745,6 +753,14 @@
         <label for="ajuste-github-disabled" style="font-size:13px;cursor:pointer">Deshabilitar sync con GitHub</label>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:6px">ID dispositivo: <span id="supabase-device-id" style="font-family:monospace;font-size:10px"></span></div>
+    </div>
+    <div class="field">
+      <label>Modo viaje</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <input type="checkbox" id="ajuste-modo-viaje" style="width:16px;height:16px;cursor:pointer">
+        <label for="ajuste-modo-viaje" style="font-size:13px;cursor:pointer">Guardar offline y pausar sync automatico</label>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Ideal para roaming o redes inestables. Tus cambios se guardan en este telefono y se suben cuando sincronices manualmente.</div>
     </div>
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-ajustes')">Cancelar</button>

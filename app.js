@@ -120,6 +120,13 @@ const GITHUB_BRANCH = 'main';
 function getGithubToken() { return localStorage.getItem('githubToken') || ''; }
 function usingGithub()    { return !!getGithubToken() && localStorage.getItem('githubDisabled') !== '1'; }
 const usingSheets = usingGithub;
+function isTravelMode() { return localStorage.getItem('modoViaje') === '1'; }
+function hasPendingSync() {
+  const lm = new Date(localStorage.getItem('localModified') || 0).getTime();
+  const ls = new Date(localStorage.getItem('lastSync') || 0).getTime();
+  const lsb = new Date(localStorage.getItem('lastSyncSupabase') || 0).getTime();
+  return lm > Math.max(ls, lsb) + 3000;
+}
 
 // ── Supabase Sync ────────────────────────────────────────────
 const SUPABASE_URL  = 'https://iskzbiozycpvnkkverfg.supabase.co';
@@ -418,12 +425,21 @@ async function downloadSnapshot(force = false) {
 function saveData(opts = {}) { saveLocal(); }
 
 async function refreshData() {
+  if (!navigator.onLine) {
+    loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
+    showTab(tabActualGlobal);
+    mostrarEstadoSync(false);
+    showToast('Sin internet: cambios guardados offline');
+    return;
+  }
+
   // Supabase sync (download primero, luego upload)
   if (usingSupabase()) {
     await downloadSupabase();
     await uploadSupabase();
   }
   if (!usingGithub()) {
+    if (usingSupabase()) localStorage.setItem('localModified', localStorage.getItem('lastSyncSupabase') || new Date().toISOString());
     loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
     showTab(tabActualGlobal);
     showToast('Vista actualizada ✓'); return;
@@ -478,6 +494,13 @@ function mostrarEstadoSync(ok) {
   const el = document.getElementById('sync-status');
   if (!el) return;
   el.style.display = 'inline'; el.style.cursor = 'pointer'; el.onclick = () => refreshData();
+  if (isTravelMode()) {
+    el.textContent = hasPendingSync() ? 'Modo viaje · sin subir' : 'Modo viaje';
+    el.style.color = hasPendingSync() ? 'var(--orange)' : 'var(--accent2)';
+    const b = document.getElementById('banner-pendientes');
+    if (b) b.style.display = hasPendingSync() ? 'flex' : 'none';
+    return;
+  }
   if (!usingGithub()) { el.textContent = ''; el.style.display = 'none'; return; }
   const localMod = new Date(localStorage.getItem('localModified')||0).getTime();
   const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
@@ -804,24 +827,28 @@ async function guardarAlertasCorte() {
 function actualizarEstadoRed() {
   const el = document.getElementById('sync-status');
   if (!el) return;
+  if (isTravelMode()) {
+    mostrarEstadoSync(false);
+    return;
+  }
   if (!navigator.onLine) {
     el.style.display = 'inline'; el.style.cursor = 'default'; el.onclick = null;
-    el.textContent = '🛰️ Sin internet'; el.style.color = 'var(--red)';
+    el.textContent = 'Sin internet'; el.style.color = 'var(--red)';
   } else {
     mostrarEstadoSync(true);
   }
 }
-window.addEventListener('online',  () => { actualizarEstadoRed(); syncUp && syncUp(); });
+window.addEventListener('online',  () => { actualizarEstadoRed(); if (!isTravelMode() && typeof syncUp === 'function') syncUp(); });
 window.addEventListener('offline', () => actualizarEstadoRed());
 function ocultarAvisoDesactualizado() {}
 function mostrarAvisoDesactualizado() {}
 function verificarPendientes()        { mostrarEstadoSync(true); }
 
 function iniciarAutoSync() {
-  if (!usingGithub()) return;
+  if (!usingGithub() || isTravelMode()) return;
   // Respaldo: cada 2 min reintenta si quedó algo sin subir
   setInterval(async () => {
-    if (syncBloqueado) return;
+    if (syncBloqueado || isTravelMode() || !navigator.onLine) return;
     const lm = new Date(localStorage.getItem('localModified')||0).getTime();
     const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
     if (lm > ls + 3000) {
@@ -842,6 +869,20 @@ function mostrarEstadoSync(ok) {
   const last = localStorage.getItem('lastSync');
   if (!el) return;
   el.style.display = 'inline';
+  el.style.cursor = 'pointer';
+  el.onclick = () => refreshData();
+  if (isTravelMode()) {
+    el.textContent = hasPendingSync() ? 'Modo viaje · sin subir' : 'Modo viaje';
+    el.style.color = hasPendingSync() ? 'var(--orange)' : 'var(--accent2)';
+    return;
+  }
+  if (!navigator.onLine) {
+    el.textContent = 'Sin internet';
+    el.style.color = 'var(--red)';
+    el.style.cursor = 'default';
+    el.onclick = null;
+    return;
+  }
   if (ok && last) {
     const d = new Date(last);
     el.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
@@ -889,9 +930,13 @@ function saveLocal() {
     localStorage.setItem('localModified', ts);
     // Sincronizar automáticamente en segundo plano
     if (!syncBloqueado) {
+      if (isTravelMode() || !navigator.onLine) {
+        mostrarEstadoSync(false);
+        return;
+      }
       clearTimeout(window._autoSyncTimer);
       window._autoSyncTimer = setTimeout(async () => {
-        if (_uploadLock) return; // ya hay un sync en curso
+        if (_uploadLock || isTravelMode() || !navigator.onLine) return; // ya hay un sync en curso o la red no conviene
         // Dispositivo nuevo: no subir hasta que se descargue primero
         if (!localStorage.getItem('lastSync') && (usingGithub() || usingSupabase())) return;
         const [upGH, upSB] = await Promise.all([
@@ -1137,11 +1182,25 @@ function aplicarEdicionMasiva() {
 
 function renderGastos() {
   const q = (document.getElementById('search-in').value || '').toLowerCase();
+  const histPendientes = historico
+    .filter(g => !g.abonado && !g.ignorar && g.externo === 'no')
+    .map(g => ({...g, _esHistorico: true, _histPendiente: true}));
+  const histAlert = document.getElementById('gastos-hist-pend-alert');
+  const histAlertText = document.getElementById('gastos-hist-pend-text');
+  if (histAlert) {
+    histAlert.style.display = histPendientes.length && activeFilter !== 'hist-pendiente' ? 'flex' : 'none';
+    if (histAlertText) {
+      const totalHistPend = histPendientes.reduce((s, g) => s + Number(g.cantidad || 0), 0);
+      histAlertText.textContent = `${histPendientes.length} pendiente${histPendientes.length !== 1 ? 's' : ''} por ${fmt(totalHistPend)}`;
+    }
+  }
+
   let list = gastos.filter(g => {
     if (activeFilter === 'pendiente') return !g.abonado;
     if (activeFilter === 'abonado')   return g.abonado;
     if (activeFilter === 'ignorar')   return g.ignorar;
     if (activeFilter === 'externo')   return g.externo !== 'no';
+    if (activeFilter === 'hist-pendiente') return false;
     return true;
   }).filter(g => !q ||
     g.motivo.toLowerCase().includes(q) ||
@@ -1149,6 +1208,15 @@ function renderGastos() {
     (g.comentarios||'').toLowerCase().includes(q) ||
     String(g.cantidad).includes(q)
   );
+  if (activeFilter === 'pendiente' || activeFilter === 'hist-pendiente') {
+    const histMatches = histPendientes.filter(g => !q ||
+      g.motivo.toLowerCase().includes(q) ||
+      g.cuenta.toLowerCase().includes(q) ||
+      (g.comentarios||'').toLowerCase().includes(q) ||
+      String(g.cantidad).includes(q)
+    );
+    list = [...list, ...histMatches];
+  }
   // Búsqueda global: incluir histórico cuando hay texto
   if (q && activeFilter === 'todos') {
     const enHist = historico.filter(g =>
@@ -1164,26 +1232,29 @@ function renderGastos() {
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos registrados</div>'; return; }
   el.innerHTML = list.map(g => {
     const iE = g.externo === 'externo', iP = g.externo === 'pagado';
-    const seleccionado = modoMasivo && seleccionMasiva.has(g.id);
-    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" style="${g.ignorar?'opacity:.55':''}${seleccionado?';border-color:var(--accent);background:rgba(108,99,255,.08)':''}" onclick="${modoMasivo?`toggleSeleccionMasiva(${g.id})`:''}">
-      ${modoMasivo
+    const historicoBloqueaMasivo = modoMasivo && g._esHistorico;
+    const seleccionado = modoMasivo && !g._esHistorico && seleccionMasiva.has(g.id);
+    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" style="${g.ignorar?'opacity:.55':''}${seleccionado?';border-color:var(--accent);background:rgba(108,99,255,.08)':''}" onclick="${modoMasivo&&!g._esHistorico?`toggleSeleccionMasiva(${g.id})`:''}">
+      ${modoMasivo && !g._esHistorico
         ? `<div style="width:22px;height:22px;border-radius:6px;border:2px solid ${seleccionado?'var(--accent)':'var(--border2)'};background:${seleccionado?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${seleccionado?'<span style="color:white;font-size:12px">✓</span>':''}</div>`
         : `<div class="gasto-icon" onclick="openDetail(${g.id})">${getMotivoIcon(g.motivo)||'📋'}</div>`
       }
-      <div class="gasto-info" onclick="${modoMasivo?`toggleSeleccionMasiva(${g.id})`:`openDetail(${g.id})`}">
-        <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}</div>
+      <div class="gasto-info" onclick="${modoMasivo&&!g._esHistorico?`toggleSeleccionMasiva(${g.id})`:`openDetail(${g.id})`}">
+        <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}${g._histPendiente?' <span style="font-size:9px;background:rgba(255,159,67,.16);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">sin abonar</span>':''}</div>
         <div class="gasto-meta">${g.cuenta}${g.comentarios?' · '+g.comentarios:''} · ${g.fecha}</div>
         <div class="badges">
           ${g.ignorar ? '<span class="badge ignorar">🚫 Ignorado</span>' : ''}
           ${!g.ignorar && iE ? '<span class="badge ext">📤 Externo</span>' : ''}
           ${!g.ignorar && iP ? '<span class="badge ext-paid">✅ Cobrado</span>' : ''}
           ${!iE && !iP ? `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>` : ''}
+          ${historicoBloqueaMasivo ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">Edita en historial</span>' : ''}
           ${gastoPendienteSync(g) ? '<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);border:1px solid rgba(255,159,67,.3);padding:1px 6px;border-radius:6px;font-weight:600">⬆️ Sin sync</span>' : ''}
           ${g.desdeConciliador ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Banco</span>' : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <div class="gasto-monto" onclick="openDetail(${g.id})" style="${g.ignorar||iP?'text-decoration:line-through;color:var(--text2)':iE?'color:var(--orange)':''}">${fmt(g.cantidad)}</div>
+        ${g._esHistorico&&!modoMasivo?`<button onclick="editarHistorico(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
         ${!g._esHistorico&&!modoMasivo?`<button onclick="editarDirecto(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
       </div>
     </div>`;
@@ -1191,8 +1262,21 @@ function renderGastos() {
 }
 
 function setFilter(f) {
+  if (f === 'hist-pendiente' && modoMasivo) {
+    modoMasivo = false;
+    seleccionMasiva.clear();
+    const toolbar = document.getElementById('toolbar-masiva');
+    const btn = document.getElementById('btn-edicion-masiva');
+    if (toolbar) toolbar.style.display = 'none';
+    if (btn) {
+      btn.textContent = '✏️ Editar';
+      btn.style.borderColor = 'var(--border2)';
+      btn.style.color = 'var(--text2)';
+    }
+    actualizarConteoMasiva();
+  }
   activeFilter = f;
-  ['todos','pendiente','abonado','ignorar','externo'].forEach(x =>
+  ['todos','pendiente','abonado','hist-pendiente','ignorar','externo'].forEach(x =>
     document.getElementById('f-'+x).classList.toggle('active', x===f)
   );
   renderGastos();
@@ -1931,7 +2015,9 @@ function cancelForm() {
 
 // ── Detalle / Editar / Eliminar ───────────────────────────────
 function openDetail(id) {
-  const g = gastos.find(x=>x.id===id); if(!g) return;
+  const g = gastos.find(x=>x.id===id) || historico.find(x=>x.id===id);
+  if(!g) return;
+  const esHistorico = !gastos.some(x => x.id === id);
   const iE=g.externo==='externo', iP=g.externo==='pagado';
   document.getElementById('modal-detail-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
@@ -1945,17 +2031,18 @@ function openDetail(id) {
     ${g.comentarios?`<div style="font-size:12px;color:var(--text2);margin-bottom:9px">📝 ${g.comentarios}</div>`:''}
     ${g.ahorroDesc?`<div style="font-size:12px;color:var(--purple);margin-bottom:9px">🐷 Descontado de: ${g.ahorroDesc}</div>`:''}
     <div class="badges" style="margin-bottom:12px">
+      ${esHistorico?'<span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px;font-weight:600">historial</span>':''}
       ${g.ignorar?'<span class="badge ignorar">🚫 Ignorado</span>':''}
       ${!g.ignorar && iE?'<span class="badge ext">📤 Externo pendiente de cobro</span>':''}
       ${!g.ignorar && iP?'<span class="badge ext-paid">✅ Externo cobrado</span>':''}
       ${!iE && !iP?`<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`:''}
     </div>
-    ${iE?`<button class="btn-marcar-pagado" onclick="marcarExterno(${g.id},'pagado');closeModal('modal-detail');renderGastos()">✅ Marcar como cobrado</button>`:''}
-    ${iP?`<button class="btn-marcar-pend" onclick="marcarExterno(${g.id},'externo');closeModal('modal-detail');renderGastos()">↩ Marcar como pendiente</button>`:''}
+    ${!esHistorico&&iE?`<button class="btn-marcar-pagado" onclick="marcarExterno(${g.id},'pagado');closeModal('modal-detail');renderGastos()">✅ Marcar como cobrado</button>`:''}
+    ${!esHistorico&&iP?`<button class="btn-marcar-pend" onclick="marcarExterno(${g.id},'externo');closeModal('modal-detail');renderGastos()">↩ Marcar como pendiente</button>`:''}
     <div class="modal-actions" style="margin-top:${iE||iP?'10px':'0'}">
       <button class="mbtn sec" onclick="closeModal('modal-detail')">Cerrar</button>
-      <button class="mbtn danger" onclick="eliminar(${g.id})">Eliminar</button>
-      <button class="mbtn prim" onclick="editar(${g.id})">Editar</button>
+      ${!esHistorico?`<button class="mbtn danger" onclick="eliminar(${g.id})">Eliminar</button>`:''}
+      <button class="mbtn prim" onclick="${esHistorico?`closeModal('modal-detail');editarHistorico(${g.id})`:`editar(${g.id})`}">Editar</button>
     </div>`;
   openModal('modal-detail');
 }
@@ -2283,9 +2370,11 @@ function abrirAjustes() {
   // Supabase
   const sbEnabled = document.getElementById('ajuste-supabase-enabled');
   const ghDisabled = document.getElementById('ajuste-github-disabled');
+  const modoViaje = document.getElementById('ajuste-modo-viaje');
   const deviceIdEl = document.getElementById('supabase-device-id');
   if (sbEnabled) sbEnabled.checked = usingSupabase();
   if (ghDisabled) ghDisabled.checked = localStorage.getItem('githubDisabled') === '1';
+  if (modoViaje) modoViaje.checked = isTravelMode();
   if (deviceIdEl) deviceIdEl.textContent = getSupabaseDeviceId();
   openModal('modal-ajustes');
 }
@@ -2308,14 +2397,23 @@ async function guardarAjustes() {
 
   const sbEl = document.getElementById('ajuste-supabase-enabled');
   const ghEl = document.getElementById('ajuste-github-disabled');
+  const travelEl = document.getElementById('ajuste-modo-viaje');
   if (sbEl) sbEl.checked ? localStorage.setItem('supabaseEnabled','1') : localStorage.removeItem('supabaseEnabled');
   if (ghEl) ghEl.checked ? localStorage.setItem('githubDisabled','1') : localStorage.removeItem('githubDisabled');
+  if (travelEl) travelEl.checked ? localStorage.setItem('modoViaje','1') : localStorage.removeItem('modoViaje');
 
   // Dispositivo nuevo O sin datos: forzar descarga remota
   const esNuevo = !localStorage.getItem('lastSync') || gastos.length === 0;
   closeModal('modal-ajustes');
 
-  if (esNuevo && (usingGithub() || usingSupabase())) {
+  if (isTravelMode()) {
+    syncBloqueado = true;
+    saveLocal();
+    syncBloqueado = false;
+    renderMenu();
+    mostrarEstadoSync(false);
+    showToast('Modo viaje activo: sync automatico pausado');
+  } else if (esNuevo && (usingGithub() || usingSupabase())) {
     // Dispositivo nuevo: descargar PRIMERO, luego guardar local
     syncBloqueado = true;
     clearTimeout(window._autoSyncTimer);
@@ -4593,7 +4691,9 @@ window.addEventListener('DOMContentLoaded', () => {
   iniciarAutoSync();
   mostrarBannerActualizar();
   // Sync con GitHub en segundo plano
-  if (usingGithub()) {
+  if (isTravelMode()) {
+    mostrarEstadoSync(false);
+  } else if (usingGithub() && navigator.onLine) {
     downloadSnapshot().then(async ok => {
       // Re-renderizar siempre con los datos más frescos
       actualizarSelectCuentas();
@@ -4624,7 +4724,10 @@ function mostrarBannerActualizar() {
   const status = document.getElementById('sync-status');
   if (status) {
     status.style.display = 'inline';
-    if (usingGithub()) {
+    if (isTravelMode()) {
+      status.textContent = hasPendingSync() ? 'Modo viaje · sin subir' : 'Modo viaje';
+      status.style.color = hasPendingSync() ? 'var(--orange)' : 'var(--accent2)';
+    } else if (usingGithub()) {
       status.textContent = '🔄 Sync...';
       status.style.color = 'var(--text3)';
     } else {
