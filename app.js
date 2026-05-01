@@ -2520,9 +2520,10 @@ function guardarRecurrente() {
   const nombre   = document.getElementById('rec-nombre').value.trim();
   const cuenta   = document.getElementById('rec-cuenta').value;
   const motivo   = document.getElementById('rec-motivo').value;
-  const cantidad = parseFloat(document.getElementById('rec-cantidad').value);
+  const cantidadRaw = document.getElementById('rec-cantidad').value;
+  const cantidad = cantidadRaw === '' ? 0 : parseFloat(cantidadRaw);
   const dia      = parseInt(document.getElementById('rec-dia').value);
-  if (!nombre || !cantidad || !dia || dia<1 || dia>31) { showToast('Completa todos los campos'); return; }
+  if (!nombre || !dia || dia<1 || dia>31 || Number.isNaN(cantidad) || cantidad<0) { showToast('Completa todos los campos'); return; }
   const obj = { id: 0, nombre, cuenta, motivo, cantidad, dia, activo: true };
   if (window._editRecIdx !== null) {
     obj.id = recurrentes[window._editRecIdx].id;
