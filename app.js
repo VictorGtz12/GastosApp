@@ -349,10 +349,13 @@ function limpiarHistorialSync() {
 }
 
 let _uploadLock = false;
+let _lastUploadError = '';
 
 async function uploadSnapshot() {
-  if (!usingGithub()) return false;
-  if (_uploadLock) { console.log('[Sync] ya subiendo, ignorando'); return false; }
+  _lastUploadError = '';
+  if (!usingGithub()) { _lastUploadError = 'github-disabled'; return false; }
+  if (!navigator.onLine) { _lastUploadError = 'offline'; return false; }
+  if (_uploadLock) { console.log('[Sync] ya subiendo, ignorando'); _lastUploadError = 'locked'; return false; }
   _uploadLock = true;
   try {
     const snap    = compressSnap(buildSnapshot());
@@ -395,8 +398,17 @@ async function uploadSnapshot() {
       throw new Error(e.message || `HTTP ${res.status}`);
     }
     return false;
-  } catch(e) { console.warn('upload error:', e.message); return false; }
+  } catch(e) { _lastUploadError = e.message || 'unknown'; console.warn('upload error:', e.message); return false; }
   finally { _uploadLock = false; }
+}
+
+function mensajeErrorUpload() {
+  if (_lastUploadError === 'locked') return 'Ya hay una sincronización en curso';
+  if (_lastUploadError === 'offline' || !navigator.onLine) return 'Sin internet: cambios guardados offline';
+  if (_lastUploadError === 'github-disabled') return 'Sync con GitHub desactivado';
+  if (/401|403|Bad credentials|Resource not accessible/i.test(_lastUploadError)) return 'Token de GitHub inválido o sin permisos';
+  if (/Failed to fetch|NetworkError|abort|timeout/i.test(_lastUploadError)) return 'No se pudo conectar con GitHub';
+  return 'No se pudo subir. Intenta de nuevo con buena conexión';
 }
 
 async function downloadSnapshot(force = false) {
@@ -461,7 +473,7 @@ async function refreshData() {
   mostrarBannerActualizar();
   showToast('Sincronizando...');
   const up = await uploadSnapshot();
-  if (!up) { showToast('Error al subir — revisa tu token'); mostrarEstadoSync(false); return; }
+  if (!up) { showToast(mensajeErrorUpload()); mostrarEstadoSync(false); return; }
   // NO descargar después de subir — ya tenemos los datos correctos en local.
   // Solo actualizamos los timestamps para que coincidan.
   const ts = new Date().toISOString();
@@ -496,7 +508,7 @@ function guardarGithubToken() {
       // GitHub vacío o error — subir datos locales
       const up = await uploadSnapshot();
       mostrarEstadoSync(up);
-      showToast(up ? 'Datos subidos a GitHub ✓' : 'Verifica que el token sea correcto');
+      showToast(up ? 'Datos subidos a GitHub ✓' : mensajeErrorUpload());
     }
   }, 300);
 }
