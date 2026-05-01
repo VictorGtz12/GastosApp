@@ -1439,8 +1439,8 @@ function renderCortes() {
       new Date(hasta + 'T23:59:59')
     ) : [];
     const total  = gp.reduce((s,g) => s+g.cantidad, 0);
-    const sinAbonar = gp.filter(g => !g.abonado && !g.ignorar && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
-    const histPend = historico.filter(g => g.cuenta === cuenta && !g.abonado && !g.ignorar && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
+    const sinAbonar = gp.filter(g => !g.abonado && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
+    const histPend = historico.filter(g => g.cuenta === cuenta && !g.abonado && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
     const externosPend = all.filter(g => g.cuenta === cuenta && g.externo === 'externo').reduce((s,g) => s+g.cantidad, 0);
     const diasR  = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
     const vencida = diasR < 0;
