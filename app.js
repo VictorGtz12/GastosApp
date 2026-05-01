@@ -40,6 +40,16 @@ let catalogoComentarios = [
   'Walmart','Oxxo','Hot Dogs','HBO MAX','Apple One','Boneless',
   '260','Costco','Gas','Luz','Agua','Internet'
 ];
+let reglasAutomaticas = [
+  { texto:'Amazon', cuenta:'', motivo:'Compra en Linea' },
+  { texto:'Mercado Libre', cuenta:'', motivo:'Compra en Linea' },
+  { texto:'Caffenio', cuenta:'', motivo:'Comida' },
+  { texto:'Starbucks', cuenta:'', motivo:'Comida' },
+  { texto:'Costco', cuenta:'', motivo:'Mandado' },
+  { texto:'Walmart', cuenta:'', motivo:'Mandado' },
+  { texto:'Apple', cuenta:'', motivo:'Servicios' },
+  { texto:'HBO', cuenta:'', motivo:'Servicios' }
+];
 
 // Helpers que reemplazan las constantes estáticas anteriores
 function getCuentas()      { return catalogoCuentas.map(c => c.nombre); }
@@ -240,7 +250,7 @@ function buildSnapshot() {
   return {
     version:2, savedAt:new Date().toISOString(),
     gastos, historico, nextId, cuentasAhorro, nextAhorroId,
-    excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios,
+    excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
     recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
   };
 }
@@ -277,6 +287,7 @@ function applySnapshot(snap, opts = {}) {
   if (snap.catalogoCuentas)     catalogoCuentas     = snap.catalogoCuentas;
   if (snap.catalogoMotivos)     catalogoMotivos     = snap.catalogoMotivos;
   if (snap.catalogoComentarios) catalogoComentarios = snap.catalogoComentarios.map(c=>typeof c==='string'?c:(c.nombre||''));
+  if (snap.reglasAutomaticas)   reglasAutomaticas   = snap.reglasAutomaticas;
   if (snap.recurrentes)         recurrentes         = snap.recurrentes;
   if (snap.nextRecId)           nextRecId           = snap.nextRecId;
   if (snap.deudas)              deudas              = snap.deudas;
@@ -921,7 +932,7 @@ function saveLocal() {
     const data = {
       gastos, historico, nextId, nextAhorroId,
       cuentasAhorro, excepciones,
-      catalogoCuentas, catalogoMotivos, catalogoComentarios,
+      catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
       presupuesto: PRESUPUESTO,
       recurrentes, nextRecId, deudas, nextDeudaId, nextMovId
     };
@@ -985,6 +996,7 @@ function loadFromLocal() {
       if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
       if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
       if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
+      if (data.reglasAutomaticas)   reglasAutomaticas   = data.reglasAutomaticas;
       if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
       if (data.presupuesto)         PRESUPUESTO         = data.presupuesto;
       if (data.recurrentes)         recurrentes         = data.recurrentes  || [];
@@ -1019,6 +1031,9 @@ function normGasto(x) {
     abonado:      x.abonado === true || x.Abonado === 'SI' || x.abonado === 'true',
     ignorar:      x.ignorar === true || x.Ignorar === 'SI' || x.ignorar === 'true',
     externo:      x.externo || x.Externo || 'no',
+    reembolsoPersona: x.reembolsoPersona || x.ReembolsoPersona || '',
+    reembolsoFecha:   x.reembolsoFecha || x.ReembolsoFecha || '',
+    reembolsoNota:    x.reembolsoNota || x.ReembolsoNota || '',
     semana:       x.semana || x.Semana || getWeek(new Date()),
     ahorroDesc:   x.ahorroDesc || x.AhorroDesc || '',
     periodoCorte: x.periodoCorte || null,
@@ -1298,6 +1313,7 @@ function renderExternos() {
   if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos externos en este filtro</div>'; return; }
   el.innerHTML = list.map(g => {
     const iP = g.externo === 'pagado';
+    const promesaVencida = !iP && g.reembolsoFecha && new Date(g.reembolsoFecha + 'T23:59:59') < new Date();
     return `<div class="ext-item ${iP?'pagado':''}">
       <div class="ext-item-header">
         <span class="ext-nombre">${getMotivoIcon(g.motivo)||'📋'} ${g.motivo}
@@ -1308,6 +1324,12 @@ function renderExternos() {
       <div class="ext-meta">${g.fecha}${g.comentarios?' · '+g.comentarios:''} ·
         ${iP?'<strong style="color:var(--green)">Cobrado</strong>':'<strong style="color:var(--orange)">Pendiente de cobro</strong>'}
       </div>
+      ${(g.reembolsoPersona || g.reembolsoFecha || g.reembolsoNota) ? `
+        <div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.18);font-size:11px;color:var(--text2);line-height:1.45">
+          ${g.reembolsoPersona ? `<div><strong style="color:var(--text)">Persona:</strong> ${g.reembolsoPersona}</div>` : ''}
+          ${g.reembolsoFecha ? `<div><strong style="color:${promesaVencida?'var(--orange)':'var(--text)'}">Promesa:</strong> ${g.reembolsoFecha}${promesaVencida?' · vencida':''}</div>` : ''}
+          ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${g.reembolsoNota}</div>` : ''}
+        </div>` : ''}
       ${!iP
         ? `<button class="btn-marcar-pagado" onclick="marcarExterno(${g.id},'pagado')">✅ Marcar como cobrado</button>`
         : `<button class="btn-marcar-pend" onclick="marcarExterno(${g.id},'externo')">↩ Marcar como pendiente</button>`}
@@ -1407,7 +1429,7 @@ function renderCortes() {
   const hoy = new Date();
   const cfg = getCortesConfig();
 
-  document.getElementById('cortes-list').innerHTML = Object.entries(cfg).map(([cuenta, c]) => {
+  const estados = Object.entries(cfg).map(([cuenta, c]) => {
     const key    = getPeriodoActualKey(cuenta);
     const hasta  = key ? key.split('|')[1] : null;
     const desde  = key ? periodoDesde(key) : null;
@@ -1417,8 +1439,30 @@ function renderCortes() {
       new Date(hasta + 'T23:59:59')
     ) : [];
     const total  = gp.reduce((s,g) => s+g.cantidad, 0);
+    const sinAbonar = gp.filter(g => !g.abonado && !g.ignorar && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
+    const histPend = historico.filter(g => g.cuenta === cuenta && !g.abonado && !g.ignorar && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
+    const externosPend = all.filter(g => g.cuenta === cuenta && g.externo === 'externo').reduce((s,g) => s+g.cantidad, 0);
     const diasR  = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
     const vencida = diasR < 0;
+    return { cuenta, c, key, hasta, desde, gp, total, sinAbonar, histPend, externosPend, diasR, vencida };
+  });
+
+  const totalPeriodo = estados.reduce((s,e) => s + e.total, 0);
+  const totalSinAbonar = estados.reduce((s,e) => s + e.sinAbonar, 0);
+  const totalHistPend = estados.reduce((s,e) => s + e.histPend, 0);
+  const totalExternos = estados.reduce((s,e) => s + e.externosPend, 0);
+
+  const resumen = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Estado de tarjeta</div>
+    <div class="stat-grid" style="margin-bottom:0">
+      <div class="stat-card"><div class="stat-label">Periodo</div><div class="stat-val red">${fmt(totalPeriodo)}</div></div>
+      <div class="stat-card"><div class="stat-label">Sin abonar</div><div class="stat-val orange">${fmt(totalSinAbonar)}</div></div>
+      <div class="stat-card"><div class="stat-label">Hist. pendiente</div><div class="stat-val orange">${fmt(totalHistPend)}</div></div>
+      <div class="stat-card"><div class="stat-label">Por cobrar</div><div class="stat-val green">${fmt(totalExternos)}</div></div>
+    </div>
+  </div>`;
+
+  const cards = estados.map(({cuenta, c, desde, hasta, total, sinAbonar, histPend, externosPend, diasR, vencida}) => {
     return `<div class="tarjeta-card" onclick="openCorteTarjeta('${cuenta}')" style="${vencida?'border-color:var(--orange)':''}">
       <div class="tarjeta-header">
         <span class="tarjeta-nombre"><span class="dot" style="background:${c.color}"></span>${cuenta}</span>
@@ -1430,8 +1474,15 @@ function renderCortes() {
           ${vencida?'¡Vencido!':diasR===0?'Hoy':diasR+' días'}
         </strong>
       </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        ${sinAbonar ? `<span style="font-size:10px;background:rgba(255,159,67,.14);color:var(--orange);padding:2px 6px;border-radius:6px">Sin abonar ${fmt(sinAbonar)}</span>` : ''}
+        ${histPend ? `<span style="font-size:10px;background:rgba(255,159,67,.14);color:var(--orange);padding:2px 6px;border-radius:6px">Hist. ${fmt(histPend)}</span>` : ''}
+        ${externosPend ? `<span style="font-size:10px;background:rgba(34,211,165,.12);color:var(--green);padding:2px 6px;border-radius:6px">Por cobrar ${fmt(externosPend)}</span>` : ''}
+      </div>
     </div>`;
   }).join('');
+
+  document.getElementById('cortes-list').innerHTML = resumen + cards;
 }
 
 function openCorteTarjeta(cuenta) {
@@ -1888,6 +1939,8 @@ function setExt(v){
   document.getElementById('ext-no').className    ='tog'+(v==='no'?     ' sel-no':'');
   document.getElementById('ext-ext').className   ='tog'+(v==='externo'?' sel-ext':'');
   document.getElementById('ext-pagado').className='tog'+(v==='pagado'? ' sel-si':'');
+  const wrap = document.getElementById('reembolso-wrap');
+  if (wrap) wrap.style.display = v !== 'no' ? 'block' : 'none';
 }
 function setDescAhorro(v){
   descontarAhorro = v;
@@ -1895,6 +1948,15 @@ function setDescAhorro(v){
   document.getElementById('desc-si').className ='tog'+(v?' sel-si':'');
   document.getElementById('ahorro-selector-wrap').style.display = v ? 'block' : 'none';
   if (v) refreshAhorroSelector();
+}
+
+function llenarReembolsoForm(g) {
+  const rp = document.getElementById('f-reembolso-persona');
+  const rf = document.getElementById('f-reembolso-fecha');
+  const rn = document.getElementById('f-reembolso-nota');
+  if (rp) rp.value = g?.reembolsoPersona || '';
+  if (rf) rf.value = g?.reembolsoFecha || '';
+  if (rn) rn.value = g?.reembolsoNota || '';
 }
 
 // Actualiza selector de cuentas de ahorro en el form
@@ -1906,8 +1968,38 @@ function refreshAhorroSelector() {
   ).join('');
 }
 
+function normalizarTextoRegla(txt) {
+  return String(txt || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+function aplicarReglaAutomatica(origen = 'comentario') {
+  if (editingId) return;
+  const input = document.getElementById('f-comentarios-input');
+  const texto = normalizarTextoRegla(input?.value || '');
+  if (!texto) return;
+  const regla = reglasAutomaticas.find(r => {
+    const needle = normalizarTextoRegla(r.texto);
+    return needle && texto.includes(needle);
+  });
+  if (!regla) return;
+
+  const cuentaSel = document.getElementById('f-cuenta');
+  const motivoSel = document.getElementById('f-motivo');
+  let cambios = [];
+  if (regla.cuenta && cuentaSel && getCuentas().includes(regla.cuenta)) {
+    cuentaSel.value = regla.cuenta;
+    cambios.push(regla.cuenta);
+  }
+  if (regla.motivo && motivoSel && catalogoMotivos.includes(regla.motivo)) {
+    motivoSel.value = regla.motivo;
+    cambios.push(regla.motivo);
+  }
+  if (cambios.length && origen !== 'silencioso') showToast('Regla aplicada: ' + cambios.join(' · '));
+}
+
 async function guardarGasto() {
   syncBloqueado = true; // bloquear sync durante guardado
+  aplicarReglaAutomatica('silencioso');
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
   if (!cantidad||cantidad<=0) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
 
@@ -1932,6 +2024,9 @@ async function guardarGasto() {
     cantidad,
     comentarios:  document.getElementById('f-comentarios-input').value,
     abonado, ignorar, externo,
+    reembolsoPersona: externo !== 'no' ? (document.getElementById('f-reembolso-persona')?.value || '').trim() : '',
+    reembolsoFecha:   externo !== 'no' ? (document.getElementById('f-reembolso-fecha')?.value || '') : '',
+    reembolsoNota:    externo !== 'no' ? (document.getElementById('f-reembolso-nota')?.value || '').trim() : '',
     semana:       getWeek(new Date()),
     ahorroDesc:   descontarAhorro ? ahorroSelNombre : '',
     updatedAt:    new Date().toISOString(),
@@ -2003,6 +2098,9 @@ async function guardarGasto() {
 function resetForm() {
   document.getElementById('f-cantidad').value    = '';
   document.getElementById('f-comentarios-input').value = ''; document.getElementById('comentario-dropdown').style.display='none';
+  const rp = document.getElementById('f-reembolso-persona'); if (rp) rp.value = '';
+  const rf = document.getElementById('f-reembolso-fecha'); if (rf) rf.value = '';
+  const rn = document.getElementById('f-reembolso-nota'); if (rn) rn.value = '';
   document.getElementById('f-cuenta').selectedIndex = 0;
   document.getElementById('f-motivo').selectedIndex  = 0;
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = today();
@@ -2030,6 +2128,12 @@ function openDetail(id) {
     </div>
     ${g.comentarios?`<div style="font-size:12px;color:var(--text2);margin-bottom:9px">📝 ${g.comentarios}</div>`:''}
     ${g.ahorroDesc?`<div style="font-size:12px;color:var(--purple);margin-bottom:9px">🐷 Descontado de: ${g.ahorroDesc}</div>`:''}
+    ${(g.reembolsoPersona || g.reembolsoFecha || g.reembolsoNota) ? `
+      <div style="font-size:12px;color:var(--text2);margin-bottom:9px;padding:8px 10px;border-radius:8px;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.18)">
+        ${g.reembolsoPersona ? `<div><strong style="color:var(--text)">Reembolso:</strong> ${g.reembolsoPersona}</div>` : ''}
+        ${g.reembolsoFecha ? `<div><strong style="color:var(--text)">Fecha prometida:</strong> ${g.reembolsoFecha}</div>` : ''}
+        ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${g.reembolsoNota}</div>` : ''}
+      </div>` : ''}
     <div class="badges" style="margin-bottom:12px">
       ${esHistorico?'<span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px;font-weight:600">historial</span>':''}
       ${g.ignorar?'<span class="badge ignorar">🚫 Ignorado</span>':''}
@@ -2066,6 +2170,7 @@ function editarHistorico(id) {
     setAb(g.abonado !== false);
     setIg(!!g.ignorar);
     setExt(g.externo || 'no');
+    llenarReembolsoForm(g);
     // Marcar que es del historico
     window._editandoHistorico = true;
     showToast('Editando gasto del historial');
@@ -2080,7 +2185,7 @@ function editarDirecto(id) {
   document.getElementById('f-cantidad').value           = g.cantidad;
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
-  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no');
+  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); llenarReembolsoForm(g);
   // Restaurar estado de descuento de ahorro
   if (g.ahorroDesc) {
     setDescAhorro(true);
@@ -2105,7 +2210,7 @@ function editar(id) {
   document.getElementById('f-cantidad').value           = g.cantidad;
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
-  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no');
+  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); llenarReembolsoForm(g);
   // Restaurar estado de descuento de ahorro
   if (g.ahorroDesc) {
     setDescAhorro(true);
@@ -2188,10 +2293,10 @@ async function hacerCorte() {
 function exportarExcel() {
   if (typeof XLSX==='undefined') { showToast('Cargando...'); return; }
   const wb = XLSX.utils.book_new();
-  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Ignorar','Ahorro','Semana'];
-  const cols = [{wch:6},{wch:13},{wch:13},{wch:20},{wch:13},{wch:24},{wch:10},{wch:14},{wch:10},{wch:18},{wch:11}];
+  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Reembolso Persona','Reembolso Fecha','Reembolso Nota','Ignorar','Ahorro','Semana'];
+  const cols = [{wch:6},{wch:13},{wch:13},{wch:20},{wch:13},{wch:24},{wch:10},{wch:14},{wch:20},{wch:15},{wch:28},{wch:10},{wch:18},{wch:11}];
   const toR = g => [g.id,g.fecha,g.cuenta,g.motivo,g.cantidad,g.comentarios||'',
-    g.abonado?'SI':'NO',g.externo||'no',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana];
+    g.abonado?'SI':'NO',g.externo||'no',g.reembolsoPersona||'',g.reembolsoFecha||'',g.reembolsoNota||'',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana];
   const ws1 = XLSX.utils.aoa_to_sheet([hdr,...gastos.map(toR)]);
   ws1['!cols']=cols; XLSX.utils.book_append_sheet(wb,ws1,'Semana Actual');
   const ws2 = XLSX.utils.aoa_to_sheet([hdr,...historico.map(toR)]);
@@ -2304,9 +2409,9 @@ function confirmarRestaurarBackup() {
 function exportarBackupExcel() {
   if (typeof XLSX === 'undefined') { showToast('Cargando...'); return; }
   const wb  = XLSX.utils.book_new();
-  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Ignorar','Ahorro','Semana'];
+  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Reembolso Persona','Reembolso Fecha','Reembolso Nota','Ignorar','Ahorro','Semana'];
   const toR = g => [g.id,g.fecha,g.cuenta,g.motivo,g.cantidad,g.comentarios||'',
-    g.abonado?'SI':'NO',g.externo||'no',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana];
+    g.abonado?'SI':'NO',g.externo||'no',g.reembolsoPersona||'',g.reembolsoFecha||'',g.reembolsoNota||'',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana];
   const ws1 = XLSX.utils.aoa_to_sheet([hdr,...gastos.map(toR)]);
   XLSX.utils.book_append_sheet(wb, ws1, 'Semana Actual');
   const ws2 = XLSX.utils.aoa_to_sheet([hdr,...historico.map(toR)]);
@@ -4503,6 +4608,7 @@ function openComentarioDropdown() {
 function seleccionarComentario(val) {
   document.getElementById('f-comentarios-input').value = val;
   document.getElementById('comentario-dropdown').style.display = 'none';
+  aplicarReglaAutomatica();
 }
 
 function cerrarDropdownComentario(e) {
@@ -4523,6 +4629,7 @@ function renderCatComentarios() {
       <button onclick="editarComentario(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;font-size:12px;color:var(--text2);cursor:pointer">Editar</button>
       <button onclick="eliminarComentario(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
     </div>`).join('');
+  renderReglasAutomaticas();
 }
 
 function nuevoComentario() {
@@ -4562,6 +4669,77 @@ async function eliminarComentario(i) {
   await saveData();
   showToast('Eliminado');
   renderCatComentarios();
+}
+
+function renderReglasAutomaticas() {
+  const el = document.getElementById('cat-reglas-list');
+  if (!el) return;
+  if (!reglasAutomaticas.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0">Sin reglas automaticas</div>';
+    return;
+  }
+  el.innerHTML = reglasAutomaticas.map((r, i) => `
+    <div style="background:var(--bg2);border-radius:10px;border:1px solid var(--border);padding:11px 13px;margin-bottom:7px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:16px">⚡</span>
+      <span style="flex:1;font-size:13px;color:var(--text)">
+        <strong>${r.texto}</strong>
+        <span style="display:block;font-size:11px;color:var(--text2);margin-top:2px">${r.cuenta || 'Cuenta igual'} · ${r.motivo || 'Motivo igual'}</span>
+      </span>
+      <button onclick="editarReglaAuto(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;font-size:12px;color:var(--text2);cursor:pointer">Editar</button>
+      <button onclick="eliminarReglaAuto(${i})" style="padding:6px 10px;border-radius:8px;border:1px solid #fee2e2;background:transparent;font-size:12px;color:var(--red);cursor:pointer">🗑</button>
+    </div>`).join('');
+}
+
+function llenarSelectRegla(cuenta = '', motivo = '') {
+  const sc = document.getElementById('regla-cuenta');
+  const sm = document.getElementById('regla-motivo');
+  if (sc) sc.innerHTML = '<option value="">No cambiar</option>' + getCuentas().map(c => `<option value="${c}"${c===cuenta?' selected':''}>${c}</option>`).join('');
+  if (sm) sm.innerHTML = '<option value="">No cambiar</option>' + catalogoMotivos.map(m => `<option value="${m}"${m===motivo?' selected':''}>${m}</option>`).join('');
+}
+
+function nuevaReglaAuto() {
+  window._editReglaIdx = null;
+  document.getElementById('regla-modal-title').textContent = 'Nueva regla';
+  document.getElementById('regla-texto').value = '';
+  llenarSelectRegla();
+  openModal('modal-regla-auto');
+}
+
+function editarReglaAuto(i) {
+  const r = reglasAutomaticas[i];
+  if (!r) return;
+  window._editReglaIdx = i;
+  document.getElementById('regla-modal-title').textContent = 'Editar regla';
+  document.getElementById('regla-texto').value = r.texto || '';
+  llenarSelectRegla(r.cuenta || '', r.motivo || '');
+  openModal('modal-regla-auto');
+}
+
+function guardarReglaAuto() {
+  const texto = document.getElementById('regla-texto').value.trim();
+  if (!texto) { showToast('Ingresa el texto de la regla'); return; }
+  const regla = {
+    texto,
+    cuenta: document.getElementById('regla-cuenta')?.value || '',
+    motivo: document.getElementById('regla-motivo')?.value || ''
+  };
+  if (!regla.cuenta && !regla.motivo) { showToast('Elige cuenta o motivo'); return; }
+  if (window._editReglaIdx !== null && window._editReglaIdx !== undefined) {
+    reglasAutomaticas[window._editReglaIdx] = regla;
+  } else {
+    reglasAutomaticas.push(regla);
+  }
+  saveLocal();
+  closeModal('modal-regla-auto');
+  renderReglasAutomaticas();
+  showToast('Regla guardada ✓');
+}
+
+function eliminarReglaAuto(i) {
+  reglasAutomaticas.splice(i, 1);
+  saveLocal();
+  renderReglasAutomaticas();
+  showToast('Regla eliminada');
 }
 
 

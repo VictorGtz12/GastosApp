@@ -441,7 +441,7 @@
       <div class="field">
         <label>Comentarios / Sub-movimiento</label>
         <div id="comentario-wrap" style="position:relative">
-          <input type="text" id="f-comentarios-input" placeholder="Buscar o escribir..." oninput="openComentarioDropdown()" onfocus="openComentarioDropdown()" autocomplete="off"
+          <input type="text" id="f-comentarios-input" placeholder="Buscar o escribir..." oninput="openComentarioDropdown();aplicarReglaAutomatica('silencioso')" onfocus="openComentarioDropdown()" autocomplete="off"
             style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);font-size:16px;color:var(--text);font-family:inherit">
           <div id="comentario-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;max-height:200px;overflow-y:auto;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.6)"></div>
         </div>
@@ -458,6 +458,11 @@
           <div class="tog" id="ext-ext" onclick="setExt('externo')">📤 Externo</div>
           <div class="tog" id="ext-pagado" onclick="setExt('pagado')">✅ Cobrado</div>
         </div>
+      </div>
+      <div id="reembolso-wrap" style="display:none">
+        <div class="field"><label>Persona / referencia</label><input type="text" id="f-reembolso-persona" placeholder="Ej. Juan, trabajo, cliente..."></div>
+        <div class="field"><label>Fecha prometida</label><input type="date" id="f-reembolso-fecha"></div>
+        <div class="field"><label>Nota de reembolso</label><textarea id="f-reembolso-nota" rows="2" placeholder="Ej. Me paga el viernes, transferencia parcial..."></textarea></div>
       </div>
       <div class="field"><label>Descontar de ahorro</label>
         <div class="toggle-group">
@@ -534,7 +539,7 @@
     </div>
     <div id="cat-panel-cuentas"><div id="cat-cuentas-list"></div><button onclick="nuevaCuenta_cat()" style="width:100%;padding:12px;border-radius:8px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px">+ Agregar cuenta</button></div>
     <div id="cat-panel-motivos" style="display:none"><div id="cat-motivos-list"></div><button onclick="nuevoMotivo()" style="width:100%;padding:12px;border-radius:8px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px">+ Agregar motivo</button></div>
-    <div id="cat-panel-comentarios" style="display:none"><p style="font-size:12px;color:var(--text2);margin-bottom:10px">Lugares y sub-motivos que aparecen al registrar un gasto.</p><div id="cat-comentarios-list"></div><button onclick="nuevoComentarioCat()" style="width:100%;padding:12px;border-radius:8px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px">+ Agregar lugar</button></div>
+    <div id="cat-panel-comentarios" style="display:none"><p style="font-size:12px;color:var(--text2);margin-bottom:10px">Lugares y sub-motivos que aparecen al registrar un gasto.</p><div id="cat-comentarios-list"></div><button onclick="nuevoComentarioCat()" style="width:100%;padding:12px;border-radius:8px;border:1px dashed rgba(108,99,255,.3);background:transparent;color:var(--accent2);font-size:13px;cursor:pointer;margin-top:4px">+ Agregar lugar</button><div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Reglas automaticas</div><div id="cat-reglas-list"></div><button onclick="nuevaReglaAuto()" style="width:100%;padding:12px;border-radius:8px;border:1px dashed rgba(255,159,67,.35);background:transparent;color:var(--orange);font-size:13px;cursor:pointer;margin-top:4px">+ Agregar regla</button></div></div>
   </div>
 
   <!-- RECURRENTES Y DEUDAS -->
@@ -668,6 +673,19 @@
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-cat-comentario')">Cancelar</button>
       <button class="mbtn prim" onclick="guardarComentarioCat()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-regla-auto">
+  <div class="modal">
+    <h2 id="regla-modal-title">Nueva regla</h2>
+    <div class="field"><label>Si el comentario contiene <span class="req">*</span></label><input type="text" id="regla-texto" placeholder="Ej. Amazon"></div>
+    <div class="field"><label>Cuenta</label><select id="regla-cuenta"></select></div>
+    <div class="field"><label>Motivo</label><select id="regla-motivo"></select></div>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-regla-auto')">Cancelar</button>
+      <button class="mbtn prim" onclick="guardarReglaAuto()">Guardar</button>
     </div>
   </div>
 </div>
