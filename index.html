@@ -3,8 +3,11 @@
 <head>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(r => r.forEach(sw => sw.unregister()));
-      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => {
+          console.warn('No se pudo registrar el service worker:', err);
+        });
+      });
     }
     // Aplicar tema inmediatamente para evitar flash de colores
     (function() {

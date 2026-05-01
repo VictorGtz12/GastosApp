@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.7';
-const ASSETS = ['/', '/index.html', '/app.js', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'gastos-v2.8';
+const ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -13,7 +13,25 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  if (e.request.method !== 'GET') return;
+
+  e.respondWith(
+    caches.match(e.request).then(cached => {
+      const fetchAndCache = () => fetch(e.request).then(response => {
+        if (response && response.ok && new URL(e.request.url).origin === self.location.origin) {
+          const copy = response.clone();
+          caches.open(CACHE).then(cache => cache.put(e.request, copy));
+        }
+        return response;
+      });
+
+      if (e.request.mode === 'navigate') {
+        return fetchAndCache().catch(() => cached || caches.match('./index.html'));
+      }
+
+      return cached || fetchAndCache();
+    })
+  );
 });
 
 // Notificaciones push
@@ -26,7 +44,7 @@ self.addEventListener('push', e => {
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(clients.openWindow('/'));
+  e.waitUntil(clients.openWindow('./'));
 });
 
 // Alarmas de corte via setTimeout (desde el cliente)
