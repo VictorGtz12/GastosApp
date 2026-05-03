@@ -2492,13 +2492,18 @@ function verificarCortesProximos() {
 
 // ── Presupuesto configurable ─────────────────────────────────
 async function mostrarVersionCache() {
-  const el = document.getElementById('app-version-label');
-  if (!el) return;
   try {
     const keys = await caches.keys();
-    const v = keys.find(k => k.startsWith('gastos-')) || 'sin caché';
-    el.textContent = v;
-  } catch(e) { el.textContent = 'versión desconocida'; }
+    const found = keys.find(k => k.startsWith('gastos-'));
+    const label = found ? found.replace('gastos-', 'v') : 'sin caché';
+    const el = document.getElementById('app-version-label');
+    if (el) el.textContent = label;
+    const drawer = document.getElementById('drawer-version-label');
+    if (drawer) drawer.textContent = label;
+  } catch(e) {
+    const el = document.getElementById('app-version-label');
+    if (el) el.textContent = 'versión desconocida';
+  }
 }
 
 function abrirAjustes() {
@@ -4784,6 +4789,7 @@ function eliminarReglaAuto(i) {
 function openDrawer() {
   document.getElementById('drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
+  mostrarVersionCache();
 }
 function closeDrawer() {
   document.getElementById('drawer').classList.remove('open');
