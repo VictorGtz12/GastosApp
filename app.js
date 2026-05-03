@@ -1,6 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
+const APP_VERSION = 'v2.15';
 
 // Google Sheets ya no se usa como base de datos principal.
 // Usa el menú ☰ → Importar de Sheets para migrar datos.
@@ -2491,25 +2492,11 @@ function verificarCortesProximos() {
 }
 
 // ── Presupuesto configurable ─────────────────────────────────
-async function mostrarVersionCache() {
-  let label = null;
-  try {
-    const keys = await caches.keys();
-    const found = keys.find(k => k.startsWith('gastos-'));
-    if (found) label = found.replace('gastos-', 'v');
-  } catch(e) {}
-  if (!label) {
-    try {
-      const text = await fetch('./sw.js').then(r => r.text());
-      const m = text.match(/CACHE\s*=\s*['"]gastos-([^'"]+)['"]/);
-      if (m) label = 'v' + m[1];
-    } catch(e) {}
-  }
-  label = label || 'v?';
+function mostrarVersionCache() {
   const el = document.getElementById('app-version-label');
-  if (el) el.textContent = label;
+  if (el) el.textContent = APP_VERSION;
   const drawer = document.getElementById('drawer-version-label');
-  if (drawer) drawer.textContent = label;
+  if (drawer) drawer.textContent = APP_VERSION;
 }
 
 function abrirAjustes() {
