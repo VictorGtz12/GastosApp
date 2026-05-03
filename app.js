@@ -2492,18 +2492,24 @@ function verificarCortesProximos() {
 
 // ── Presupuesto configurable ─────────────────────────────────
 async function mostrarVersionCache() {
+  let label = null;
   try {
     const keys = await caches.keys();
     const found = keys.find(k => k.startsWith('gastos-'));
-    const label = found ? found.replace('gastos-', 'v') : 'sin caché';
-    const el = document.getElementById('app-version-label');
-    if (el) el.textContent = label;
-    const drawer = document.getElementById('drawer-version-label');
-    if (drawer) drawer.textContent = label;
-  } catch(e) {
-    const el = document.getElementById('app-version-label');
-    if (el) el.textContent = 'versión desconocida';
+    if (found) label = found.replace('gastos-', 'v');
+  } catch(e) {}
+  if (!label) {
+    try {
+      const text = await fetch('./sw.js').then(r => r.text());
+      const m = text.match(/CACHE\s*=\s*['"]gastos-([^'"]+)['"]/);
+      if (m) label = 'v' + m[1];
+    } catch(e) {}
   }
+  label = label || 'v?';
+  const el = document.getElementById('app-version-label');
+  if (el) el.textContent = label;
+  const drawer = document.getElementById('drawer-version-label');
+  if (drawer) drawer.textContent = label;
 }
 
 function abrirAjustes() {
