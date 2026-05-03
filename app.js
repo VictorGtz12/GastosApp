@@ -408,7 +408,7 @@ function mensajeErrorUpload() {
   if (_lastUploadError === 'github-disabled') return 'Sync con GitHub desactivado';
   if (/401|403|Bad credentials|Resource not accessible/i.test(_lastUploadError)) return 'Token de GitHub inválido o sin permisos';
   if (/Failed to fetch|NetworkError|abort|timeout/i.test(_lastUploadError)) return 'No se pudo conectar con GitHub';
-  return 'No se pudo subir. Intenta de nuevo con buena conexión';
+  return `No se pudo subir (${_lastUploadError || 'error desconocido'}). Intenta de nuevo`;
 }
 
 async function downloadSnapshot(force = false) {
@@ -906,6 +906,15 @@ function mostrarEstadoSync(ok) {
     el.onclick = null;
     return;
   }
+  if (usingGithub() && hasPendingSync()) {
+    el.textContent = '⬆️ Sin subir';
+    el.style.color = 'var(--orange)';
+    const b = document.getElementById('banner-pendientes');
+    if (b) b.style.display = 'flex';
+    return;
+  }
+  const b = document.getElementById('banner-pendientes');
+  if (b) b.style.display = 'none';
   if (ok && last) {
     const d = new Date(last);
     el.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
@@ -962,6 +971,8 @@ function saveLocal() {
         if (_uploadLock || isTravelMode() || !navigator.onLine) return; // ya hay un sync en curso o la red no conviene
         // Dispositivo nuevo: no subir hasta que se descargue primero
         if (!localStorage.getItem('lastSync') && (usingGithub() || usingSupabase())) return;
+        // No subir si no hay cambios reales desde el último sync
+        if (!hasPendingSync()) { mostrarEstadoSync(true); return; }
         const [upGH, upSB] = await Promise.all([
           usingGithub() ? uploadSnapshot() : Promise.resolve(true),
           usingSupabase() ? uploadSupabase() : Promise.resolve(true)
