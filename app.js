@@ -2490,7 +2490,18 @@ function verificarCortesProximos() {
 }
 
 // ── Presupuesto configurable ─────────────────────────────────
+async function mostrarVersionCache() {
+  const el = document.getElementById('app-version-label');
+  if (!el) return;
+  try {
+    const keys = await caches.keys();
+    const v = keys.find(k => k.startsWith('gastos-')) || 'sin caché';
+    el.textContent = v;
+  } catch(e) { el.textContent = 'versión desconocida'; }
+}
+
 function abrirAjustes() {
+  mostrarVersionCache();
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
