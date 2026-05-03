@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git show *)"
+      "Bash(git show *)",
+      "Bash(winget upgrade *)",
+      "Bash(chmod +x *)"
     ]
   }
 }

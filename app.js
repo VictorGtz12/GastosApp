@@ -361,8 +361,10 @@ async function uploadSnapshot() {
     const snap    = compressSnap(buildSnapshot());
     const content = btoa(unescape(encodeURIComponent(JSON.stringify(snap))));
 
-    // Intentar subir — reintentar una vez si hay conflicto de SHA (409)
-    for (let intento = 0; intento < 2; intento++) {
+    // Intentar subir — reintentar hasta 3 veces si hay conflicto de SHA (409)
+    const MAX_INTENTOS = 3;
+    for (let intento = 0; intento < MAX_INTENTOS; intento++) {
+      if (intento > 0) await new Promise(r => setTimeout(r, 300 * intento));
       // Obtener SHA fresco en cada intento
       let sha = null;
       const getMeta = await fetch(githubApiUrl(), { headers: githubHeaders() });
@@ -389,9 +391,9 @@ async function uploadSnapshot() {
       }
 
       const e = await res.json();
-      // Si es conflicto de SHA y es el primer intento, reintentar
-      if (res.status === 409 && intento === 0) {
-        console.warn('SHA conflict, retrying...');
+      // Si es conflicto de SHA, reintentar (excepto en el último intento)
+      if (res.status === 409 && intento < MAX_INTENTOS - 1) {
+        console.warn(`SHA conflict (intento ${intento + 1}), reintentando...`);
         localStorage.removeItem('githubSha');
         continue;
       }
