@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.15';
+const APP_VERSION = 'v2.16';
 
 // Google Sheets ya no se usa como base de datos principal.
 // Usa el menú ☰ → Importar de Sheets para migrar datos.
