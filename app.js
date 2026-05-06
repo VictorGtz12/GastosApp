@@ -1,10 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.17';
-
-// Google Sheets ya no se usa como base de datos principal.
-// Usa el menú ☰ → Importar de Sheets para migrar datos.
+const APP_VERSION = 'v2.18';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -867,9 +864,8 @@ function actualizarEstadoRed() {
 }
 window.addEventListener('online',  () => { actualizarEstadoRed(); if (!isTravelMode() && typeof syncUp === 'function') syncUp(); });
 window.addEventListener('offline', () => actualizarEstadoRed());
-function ocultarAvisoDesactualizado() {}
-function mostrarAvisoDesactualizado() {}
-function verificarPendientes()        { mostrarEstadoSync(true); }
+
+let syncBloqueado = false;
 
 function iniciarAutoSync() {
   if (!usingGithub() || isTravelMode()) return;
@@ -884,66 +880,6 @@ function iniciarAutoSync() {
     }
   }, 2 * 60 * 1000);
 }
-
-// Configura la URL de Sheets
-function configurarSheets() {
-  // configurarSheets reemplazado por configurarGithub
-}
-
-// Mostrar estado de sync en topbar
-function mostrarEstadoSync(ok) {
-  const el   = document.getElementById('sync-status');
-  const last = localStorage.getItem('lastSync');
-  if (!el) return;
-  el.style.display = 'inline';
-  el.style.cursor = 'pointer';
-  el.onclick = () => refreshData();
-  if (isTravelMode()) {
-    el.textContent = hasPendingSync() ? 'Modo viaje · sin subir' : 'Modo viaje';
-    el.style.color = hasPendingSync() ? 'var(--orange)' : 'var(--accent2)';
-    return;
-  }
-  if (!navigator.onLine) {
-    el.textContent = 'Sin internet';
-    el.style.color = 'var(--red)';
-    el.style.cursor = 'default';
-    el.onclick = null;
-    return;
-  }
-  if (usingGithub() && hasPendingSync()) {
-    el.textContent = '⬆️ Sin subir';
-    el.style.color = 'var(--orange)';
-    const b = document.getElementById('banner-pendientes');
-    if (b) b.style.display = 'flex';
-    return;
-  }
-  const b = document.getElementById('banner-pendientes');
-  if (b) b.style.display = 'none';
-  if (ok && last) {
-    const d = new Date(last);
-    el.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
-    el.style.color = 'var(--green)';
-  } else {
-    el.textContent = usingGithub() ? '⚠️ Sin sync' : '';
-    el.style.color = 'var(--orange)';
-  }
-}
-
-function mostrarBannerActualizar() {
-  const status = document.getElementById('sync-status');
-  if (status && usingGithub()) {
-    status.style.display = 'inline';
-    status.textContent = '🔄 ...';
-    status.style.color = 'var(--text3)';
-  }
-}
-
-function ocultarBannerActualizar() {
-  mostrarEstadoSync(true);
-}
-
-function ocultarAvisoDesactualizado() {}
-function mostrarAvisoDesactualizado() {}
 
 
 
@@ -3099,7 +3035,6 @@ function ocultarAvisoDesactualizado() {
 
 // ── Drag & Drop para reordenar ahorros ───────────────────────
 let dragSrcId = null;
-let syncBloqueado = false;
 let dragModeActivo = false; // bloquea download durante guardar
 
 
@@ -4900,7 +4835,6 @@ window.addEventListener('DOMContentLoaded', () => {
   aplicarVisibilidadAhorros(); // aplicar estado inicial (oculto)
   document.addEventListener('click', cerrarDropdownComentario);
   iniciarAutoSync();
-  mostrarBannerActualizar();
   // Sync con GitHub en segundo plano
   if (isTravelMode()) {
     mostrarEstadoSync(false);
@@ -4930,44 +4864,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-function mostrarBannerActualizar() {
-  // Usar sync-status en topbar en vez de banner que ocupa espacio
-  const status = document.getElementById('sync-status');
-  if (status) {
-    status.style.display = 'inline';
-    if (isTravelMode()) {
-      status.textContent = hasPendingSync() ? 'Modo viaje · sin subir' : 'Modo viaje';
-      status.style.color = hasPendingSync() ? 'var(--orange)' : 'var(--accent2)';
-    } else if (usingGithub()) {
-      status.textContent = '🔄 Sync...';
-      status.style.color = 'var(--text3)';
-    } else {
-      const lastBackup = localStorage.getItem('lastBackup');
-      if (!lastBackup) {
-        status.textContent = '💾 Sin backup';
-        status.style.color = 'var(--orange)';
-      }
-    }
-  }
-  // Ocultar el banner de abajo (no usarlo para no afectar layout)
-  const banner = document.getElementById('banner-actualizar');
-  if (banner) banner.style.display = 'none';
-}
-
-function ocultarBannerActualizar() {
-  const banner = document.getElementById('banner-actualizar');
-  if (banner) banner.style.display = 'none';
-  mostrarEstadoSync(true);
-  // Mostrar hora de sync en topbar
-  const last = localStorage.getItem('lastSync');
-  const status = document.getElementById('sync-status');
-  if (status && last) {
-    const d = new Date(last);
-    status.style.display = 'inline';
-    status.textContent = `✓ ${d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}`;
-    status.style.color = 'var(--green)';
-  }
-}function renderHistoricoMes(el) {
+function renderHistoricoMes(el) {
   const byMes = {};
   historico.forEach(g => {
     const mes = (g.fecha || '').slice(0, 7);
