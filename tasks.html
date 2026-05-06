@@ -355,7 +355,7 @@ let calSelected = null;
 const COLORES = ['#6c63ff','#ff5e7a','#22d3a5','#ff9f43','#a78bfa','#06b6d4','#f472b6','#ffd166'];
 const GITHUB_OWNER = 'VictorGtz12', GITHUB_REPO = 'GastosApp', GITHUB_BRANCH = 'main';
 const SUPABASE_URL = 'https://iskzbiozycpvnkkverfg.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
+const SUPABASE_KEY = localStorage.getItem('supabaseKey') || '';
 
 // ── Init ─────────────────────────────────────────────────────
 function init() {

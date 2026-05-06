@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.16';
+const APP_VERSION = 'v2.17';
 
 // Google Sheets ya no se usa como base de datos principal.
 // Usa el menú ☰ → Importar de Sheets para migrar datos.
@@ -1089,7 +1089,7 @@ function normAhorro(c) {
 
 
 // ── Navegación ────────────────────────────────────────────────
-const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','historico','catalogos','recurrentes','conciliacion'];
+const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','dashboard','historico','catalogos','recurrentes','conciliacion'];
 let tabActualGlobal = 'menu';
 
 function showTab(tab) {
@@ -1108,7 +1108,8 @@ function showTab(tab) {
     menu:'Gastos Semanales', gastos:'Mis Gastos',
     nuevo: editingId ? 'Editar Gasto' : 'Nuevo Gasto',
     externos:'Externos', cortes:'Cortes por Tarjeta',
-    ahorros:'Mis Ahorros', historico:'Historial',
+    ahorros:'Mis Ahorros', dashboard:'Dashboard',
+    historico:'Historial',
     catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas', conciliacion:'Conciliación'
   };
   document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
@@ -1122,7 +1123,151 @@ function showTab(tab) {
   if (tab === 'historico')   renderHistorico();
   if (tab === 'catalogos')   renderCatalogos();
   if (tab === 'recurrentes') renderRecurrentes();
+  if (tab === 'dashboard') renderDashboard();
   if (tab === 'conciliacion') renderConciliacion();
+}
+
+// ── Dashboard ──────────────────────────────────────────────────
+function renderDashboard() {
+  // Widgets
+  const totAhorro = cuentasAhorro.filter(c => !c.excluirTotal).reduce((s, c) => s + saldoCuenta(c), 0);
+  document.getElementById('dashboard-ahorro-total').textContent = fmt(totAhorro);
+
+  const ahora = new Date();
+  const mesAct = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}`;
+  const gastosMes = [...gastos, ...historico].filter(g => g.fecha && g.fecha.startsWith(mesAct) && !g.ignorar);
+  const totalMes = gastosMes.reduce((s, g) => s + g.cantidad, 0);
+  document.getElementById('dashboard-gasto-mensual').textContent = fmt(totalMes);
+
+  const deudasAct = deudas.filter(d => (d.mesesPagados || 0) < (d.mesesTotal || 1));
+  const totalDeuda = deudasAct.reduce((s, d) => s + (d.mesesTotal - (d.mesesPagados || 0)) * (d.cuota || 0), 0);
+  document.getElementById('dashboard-deuda-total').textContent = fmt(totalDeuda);
+
+  // Gastos hoy
+  const hoy = new Date().toISOString().slice(0, 10);
+  const gastosHoy = gastos.filter(g => g.fecha === hoy && !g.ignorar);
+  document.getElementById('dashboard-gastos-hoy').textContent = fmt(gastosHoy.reduce((s, g) => s + g.cantidad, 0));
+  document.getElementById('dashboard-gastos-hoy-count').textContent = `${gastosHoy.length} gasto${gastosHoy.length !== 1 ? 's' : ''}`;
+
+  // Cortes próximos (7 días)
+  const cfg = getCortesConfig();
+  const cortesProx = Object.entries(cfg).map(([cuenta]) => {
+    const key = getPeriodoActualKey(cuenta);
+    if (!key) return null;
+    const hasta = key.split('|')[1];
+    if (!hasta) return null;
+    const dias = Math.ceil((new Date(hasta + 'T12:00:00') - new Date()) / 864e5);
+    if (dias < 0 || dias > 7) return null;
+    return { cuenta, dias, hasta };
+  }).filter(Boolean).sort((a, b) => a.dias - b.dias);
+
+  const elCortes = document.getElementById('dashboard-cortes-proximos');
+  if (cortesProx.length) {
+    elCortes.innerHTML = cortesProx.map(c =>
+      `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
+        <span>${c.cuenta}</span>
+        <span style="color:${c.dias === 0 ? 'var(--red)' : 'var(--orange)'}">${c.dias === 0 ? 'Hoy' : c.dias + ' día' + (c.dias > 1 ? 's' : '')}</span>
+      </div>`
+    ).join('');
+  } else {
+    elCortes.innerHTML = '<div style="font-size:12px;color:var(--text3)">Sin cortes próximos</div>';
+  }
+
+  // Gráficas Chart.js
+  setTimeout(() => {
+    renderGraficosDashboard();
+  }, 100);
+}
+
+// ── Gráficas del Dashboard (Chart.js) ─────────────────────────
+function renderGraficosDashboard() {
+  renderChartGastoMensual();
+  renderChartGastoPorCategoria();
+  renderChartEgresosUltimos();
+  renderChartAhorroHistorico();
+}
+
+function renderChartGastoMensual() {
+  const ctx = document.getElementById('chart-gasto-mensual');
+  if (!ctx) return;
+  const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const ahora = new Date();
+  const data = [], labels = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1);
+    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    labels.push(`${meses[d.getMonth()]} ${d.getFullYear()}`);
+      data.push([...gastos, ...historico].filter(g => g.fecha && g.fecha.startsWith(m) && !g.ignorar)
+      .reduce((s, g) => s + g.cantidad, 0));
+  }
+  if (window._chartGastoMensual) window._chartGastoMensual.destroy();
+  window._chartGastoMensual = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Gasto mensual', data, backgroundColor: 'rgba(14,165,233,0.6)', borderColor: 'rgba(14,165,233,1)', borderWidth: 2, borderRadius: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => '$' + fmt(ctx.parsed.y) } } },
+      scales: { y: { ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(1) + 'k' : v.toFixed(0)) }, grid: { color: 'rgba(255,255,255,0.04)' } }, x: { grid: { display: false }, ticks: { maxRotation: 45, font: { size: 9 } } } } }
+  });
+}
+
+function renderChartGastoPorCategoria() {
+  const ctx = document.getElementById('chart-gasto-categoria');
+  if (!ctx) return;
+  const ahora = new Date();
+  const mesAct = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}`;
+  const gastosMes = [...gastos, ...historico].filter(g => g.fecha && g.fecha.startsWith(mesAct) && !g.ignorar);
+  const cats = {};
+  gastosMes.forEach(g => { if (!cats[g.motivo]) cats[g.motivo] = 0; cats[g.motivo] += g.cantidad; });
+  const colors = ['#0ea5e9','#8b5cf6','#f59e0b','#ef4444','#22c55e','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16','#06b6d4','#d946ef','#10b981','#eab308','#3b82f6'];
+  const entries = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (window._chartGastoCat) window._chartGastoCat.destroy();
+  window._chartGastoCat = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels: entries.map(e => e[0]), datasets: [{ data: entries.map(e => e[1]), backgroundColor: colors.slice(0, entries.length), borderWidth: 2, borderColor: 'var(--bg)' }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 12, font: { size: 10 }, boxWidth: 12, boxHeight: 12 } }, tooltip: { callbacks: { label: ctx => { const t = ctx.dataset.data.reduce((a,b)=>a+b,0); return ctx.label + ': $' + fmt(ctx.parsed) + ' (' + ((ctx.parsed/t)*100).toFixed(1) + '%)'; } } } }, cutout: '60%' }
+  });
+}
+
+function renderChartEgresosUltimos() {
+  const ctx = document.getElementById('chart-egresos');
+  if (!ctx) return;
+  const labels = [], data = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const str = d.toISOString().slice(0, 10);
+    labels.push(str.slice(5));
+    data.push(gastos.filter(g => g.fecha === str && !g.ignorar).reduce((s, g) => s + g.cantidad, 0));
+  }
+  if (window._chartEgresos) window._chartEgresos.destroy();
+  window._chartEgresos = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Gastos diarios', data, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.1)', fill: true, tension: 0.4, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => '$' + fmt(ctx.parsed.y) } } },
+      scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(0)) }, grid: { color: 'rgba(255,255,255,0.04)' } }, x: { grid: { display: false }, ticks: { maxTicksLimit: 15, font: { size: 8 } } } } }
+  });
+}
+
+function renderChartAhorroHistorico() {
+  const ctx = document.getElementById('chart-ahorro');
+  if (!ctx) return;
+  const ahora = new Date();
+  const labels = [], data = [];
+  const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1);
+    labels.push(`${meses[d.getMonth()]} ${d.getFullYear()}`);
+    const mesKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const ingresos = gastos.filter(g => g.fecha && g.fecha.startsWith(mesKey) && g.abonado && !g.ignorar).reduce((s,g)=>s+g.cantidad,0);
+    const egresos  = gastos.filter(g => g.fecha && g.fecha.startsWith(mesKey) && !g.abonado && !g.ignorar).reduce((s,g)=>s+g.cantidad,0);
+    const acum = data.length > 0 ? data[data.length-1] + (ingresos - egresos) : (ingresos - egresos);
+    data.push(Math.max(0, acum));
+  }
+  if (window._chartAhorro) window._chartAhorro.destroy();
+  window._chartAhorro = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Ahorro acumulado', data, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 6, borderWidth: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12, boxHeight: 12 } }, tooltip: { callbacks: { label: ctx => '$' + fmt(ctx.parsed.y) } } },
+      scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(0)) }, grid: { color: 'rgba(255,255,255,0.04)' } }, x: { grid: { display: false }, ticks: { maxRotation: 45, font: { size: 9 } } } } }
+  });
 }
 
 // ── Menú ──────────────────────────────────────────────────────
@@ -3313,157 +3458,6 @@ function renderConciliacion() {
     `;
 }
 
-// ── Estadísticas ────────────────────────────────────────────
-let _statTab = 'semanas';
-
-function abrirEstadisticas() {
-  _statTab = 'semanas';
-  document.querySelectorAll('.stat-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('stab-semanas')?.classList.add('active');
-  renderStatTab();
-  openModal('modal-estadisticas');
-}
-
-function setStatTab(tab) {
-  _statTab = tab;
-  document.querySelectorAll('.stat-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('stab-' + tab)?.classList.add('active');
-  renderStatTab();
-}
-
-function renderStatTab() {
-  const el = document.getElementById('stat-content');
-  if (!el) return;
-  const all = [...gastos, ...historico].filter(g => !g.ignorar && g.externo !== 'externo');
-  switch (_statTab) {
-    case 'semanas':    el.innerHTML = renderStatSemanas(all); break;
-    case 'meses':      el.innerHTML = renderStatMeses(all); break;
-    case 'categorias': el.innerHTML = renderStatCategorias(all); break;
-    case 'tarjetas':   el.innerHTML = renderStatTarjetas(all); break;
-    case 'top':        el.innerHTML = renderStatTop(all); break;
-  }
-}
-
-function barChart(items, colorFn) {
-  // items: [{label, value}]
-  const max = Math.max(...items.map(i => i.value), 1);
-  return `<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
-    ${items.map(it => `
-      <div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:2px">
-          <span style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.label}</span>
-          <span style="font-weight:600;color:var(--text)">${fmt(it.value)}</span>
-        </div>
-        <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:${(it.value/max*100).toFixed(1)}%;background:${colorFn ? colorFn(it) : 'var(--accent)'};border-radius:4px;transition:width .3s"></div>
-        </div>
-      </div>`).join('')}
-  </div>`;
-}
-
-function renderStatSemanas(all) {
-  // Agrupar por semana (YYYY-Www)
-  const map = {};
-  all.forEach(g => {
-    const d = new Date(g.fecha + 'T12:00:00');
-    const wk = `${d.getFullYear()}-S${String(getWeek(d)).padStart(2,'0')}`;
-    map[wk] = (map[wk] || 0) + g.cantidad;
-  });
-  const items = Object.entries(map).sort((a,b) => a[0].localeCompare(b[0])).slice(-12)
-    .map(([label, value]) => ({ label, value }));
-  if (!items.length) return '<div class="empty">Sin datos</div>';
-  const total = items.reduce((s,i) => s+i.value, 0);
-  const prom  = total / items.length;
-  return `<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
-    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">Promedio/semana</div>
-      <div style="font-size:16px;font-weight:700;color:var(--accent2)">${fmt(prom)}</div>
-    </div>
-    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">Total (${items.length} sem)</div>
-      <div style="font-size:16px;font-weight:700;color:var(--text)">${fmt(total)}</div>
-    </div>
-  </div>
-  ${barChart(items.slice(-8), it => it.value > prom*1.2 ? 'var(--red)' : 'var(--accent)')}`;
-}
-
-function renderStatMeses(all) {
-  const map = {};
-  all.forEach(g => {
-    const k = g.fecha.slice(0, 7); // YYYY-MM
-    map[k] = (map[k] || 0) + g.cantidad;
-  });
-  const items = Object.entries(map).sort((a,b) => a[0].localeCompare(b[0])).slice(-12)
-    .map(([k, value]) => {
-      const [y, m] = k.split('-');
-      const meses = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-      return { label: `${meses[+m]} ${y}`, value };
-    });
-  if (!items.length) return '<div class="empty">Sin datos</div>';
-  const total = items.reduce((s,i) => s+i.value, 0);
-  const prom  = total / items.length;
-  const max   = Math.max(...items.map(i => i.value));
-  const maxItem = items.find(i => i.value === max);
-  return `<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
-    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">Promedio/mes</div>
-      <div style="font-size:16px;font-weight:700;color:var(--accent2)">${fmt(prom)}</div>
-    </div>
-    <div style="flex:1;min-width:100px;background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">Mes más alto</div>
-      <div style="font-size:16px;font-weight:700;color:var(--red)">${maxItem?.label}</div>
-    </div>
-  </div>
-  ${barChart(items, it => it.value > prom*1.2 ? 'var(--red)' : 'var(--accent)')}`;
-}
-
-function renderStatCategorias(all) {
-  const map = {};
-  all.forEach(g => { map[g.motivo] = (map[g.motivo] || 0) + g.cantidad; });
-  const items = Object.entries(map).sort((a,b) => b[1]-a[1])
-    .map(([label, value]) => ({ label, value }));
-  if (!items.length) return '<div class="empty">Sin datos</div>';
-  const total = items.reduce((s,i) => s+i.value, 0);
-  const colors = ['var(--accent)','var(--accent2)','var(--green)','var(--orange)','var(--red)','#06b6d4','#a78bfa','#f472b6'];
-  return `<div style="margin-bottom:12px;font-size:12px;color:var(--text3)">Total: ${fmt(total)}</div>
-    ${barChart(items, (it, i) => colors[items.indexOf(it) % colors.length])}`;
-}
-
-function renderStatTarjetas(all) {
-  const map = {};
-  all.forEach(g => { map[g.cuenta] = (map[g.cuenta] || 0) + g.cantidad; });
-  const items = Object.entries(map).sort((a,b) => b[1]-a[1])
-    .map(([label, value]) => ({ label, value }));
-  if (!items.length) return '<div class="empty">Sin datos</div>';
-  const total = items.reduce((s,i) => s+i.value, 0);
-  const colors = ['var(--accent)','var(--accent2)','var(--green)','var(--orange)','var(--red)','#06b6d4'];
-  return `<div style="margin-bottom:12px;font-size:12px;color:var(--text3)">Total acumulado: ${fmt(total)}</div>
-    ${barChart(items, (it) => colors[items.indexOf(it) % colors.length])}
-    <div style="margin-top:16px;display:flex;flex-direction:column;gap:6px">
-      ${items.map(it => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">
-        <span style="color:var(--text2)">${it.label}</span>
-        <span style="color:var(--text3)">${(it.value/total*100).toFixed(1)}%</span>
-      </div>`).join('')}
-    </div>`;
-}
-
-function renderStatTop(all) {
-  const top = [...all].sort((a,b) => b.cantidad-a.cantidad).slice(0, 15);
-  if (!top.length) return '<div class="empty">Sin datos</div>';
-  return `<div style="display:flex;flex-direction:column;gap:0">
-    ${top.map((g,i) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:13px;color:var(--text3);min-width:20px">${i+1}.</span>
-        <div>
-          <div style="font-size:13px;font-weight:500;color:var(--text)">${g.motivo}${g.comentarios?' · <span style="color:var(--text3);font-weight:400">'+g.comentarios+'</span>':''}</div>
-          <div style="font-size:10px;color:var(--text3)">${g.fecha} · ${g.cuenta}</div>
-        </div>
-      </div>
-      <span style="font-size:13px;font-weight:700;color:var(--red);flex-shrink:0">${fmt(g.cantidad)}</span>
-    </div>`).join('')}
-  </div>`;
-}
-
 function registrarDesdeBanco(mv) {
   // Pre-llenar formulario con los datos del movimiento bancario
   window._desdeConciliador = mv; // marcar origen
@@ -4879,8 +4873,11 @@ function aplicarVisibilidadAhorros() {
   // Stat card del Menú
   const sAhorro = document.getElementById('s-ahorro');
   if (sAhorro) sAhorro.style.filter = blur;
+  // Widget del Dashboard
+  const dashboardAhorro = document.getElementById('dashboard-ahorro-total');
+  if (dashboardAhorro) dashboardAhorro.style.filter = blur;
   // Botones ojito
-  ['btn-eye-ahorro','btn-eye-menu'].forEach(id => {
+  ['btn-eye-ahorro','btn-eye-menu','btn-eye-dashboard'].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.textContent = ahorroVisible ? '👁' : '🙈';
   });
