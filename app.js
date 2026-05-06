@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.18';
+const APP_VERSION = 'v2.19';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -37,6 +37,12 @@ let catalogoComentarios = [
   'Carls Jr','Jack In The Box','DQ','Pizza','Tacos','Sams',
   'Walmart','Oxxo','Hot Dogs','HBO MAX','Apple One','Boneless',
   '260','Costco','Gas','Luz','Agua','Internet'
+];
+
+// Catálogo de etiquetas (tags) — 2026
+let catalogoTags = [
+  '#comida','#viaje','#salud','#escuela','#trabajo','#regalo',
+  '#casa','#transporte','#suscripcion','#ropa','#tecnologia','#mascotas'
 ];
 let reglasAutomaticas = [
   { texto:'Amazon', cuenta:'', motivo:'Compra en Linea' },
@@ -221,6 +227,7 @@ const SNAP_KEYS = {
   'motivo':'mo','cuenta':'cu','fecha':'fe','movimientos':'mv',
   'excluirTotal':'et','nombre':'no','grupo':'gr','meta':'me',
   'destino':'de','origen':'or','nota':'nt','tipo':'ti',
+  'tags':'tg',
 };
 const SNAP_KEYS_REV = Object.fromEntries(Object.entries(SNAP_KEYS).map(([k,v])=>[v,k]));
 
@@ -246,7 +253,7 @@ function decompressSnap(obj) {
 
 function buildSnapshot() {
   return {
-    version:2, savedAt:new Date().toISOString(),
+    version:3, savedAt:new Date().toISOString(),
     gastos, historico, nextId, cuentasAhorro, nextAhorroId,
     excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
     recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
@@ -285,6 +292,7 @@ function applySnapshot(snap, opts = {}) {
   if (snap.catalogoCuentas)     catalogoCuentas     = snap.catalogoCuentas;
   if (snap.catalogoMotivos)     catalogoMotivos     = snap.catalogoMotivos;
   if (snap.catalogoComentarios) catalogoComentarios = snap.catalogoComentarios.map(c=>typeof c==='string'?c:(c.nombre||''));
+  if (snap.catalogoTags)        catalogoTags        = snap.catalogoTags;
   if (snap.reglasAutomaticas)   reglasAutomaticas   = snap.reglasAutomaticas;
   if (snap.recurrentes)         recurrentes         = snap.recurrentes;
   if (snap.nextRecId)           nextRecId           = snap.nextRecId;
@@ -958,7 +966,8 @@ function loadFromLocal() {
       if (data.excepciones)         excepciones         = data.excepciones;
       if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
       if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
-      if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
+      if (data.catalogoTags)        catalogoTags        = data.catalogoTags;
+  if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
       if (data.reglasAutomaticas)   reglasAutomaticas   = data.reglasAutomaticas;
       if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
       if (data.presupuesto)         PRESUPUESTO         = data.presupuesto;
@@ -1001,6 +1010,7 @@ function normGasto(x) {
     ahorroDesc:   x.ahorroDesc || x.AhorroDesc || '',
     periodoCorte: x.periodoCorte || null,
     updatedAt:    x.updatedAt || null,
+    tags:         x.tags || [],
   };
 }
 
@@ -4829,6 +4839,9 @@ window.addEventListener('DOMContentLoaded', () => {
   const fechaEl = document.getElementById('f-fecha');
   if (fechaEl) fechaEl.value = new Date().toISOString().slice(0,10);
   aplicarTema(localStorage.getItem('tema') || 'oscuro');
+  // Inicializar IndexedDB (no crítico, en segundo plano)
+  try { if (window.DB) DB.migrar(); } catch(e) {}
+
   // Renderizar menú con datos locales INMEDIATAMENTE
   showTab('menu');
   renderMenu();
