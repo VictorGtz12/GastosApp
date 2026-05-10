@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.21';
+const APP_VERSION = 'v2.22';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -75,6 +75,7 @@ let nextId = 1;
 let cuentasAhorro = [];
 let nextAhorroId = 1;
 let excepciones = []; // [{Cuenta, FechaOriginal, FechaExcepcion, Nota}]
+let ajustesPresupuesto = []; // [{semana, cantidad, ahorroId, ahorroNombre, fecha}]
 
 let abonado = false;
 let ignorar = false;
@@ -257,6 +258,7 @@ function buildSnapshot() {
     gastos, historico, nextId, cuentasAhorro, nextAhorroId,
     excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
     recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
+    ajustesPresupuesto,
   };
 }
 
@@ -300,6 +302,7 @@ function applySnapshot(snap, opts = {}) {
   if (snap.nextDeudaId)         nextDeudaId         = snap.nextDeudaId;
   if (snap.nextMovId)           nextMovId           = snap.nextMovId || 1;
   if (snap.presupuesto)         PRESUPUESTO         = snap.presupuesto;
+  if (snap.ajustesPresupuesto)  ajustesPresupuesto  = snap.ajustesPresupuesto;
   return true;
 }
 
@@ -903,7 +906,8 @@ function saveLocal() {
       cuentasAhorro, excepciones,
       catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
       presupuesto: PRESUPUESTO,
-      recurrentes, nextRecId, deudas, nextDeudaId, nextMovId
+      recurrentes, nextRecId, deudas, nextDeudaId, nextMovId,
+      ajustesPresupuesto,
     };
     localStorage.setItem('appData_v1', JSON.stringify(data));
     const ts = new Date().toISOString();
@@ -974,9 +978,10 @@ function loadFromLocal() {
       if (data.recurrentes)         recurrentes         = data.recurrentes  || [];
       if (data.nextRecId)           nextRecId           = data.nextRecId;
       if (data.deudas)              deudas              = data.deudas       || [];
-      if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId;
-      if (data.nextMovId)           nextMovId           = data.nextMovId || 1;
-      return;
+    if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId;
+    if (data.nextMovId)           nextMovId           = data.nextMovId || 1;
+    if (data.ajustesPresupuesto)  ajustesPresupuesto  = data.ajustesPresupuesto;
+    return;
     }
     // Fallback: claves legacy
     const tryGet = (...keys) => { for (const k of keys) { const v = localStorage.getItem(k); if (v !== null) return v; } return null; };
@@ -1223,8 +1228,14 @@ function renderChartAhorroHistorico() {
 function renderMenu() {
   const activos = gastos.filter(g => !g.ignorar);
   const total   = activos.reduce((s, g) => s + g.cantidad, 0);
-  const pct     = Math.min(100, Math.round(total / PRESUPUESTO * 100));
-  const disp    = Math.max(0, PRESUPUESTO - total);
+  // Calcular presupuesto ajustado (presupuesto base + ajustes de la semana actual)
+  const semanaAct = getWeek(new Date());
+  const ajusteSemana = (ajustesPresupuesto || [])
+    .filter(a => a.semana === semanaAct)
+    .reduce((s, a) => s + a.cantidad, 0);
+  const presupuestoAjustado = PRESUPUESTO + ajusteSemana;
+  const pct     = Math.min(100, Math.round(total / presupuestoAjustado * 100));
+  const disp    = Math.max(0, presupuestoAjustado - total);
   const extPend = [...gastos, ...historico].filter(g => g.externo === 'externo').reduce((s,g) => s+g.cantidad, 0);
   const totA    = cuentasAhorro.filter(c=>!c.excluirTotal).reduce((s, c) => s + saldoCuenta(c), 0);
 
@@ -1233,13 +1244,22 @@ function renderMenu() {
   document.getElementById('s-disp').className = 'stat-val ' + (disp < 500 ? 'red' : 'green');
   document.getElementById('s-ext').textContent    = fmt(extPend);
   document.getElementById('s-ahorro').textContent = fmt(totA);
-  document.getElementById('p-nums').textContent   = fmt(total) + ' / ' + fmt(PRESUPUESTO);
+  document.getElementById('p-nums').textContent   = fmt(total) + ' / ' + fmt(presupuestoAjustado);
 
   const fill = document.getElementById('p-fill');
   fill.style.width  = pct + '%';
   fill.className    = 'progress-fill' + (pct >= 100 ? ' over' : pct >= 80 ? ' warn' : '');
   document.getElementById('p-pct').textContent   = pct + '% usado';
-  document.getElementById('p-resta').textContent = 'Resta ' + fmt(disp);
+  const restaEl = document.getElementById('p-resta');
+  if (ajusteSemana > 0) {
+    restaEl.innerHTML = 'Resta ' + fmt(disp) + ' <span style="font-size:10px;color:var(--accent2)">(+' + fmt(ajusteSemana) + ' ajustado)</span>';
+  } else {
+    restaEl.textContent = 'Resta ' + fmt(disp);
+  }
+  // Hacer clic en Resta para abrir modal de aumentar presupuesto
+  restaEl.style.cursor = 'pointer';
+  restaEl.onclick = () => abrirAumentarPresupuesto();
+  restaEl.title = 'Toca para aumentar presupuesto desde ahorro';
 
   const rows = getCuentas().map(c => {
     const sum = activos.filter(g => g.cuenta === c).reduce((s,g) => s+g.cantidad, 0);
@@ -2648,6 +2668,68 @@ function showToast(msg) {
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2500);
+}
+
+// ── Aumentar presupuesto desde ahorro ─────────────────────────
+function abrirAumentarPresupuesto() {
+  const cuentasConSaldo = cuentasAhorro.filter(c => saldoCuenta(c) > 0);
+  if (!cuentasConSaldo.length) {
+    showToast('No hay cuentas de ahorro con saldo disponible');
+    return;
+  }
+  const semanaAct = getWeek(new Date());
+  const ajusteSemana = (ajustesPresupuesto || [])
+    .filter(a => a.semana === semanaAct)
+    .reduce((s, a) => s + a.cantidad, 0);
+  const activos = gastos.filter(g => !g.ignorar);
+  const total = activos.reduce((s, g) => s + g.cantidad, 0);
+  const disp = Math.max(0, PRESUPUESTO + ajusteSemana - total);
+
+  document.getElementById('aum-presup-semana').textContent = semanaAct;
+  document.getElementById('aum-presup-original').textContent = fmt(PRESUPUESTO);
+  document.getElementById('aum-presup-ajuste').textContent = ajusteSemana > 0 ? fmt(ajusteSemana) : '$0.00';
+  document.getElementById('aum-presup-total').textContent = fmt(PRESUPUESTO + ajusteSemana);
+  document.getElementById('aum-presup-gastado').textContent = fmt(total);
+  document.getElementById('aum-presup-disponible').textContent = fmt(disp);
+
+  const sel = document.getElementById('aum-ahorro-select');
+  sel.innerHTML = cuentasConSaldo.map(c =>
+    `<option value="${c.id}">${c.nombre} (${fmt(saldoCuenta(c))})</option>`
+  ).join('');
+  document.getElementById('aum-cantidad').value = '';
+  openModal('modal-aumentar-presupuesto');
+}
+
+function confirmarAumentarPresupuesto() {
+  const cantidad = parseFloat(document.getElementById('aum-cantidad').value);
+  if (!cantidad || cantidad <= 0) { showToast('Ingresa una cantidad válida'); return; }
+  const ahorroId = parseInt(document.getElementById('aum-ahorro-select').value);
+  const ca = cuentasAhorro.find(x => x.id === ahorroId);
+  if (!ca) { showToast('Selecciona una cuenta de ahorro'); return; }
+  if (cantidad > saldoCuenta(ca)) { showToast(`Saldo insuficiente en ${ca.nombre}`); return; }
+
+  // Registrar retiro en la cuenta de ahorro
+  ca.movimientos.push(nuevoMov({
+    tipo: 'retiro',
+    cantidad,
+    nota: `Ajuste presupuesto semanal`,
+    fecha: today()
+  }));
+
+  // Registrar ajuste de presupuesto
+  const semanaAct = getWeek(new Date());
+  ajustesPresupuesto.push({
+    semana: semanaAct,
+    cantidad,
+    ahorroId: ca.id,
+    ahorroNombre: ca.nombre,
+    fecha: today()
+  });
+
+  saveLocal();
+  closeModal('modal-aumentar-presupuesto');
+  showToast(`+${fmt(cantidad)} agregado al presupuesto desde ${ca.nombre} ✓`);
+  renderMenu();
 }
 
 
