@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.22';
+const APP_VERSION = 'v2.23';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1240,8 +1240,12 @@ function renderMenu() {
   const totA    = cuentasAhorro.filter(c=>!c.excluirTotal).reduce((s, c) => s + saldoCuenta(c), 0);
 
   document.getElementById('s-total').textContent = fmt(total);
-  document.getElementById('s-disp').textContent  = fmt(disp);
-  document.getElementById('s-disp').className = 'stat-val ' + (disp < 500 ? 'red' : 'green');
+  const dispEl = document.getElementById('s-disp');
+  dispEl.textContent  = fmt(disp);
+  dispEl.className = 'stat-val ' + (disp < 500 ? 'red' : 'green');
+  dispEl.style.cursor = 'pointer';
+  dispEl.onclick = () => abrirAumentarPresupuesto();
+  dispEl.title = 'Toca para aumentar presupuesto desde ahorro';
   document.getElementById('s-ext').textContent    = fmt(extPend);
   document.getElementById('s-ahorro').textContent = fmt(totA);
   document.getElementById('p-nums').textContent   = fmt(total) + ' / ' + fmt(presupuestoAjustado);
