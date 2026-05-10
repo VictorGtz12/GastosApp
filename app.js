@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.23';
+const APP_VERSION = 'v2.24';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
