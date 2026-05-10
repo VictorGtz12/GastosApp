@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.19';
+const APP_VERSION = 'v2.20';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1843,7 +1843,8 @@ function verHistorialAhorro(id) {
         const { label, color } = tipoLabel(m);
         const pos = m.tipo === 'abono' || m.tipo === 'traspaso-in';
         const nota = m.nota || m.tipo;
-        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+        const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)">
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:600;color:${color}">${label}</div>
             <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.fecha}${nota?' · '+nota:''}</div>
@@ -1852,11 +1853,154 @@ function verHistorialAhorro(id) {
             <div style="font-size:14px;font-weight:700;color:${color}">${pos?'+':'-'}${fmt(m.cantidad)}</div>
             <div style="font-size:10px;color:var(--text3)">${fmt(m.saldoAcum)}</div>
           </div>
+          <div style="display:flex;gap:4px;flex-shrink:0;margin-left:4px">
+            <button onclick="event.stopPropagation();editarMovimientoAhorro(${c.id},${m.movId})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:4px 7px;font-size:10px;cursor:pointer" title="Editar movimiento">✏️</button>
+            <button onclick="event.stopPropagation();eliminarMovimientoAhorro(${c.id},${m.movId})" style="background:rgba(255,94,122,.1);border:1px solid rgba(255,94,122,.3);color:var(--red);border-radius:6px;padding:4px 7px;font-size:10px;cursor:pointer" title="Eliminar movimiento">🗑</button>
+          </div>
         </div>`;
       }).join('')
     : '<div class="empty">Sin movimientos registrados</div>';
 
   openModal('modal-hist-ahorro');
+}
+
+function editarMovimientoAhorro(cuentaId, movId) {
+  const c = cuentasAhorro.find(x => x.id === cuentaId);
+  if (!c) return;
+  const m = c.movimientos.find(x => x.movId === movId);
+  if (!m) return;
+
+  const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
+
+  document.getElementById('editar-mov-cuenta-id').value = cuentaId;
+  document.getElementById('editar-mov-id').value = movId;
+  document.getElementById('editar-mov-fecha').value = m.fecha || today();
+  document.getElementById('editar-mov-cantidad').value = m.cantidad;
+  document.getElementById('editar-mov-nota').value = m.nota || '';
+
+  // Mostrar tipo actual y deshabilitar cambio si es traspaso
+  const tipoDisplay = document.getElementById('editar-mov-tipo-display');
+  const tipoLabels = { 'abono':'Abono', 'retiro':'Retiro', 'traspaso-in':'Entrada (traspaso)', 'traspaso-out':'Salida (traspaso)' };
+  tipoDisplay.textContent = tipoLabels[m.tipo] || m.tipo;
+  tipoDisplay.style.color = m.tipo === 'abono' || m.tipo === 'traspaso-in' ? 'var(--green)' : 'var(--red)';
+
+  // Si es traspaso, advertir que se editarán ambas cuentas
+  const advertencia = document.getElementById('editar-mov-advertencia');
+  if (esTraspaso) {
+    const otraCuenta = cuentasAhorro.find(x => x.id === (m.destino || m.origen));
+    advertencia.style.display = 'block';
+    advertencia.textContent = `⚠️ Este movimiento es parte de un traspaso con "${otraCuenta?.nombre || '?'}". Los cambios se aplicarán a ambas cuentas.`;
+  } else {
+    advertencia.style.display = 'none';
+  }
+
+  document.getElementById('modal-editar-mov-ahorro-title').textContent = `✏️ Editar movimiento - ${c.nombre}`;
+  openModal('modal-editar-mov-ahorro');
+}
+
+function confirmarEditarMovAhorro() {
+  const cuentaId = parseInt(document.getElementById('editar-mov-cuenta-id').value);
+  const movId = parseInt(document.getElementById('editar-mov-id').value);
+  const c = cuentasAhorro.find(x => x.id === cuentaId);
+  if (!c) return;
+  const m = c.movimientos.find(x => x.movId === movId);
+  if (!m) return;
+
+  const nuevaCantidad = parseFloat(document.getElementById('editar-mov-cantidad').value);
+  if (!nuevaCantidad || nuevaCantidad <= 0) { showToast('Ingresa una cantidad válida'); return; }
+  const nuevaNota = document.getElementById('editar-mov-nota').value || '';
+  const nuevaFecha = document.getElementById('editar-mov-fecha').value || today();
+
+  const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
+
+  // Actualizar este movimiento
+  m.cantidad = nuevaCantidad;
+  m.nota = nuevaNota;
+  m.fecha = nuevaFecha;
+
+  // Si es traspaso, actualizar también el movimiento emparejado
+  if (esTraspaso) {
+    const otroId = m.destino || m.origen;
+    if (otroId) {
+      const otraCuenta = cuentasAhorro.find(x => x.id === otroId);
+      if (otraCuenta) {
+        const otroMov = otraCuenta.movimientos.find(x =>
+          (m.tipo === 'traspaso-out' && x.tipo === 'traspaso-in' && x.origen === cuentaId) ||
+          (m.tipo === 'traspaso-in' && x.tipo === 'traspaso-out' && x.destino === cuentaId)
+        );
+        if (otroMov) {
+          otroMov.cantidad = nuevaCantidad;
+          otroMov.nota = nuevaNota;
+          otroMov.fecha = nuevaFecha;
+        }
+      }
+    }
+  }
+
+  saveLocal();
+  closeModal('modal-editar-mov-ahorro');
+  showToast('Movimiento actualizado ✓');
+  // Volver a abrir el historial para reflejar cambios
+  verHistorialAhorro(cuentaId);
+}
+
+function eliminarMovimientoAhorro(cuentaId, movId) {
+  window._eliminarMovCuentaId = cuentaId;
+  window._eliminarMovId = movId;
+  const c = cuentasAhorro.find(x => x.id === cuentaId);
+  const m = c?.movimientos.find(x => x.movId === movId);
+  if (!c || !m) return;
+  const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
+  document.getElementById('confirm-eliminar-desc').textContent =
+    `${m.tipo === 'abono' || m.tipo === 'traspaso-in' ? 'Abono' : 'Retiro'} de ${fmt(m.cantidad)} - ${c.nombre}${esTraspaso ? ' (traspaso)' : ''}${esTraspaso ? ' · Se eliminará de ambas cuentas' : ''}`;
+  // Cambiar texto del modal para que sea claro
+  const modalTitle = document.querySelector('#modal-confirm-eliminar h2');
+  if (modalTitle) modalTitle.textContent = '🗑 Eliminar movimiento';
+  const modalBody = document.querySelector('#modal-confirm-eliminar p');
+  if (modalBody) modalBody.textContent = '¿Seguro que quieres eliminar este movimiento?' + (esTraspaso ? ' También se eliminará de la otra cuenta.' : '');
+  openModal('modal-confirm-eliminar');
+  // Reemplazar temporalmente confirmarEliminar
+  window._confirmarEliminarOriginal = window.confirmarEliminarMovimientoAhorro;
+  window.confirmarEliminar = confirmarEliminarMovimientoAhorroHandler;
+}
+
+function confirmarEliminarMovimientoAhorroHandler() {
+  const cuentaId = window._eliminarMovCuentaId;
+  const movId = window._eliminarMovId;
+  const c = cuentasAhorro.find(x => x.id === cuentaId);
+  if (!c) return;
+  const m = c.movimientos.find(x => x.movId === movId);
+  if (!m) return;
+
+  const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
+
+  // Eliminar movimiento emparejado si es traspaso
+  if (esTraspaso) {
+    const otroId = m.destino || m.origen;
+    if (otroId) {
+      const otraCuenta = cuentasAhorro.find(x => x.id === otroId);
+      if (otraCuenta) {
+        const idxOtro = otraCuenta.movimientos.findIndex(x =>
+          (m.tipo === 'traspaso-out' && x.tipo === 'traspaso-in' && x.origen === cuentaId) ||
+          (m.tipo === 'traspaso-in' && x.tipo === 'traspaso-out' && x.destino === cuentaId)
+        );
+        if (idxOtro >= 0) otraCuenta.movimientos.splice(idxOtro, 1);
+      }
+    }
+  }
+
+  // Eliminar este movimiento
+  const idx = c.movimientos.findIndex(x => x.movId === movId);
+  if (idx >= 0) c.movimientos.splice(idx, 1);
+
+  saveLocal();
+  closeModal('modal-confirm-eliminar');
+  showToast('Movimiento eliminado ✓');
+
+  // Restaurar el handler original de confirmarEliminar
+  window.confirmarEliminar = window._confirmarEliminarOriginal || confirmarEliminar;
+  renderAhorros();
+  renderMenu();
 }
 
 function openMovAhorro(id, tipo) {
@@ -2169,11 +2313,10 @@ async function guardarGasto() {
     const idx = gastos.findIndex(x=>x.id===editingId);
     const gastoAnterior = idx >= 0 ? gastos[idx] : null;
 
-    // Si el gasto anterior tenía descuento de ahorro, revertir ese movimiento
-    if (gastoAnterior?.ahorroDesc) {
+    // Si el gasto anterior tenía descuento de ahorro y el nuevo no (o cambió de cuenta)
+    if (gastoAnterior?.ahorroDesc && (!descontarAhorro || ahorroSelNombre !== gastoAnterior.ahorroDesc)) {
       const cuentaAnterior = cuentasAhorro.find(c => c.nombre === gastoAnterior.ahorroDesc);
       if (cuentaAnterior) {
-        // Buscar por gastoId primero (más confiable), luego por coincidencia de datos
         const movIdx = cuentaAnterior.movimientos.findIndex(m =>
           m.tipo === 'retiro' && (
             m.gastoId === gastoAnterior.id ||
@@ -2182,7 +2325,22 @@ async function guardarGasto() {
              (m.nota || '').includes(gastoAnterior.motivo))
           )
         );
-        if (movIdx !== -1) cuentaAnterior.movimientos.splice(movIdx, 1);
+        if (movIdx !== -1) {
+          // Guardar estado pendiente para aplicar después de confirmación
+          window._guardarGastoPendiente = {
+            gasto, gastoAnterior, idx, cuentaAnterior, movIdx,
+            ahorroSelNombre, ahorroSelId, descontarAhorro,
+            _volverConcil: !!window._desdeConciliador
+          };
+          window._desdeConciliador = null;
+          const accion = descontarAhorro ? 'cambiar de cuenta' : 'desactivar';
+          modalConfirmar(
+            `⚠️ Este gasto tenía activado "Descontar de ${cuentaAnterior.nombre}" por ${fmt(gastoAnterior.cantidad)}. Al ${accion}, se registrará un ABONO de ${fmt(gastoAnterior.cantidad)} en "${cuentaAnterior.nombre}" para devolver el saldo. ¿Continuar?`,
+            _confirmarGuardarGastoConRevertAhorro
+          );
+          syncBloqueado = false;
+          return;
+        }
       }
     }
     if (idx >= 0) gastos[idx] = gasto;
@@ -2210,6 +2368,48 @@ async function guardarGasto() {
   window._desdeConciliador = null;
   resetForm(); editingId=null;
   showTab(_volverConcil ? 'conciliacion' : 'gastos');
+  showToast('Gasto guardado ✓');
+}
+
+function _confirmarGuardarGastoConRevertAhorro() {
+  const pending = window._guardarGastoPendiente;
+  if (!pending) return;
+  const { gasto, gastoAnterior, idx, cuentaAnterior, movIdx, ahorroSelNombre, ahorroSelId, descontarAhorro } = pending;
+
+  // Eliminar el retiro anterior de la cuenta de ahorro
+  cuentaAnterior.movimientos.splice(movIdx, 1);
+
+  // Registrar un ABONO en la cuenta anterior para devolver el saldo
+  cuentaAnterior.movimientos.push({
+    tipo: 'abono',
+    cantidad: gastoAnterior.cantidad,
+    nota: `Devolución - ${gastoAnterior.motivo} (editado)`,
+    fecha: gasto.fecha || today()
+  });
+
+  // Si el nuevo gasto tiene descuento en otra cuenta, agregar el retiro allí
+  if (descontarAhorro && ahorroSelId) {
+    const caNueva = cuentasAhorro.find(x => x.id === ahorroSelId);
+    if (caNueva) {
+      caNueva.movimientos.push({
+        tipo: 'retiro',
+        cantidad: gasto.cantidad,
+        nota: `Gasto: ${gasto.motivo}`,
+        fecha: gasto.fecha,
+        gastoId: gasto.id
+      });
+    }
+  }
+
+  // Actualizar el gasto
+  if (idx >= 0) gastos[idx] = gasto;
+
+  window._guardarGastoPendiente = null;
+  syncBloqueado = false;
+  saveLocal();
+  resetForm();
+  editingId = null;
+  showTab(pending._volverConcil ? 'conciliacion' : 'gastos');
   showToast('Gasto guardado ✓');
 }
 

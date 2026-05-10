@@ -293,7 +293,7 @@
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Sincronizar ahora
     </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.19</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.20</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -722,7 +722,18 @@
   </div>
 </div>
 
-<!-- MODAL: Confirmar eliminar -->
+<!-- MODAL: Confirmar genérico -->
+<div class="overlay" id="modal-confirmar">
+  <div class="modal">
+    <h2>⚠️ Confirmar</h2>
+    <p id="modal-confirmar-msg" style="margin-bottom:8px"></p>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-confirmar');window._confirmarCallback=null">Cancelar</button>
+      <button class="mbtn prim" onclick="_confirmarSi()">Continuar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Nuevo servicio recurrente -->
 <div class="overlay" id="modal-rec-servicio">
   <div class="modal">
@@ -834,7 +845,36 @@
   </div>
 </div>
 
-<!-- MODAL: Confirmar restaurar backup -->
+<!-- MODAL: Editar movimiento de ahorro -->
+<div class="overlay" id="modal-editar-mov-ahorro">
+  <div class="modal">
+    <h2 id="modal-editar-mov-ahorro-title">✏️ Editar movimiento</h2>
+    <div id="editar-mov-advertencia" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.3);border-radius:10px;padding:10px;margin-bottom:12px;font-size:12px;color:var(--orange)"></div>
+    <input type="hidden" id="editar-mov-cuenta-id">
+    <input type="hidden" id="editar-mov-id">
+    <div class="field">
+      <label>Tipo</label>
+      <div id="editar-mov-tipo-display" style="padding:11px 13px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);font-size:14px;font-weight:600"></div>
+    </div>
+    <div class="field">
+      <label>Fecha <span class="req">*</span></label>
+      <input type="date" id="editar-mov-fecha">
+    </div>
+    <div class="field">
+      <label>Cantidad <span class="req">*</span></label>
+      <input type="number" id="editar-mov-cantidad" placeholder="0.00" step="0.01" min="0" inputmode="decimal">
+    </div>
+    <div class="field">
+      <label>Nota</label>
+      <input type="text" id="editar-mov-nota" placeholder="Opcional...">
+    </div>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-editar-mov-ahorro')">Cancelar</button>
+      <button class="mbtn prim" onclick="confirmarEditarMovAhorro()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-backup-confirm">
   <div class="modal">
     <h2>📂 Restaurar backup</h2>
