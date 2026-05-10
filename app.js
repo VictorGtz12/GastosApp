@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.20';
+const APP_VERSION = 'v2.21';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1016,6 +1016,8 @@ function normGasto(x) {
 
 function normAhorro(c) {
   const excluir = c.excluirTotal === true || c.excluirTotal === 'SI' || c.excluirTotal === 'true';
+  // Si no hay nextMovId global, asignar uno inicial
+  if (typeof nextMovId === 'undefined' || nextMovId < 1) nextMovId = 1;
   return {
     id:           c.id || c.ID,
     nombre:       c.nombre || c.Nombre || '',
@@ -1029,6 +1031,7 @@ function normAhorro(c) {
       fecha:    String(m.fecha || '').slice(0, 10),
       destino:  m.destino ? Number(m.destino) : undefined,
       origen:   m.origen  ? Number(m.origen)  : undefined,
+      movId:    m.movId || nextMovId++, // ← asignar movId faltante
     })),
   };
 }
@@ -2124,7 +2127,7 @@ async function crearCuentaAhorro() {
     // Crear nueva
     const saldoInicial = parseFloat(document.getElementById('nc-saldo-inicial').value) || 0;
     const movimientos  = saldoInicial > 0
-      ? [{ tipo:'abono', cantidad: saldoInicial, nota:'Saldo inicial', fecha: today() }]
+      ? [nuevoMov({ tipo:'abono', cantidad: saldoInicial, nota:'Saldo inicial', fecha: today() })]
       : [];
     const nueva = { id: nextAhorroId++, nombre, meta, grupo, excluirTotal, movimientos };
     cuentasAhorro.push(nueva);
@@ -2352,12 +2355,12 @@ async function guardarGasto() {
   if (descontarAhorro && ahorroSelId) {
     const ca = cuentasAhorro.find(x=>x.id===ahorroSelId);
     if (ca) {
-      ca.movimientos.push({
+      ca.movimientos.push(nuevoMov({
         tipo:'retiro', cantidad,
         nota:`Gasto: ${gasto.motivo}`,
         fecha: gasto.fecha,
         gastoId: gasto.id  // guardar referencia al gasto
-      });
+      }));
     }
   }
 
@@ -2380,24 +2383,24 @@ function _confirmarGuardarGastoConRevertAhorro() {
   cuentaAnterior.movimientos.splice(movIdx, 1);
 
   // Registrar un ABONO en la cuenta anterior para devolver el saldo
-  cuentaAnterior.movimientos.push({
+  cuentaAnterior.movimientos.push(nuevoMov({
     tipo: 'abono',
     cantidad: gastoAnterior.cantidad,
     nota: `Devolución - ${gastoAnterior.motivo} (editado)`,
     fecha: gasto.fecha || today()
-  });
+  }));
 
   // Si el nuevo gasto tiene descuento en otra cuenta, agregar el retiro allí
   if (descontarAhorro && ahorroSelId) {
     const caNueva = cuentasAhorro.find(x => x.id === ahorroSelId);
     if (caNueva) {
-      caNueva.movimientos.push({
+      caNueva.movimientos.push(nuevoMov({
         tipo: 'retiro',
         cantidad: gasto.cantidad,
         nota: `Gasto: ${gasto.motivo}`,
         fecha: gasto.fecha,
         gastoId: gasto.id
-      });
+      }));
     }
   }
 
