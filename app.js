@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.25';
+const APP_VERSION = 'v2.26';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1036,7 +1036,7 @@ function normAhorro(c) {
       fecha:    String(m.fecha || '').slice(0, 10),
       destino:  m.destino ? Number(m.destino) : undefined,
       origen:   m.origen  ? Number(m.origen)  : undefined,
-      movId:    m.movId || nextMovId++, // ← asignar movId faltante
+      movId:    m.movId ?? nextMovId++, // ← asignar movId faltante (nullish coalescing)
     })),
   };
 }
@@ -1228,10 +1228,8 @@ function renderChartAhorroHistorico() {
 function renderMenu() {
   const activos = gastos.filter(g => !g.ignorar);
   const total   = activos.reduce((s, g) => s + g.cantidad, 0);
-  // Calcular presupuesto ajustado (presupuesto base + ajustes de la semana actual)
-  const semanaAct = getWeek(new Date());
+  // Calcular presupuesto ajustado: suma ACUMULADA de todos los aumentos, sin filtrar por semana
   const ajusteSemana = (ajustesPresupuesto || [])
-    .filter(a => a.semana === semanaAct)
     .reduce((s, a) => s + a.cantidad, 0);
   const presupuestoAjustado = PRESUPUESTO + ajusteSemana;
   const pct     = Math.min(100, Math.round(total / presupuestoAjustado * 100));
@@ -1794,7 +1792,12 @@ function renderAhorros() {
     g.cuentas.forEach(c => {
       const s   = saldoCuenta(c);
       const pct = c.meta ? Math.min(100, Math.round(s/c.meta*100)) : 0;
-      const ult = c.movimientos.slice(-3).reverse();
+      // Últimos 3 movimientos ordenados por fecha descendente
+      const ult = [...c.movimientos].sort((a,b) => {
+        const fA = a.fecha || '', fB = b.fecha || '';
+        if (fA !== fB) return fB.localeCompare(fA);
+        return ((b.movId||0) - (a.movId||0));
+      }).slice(0, 3);
       const excluida = !!c.excluirTotal;
       html += `<div class="ahorro-card" data-id="${c.id}" draggable="${dragModeActivo}"
         ondragstart="onAhorroDragStart(event,${c.id})" ondragend="onAhorroDragEnd(event)"
@@ -1846,14 +1849,20 @@ function verHistorialAhorro(id) {
   if (!c) return;
   const saldoFinal = saldoCuenta(c);
 
-  // Ordenar por movId (orden de creación), calcular saldo acumulado
-  const ordenados = [...c.movimientos].sort((a,b) => (a.movId||0) - (b.movId||0));
+  // Ordenar por fecha descendente (más reciente primero) y movId como desempate
+  const ordenados = [...c.movimientos].sort((a,b) => {
+    const fA = a.fecha || '', fB = b.fecha || '';
+    if (fA !== fB) return fB.localeCompare(fA); // descendente por fecha
+    return ((b.movId||0) - (a.movId||0));        // descendente por movId como desempate
+  });
+  // Calcular saldo acumulado desde el más antiguo (orden cronológico inverso)
+  const crono = [...ordenados].reverse();
   let saldoAcum = 0;
-  const movsConSaldo = ordenados.map(m => {
+  const movsConSaldo = crono.map(m => {
     const pos = m.tipo === 'abono' || m.tipo === 'traspaso-in';
     saldoAcum += pos ? m.cantidad : -m.cantidad;
     return { ...m, saldoAcum };
-  }).reverse(); // mostrar más reciente primero
+  }).reverse(); // regresar a orden descendente (más reciente primero)
 
   const tipoLabel = m => {
     if (m.tipo === 'abono')       return { label:'Abono',    color:'var(--green)' };
@@ -2628,9 +2637,12 @@ async function hacerCorte() {
   if (!gastos.length) { closeModal('modal-corte-sem'); showToast('No hay gastos que cortar'); return; }
   historico = [...gastos, ...historico];
   gastos = [];
+  // Reiniciar ajustes de presupuesto acumulados al comenzar nueva semana
+  const teniaAjustes = ajustesPresupuesto.length > 0;
+  ajustesPresupuesto = [];
   saveLocal();
   closeModal('modal-corte-sem');
-  showToast('¡Corte semanal realizado! ✓');
+  showToast(teniaAjustes ? '¡Corte realizado! Presupuesto reiniciado a la base ✓' : '¡Corte semanal realizado! ✓');
   renderMenu();
 }
 
@@ -2682,8 +2694,8 @@ function abrirAumentarPresupuesto() {
     return;
   }
   const semanaAct = getWeek(new Date());
+  // Suma ACUMULADA de todos los aumentos (sin filtrar por semana)
   const ajusteSemana = (ajustesPresupuesto || [])
-    .filter(a => a.semana === semanaAct)
     .reduce((s, a) => s + a.cantidad, 0);
   const activos = gastos.filter(g => !g.ignorar);
   const total = activos.reduce((s, g) => s + g.cantidad, 0);
