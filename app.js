@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.26';
+const APP_VERSION = 'v2.27';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1069,6 +1069,8 @@ function showTab(tab) {
   document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
   if (tab === 'nuevo' && !editingId) {
     const fe = document.getElementById('f-fecha'); if (fe && !fe.value) fe.value = today();
+    // Mostrar el catálogo de comentarios automáticamente al abrir el formulario
+    setTimeout(() => openComentarioDropdown(), 300);
   }
   if (tab === 'gastos')    renderGastos();
   if (tab === 'externos')  renderExternos();
@@ -4858,8 +4860,18 @@ function openComentarioDropdown() {
   const input    = document.getElementById('f-comentarios-input');
   const q        = input.value.trim().toLowerCase();
 
+  // Asegurar catálogo con valores por defecto si está vacío
+  if (!catalogoComentarios || catalogoComentarios.length === 0) {
+    catalogoComentarios = [
+      'Starbucks','Caffenio','Amazon','Mercado Libre','Chipotles',
+      'Carls Jr','Jack In The Box','DQ','Pizza','Tacos','Sams',
+      'Walmart','Oxxo','Hot Dogs','HBO MAX','Apple One','Boneless',
+      '260','Costco','Gas','Luz','Agua','Internet'
+    ];
+  }
+
   // Normalizar: el catálogo puede tener strings u objetos {nombre:...}
-  const todos = (catalogoComentarios || []).map(c =>
+  const todos = catalogoComentarios.map(c =>
     typeof c === 'string' ? c : (c.nombre || c.Nombre || String(c))
   ).filter(Boolean);
 
