@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.27';
+const APP_VERSION = 'v2.29';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1070,7 +1070,7 @@ function showTab(tab) {
   if (tab === 'nuevo' && !editingId) {
     const fe = document.getElementById('f-fecha'); if (fe && !fe.value) fe.value = today();
     // Mostrar el catálogo de comentarios automáticamente al abrir el formulario
-    setTimeout(() => openComentarioDropdown(), 300);
+    setTimeout(() => precargarComentarioDropdown(), 50);
   }
   if (tab === 'gastos')    renderGastos();
   if (tab === 'externos')  renderExternos();
@@ -2268,6 +2268,42 @@ function refreshAhorroSelector() {
   ).join('');
 }
 
+function buscarRetiroAhorroPorGasto(cuenta, gasto) {
+  if (!cuenta || !gasto) return -1;
+  return cuenta.movimientos.findIndex(m =>
+    m.tipo === 'retiro' && (
+      m.gastoId === gasto.id ||
+      (!m.gastoId &&
+       m.cantidad === gasto.cantidad &&
+       m.fecha === gasto.fecha &&
+       (m.nota || '').includes(gasto.motivo))
+    )
+  );
+}
+
+function upsertRetiroAhorroGasto(gasto, ahorroId, gastoAnterior = null) {
+  const ca = cuentasAhorro.find(x => x.id === ahorroId);
+  if (!ca) return;
+  let idx = buscarRetiroAhorroPorGasto(ca, gasto);
+  if (idx < 0 && gastoAnterior) idx = buscarRetiroAhorroPorGasto(ca, gastoAnterior);
+  const campos = {
+    tipo: 'retiro',
+    cantidad: gasto.cantidad,
+    nota: `Gasto: ${gasto.motivo}`,
+    fecha: gasto.fecha,
+    gastoId: gasto.id
+  };
+  if (idx >= 0) {
+    ca.movimientos[idx] = { ...ca.movimientos[idx], ...campos };
+    for (let i = ca.movimientos.length - 1; i > idx; i--) {
+      const m = ca.movimientos[i];
+      if (m.tipo === 'retiro' && m.gastoId === gasto.id) ca.movimientos.splice(i, 1);
+    }
+  } else {
+    ca.movimientos.push(nuevoMov(campos));
+  }
+}
+
 function normalizarTextoRegla(txt) {
   return String(txt || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
@@ -2316,6 +2352,7 @@ async function guardarGasto() {
 
   const isEditing = !!editingId;
   const isHistorico = window._editandoHistorico === true;
+  let gastoAnterior = null;
   const gasto = {
     id:           editingId || nextId++,
     fecha:        document.getElementById('f-fecha')?.value || today(),
@@ -2349,25 +2386,18 @@ async function guardarGasto() {
   }
   if (isEditing) {
     const idx = gastos.findIndex(x=>x.id===editingId);
-    const gastoAnterior = idx >= 0 ? gastos[idx] : null;
+    gastoAnterior = idx >= 0 ? gastos[idx] : null;
 
     // Si el gasto anterior tenía descuento de ahorro y el nuevo no (o cambió de cuenta)
     if (gastoAnterior?.ahorroDesc && (!descontarAhorro || ahorroSelNombre !== gastoAnterior.ahorroDesc)) {
       const cuentaAnterior = cuentasAhorro.find(c => c.nombre === gastoAnterior.ahorroDesc);
       if (cuentaAnterior) {
-        const movIdx = cuentaAnterior.movimientos.findIndex(m =>
-          m.tipo === 'retiro' && (
-            m.gastoId === gastoAnterior.id ||
-            (m.cantidad === gastoAnterior.cantidad &&
-             m.fecha === gastoAnterior.fecha &&
-             (m.nota || '').includes(gastoAnterior.motivo))
-          )
-        );
+        const movIdx = buscarRetiroAhorroPorGasto(cuentaAnterior, gastoAnterior);
         if (movIdx !== -1) {
           // Guardar estado pendiente para aplicar después de confirmación
           window._guardarGastoPendiente = {
-            gasto, gastoAnterior, idx, cuentaAnterior, movIdx,
-            ahorroSelNombre, ahorroSelId, descontarAhorro,
+            gasto, gastoAnterior, idx, cuentaAnterior,
+            ahorroSelId, descontarAhorro,
             _volverConcil: !!window._desdeConciliador
           };
           window._desdeConciliador = null;
@@ -2388,15 +2418,7 @@ async function guardarGasto() {
 
   // Descontar del ahorro si aplica (nuevo o edición con ahorro)
   if (descontarAhorro && ahorroSelId) {
-    const ca = cuentasAhorro.find(x=>x.id===ahorroSelId);
-    if (ca) {
-      ca.movimientos.push(nuevoMov({
-        tipo:'retiro', cantidad,
-        nota:`Gasto: ${gasto.motivo}`,
-        fecha: gasto.fecha,
-        gastoId: gasto.id  // guardar referencia al gasto
-      }));
-    }
+    upsertRetiroAhorroGasto(gasto, ahorroSelId, gastoAnterior);
   }
 
   // Guardar todo junto
@@ -2412,10 +2434,7 @@ async function guardarGasto() {
 function _confirmarGuardarGastoConRevertAhorro() {
   const pending = window._guardarGastoPendiente;
   if (!pending) return;
-  const { gasto, gastoAnterior, idx, cuentaAnterior, movIdx, ahorroSelNombre, ahorroSelId, descontarAhorro } = pending;
-
-  // Eliminar el retiro anterior de la cuenta de ahorro
-  cuentaAnterior.movimientos.splice(movIdx, 1);
+  const { gasto, gastoAnterior, idx, cuentaAnterior, ahorroSelId, descontarAhorro } = pending;
 
   // Registrar un ABONO en la cuenta anterior para devolver el saldo
   cuentaAnterior.movimientos.push(nuevoMov({
@@ -2427,16 +2446,7 @@ function _confirmarGuardarGastoConRevertAhorro() {
 
   // Si el nuevo gasto tiene descuento en otra cuenta, agregar el retiro allí
   if (descontarAhorro && ahorroSelId) {
-    const caNueva = cuentasAhorro.find(x => x.id === ahorroSelId);
-    if (caNueva) {
-      caNueva.movimientos.push(nuevoMov({
-        tipo: 'retiro',
-        cantidad: gasto.cantidad,
-        nota: `Gasto: ${gasto.motivo}`,
-        fecha: gasto.fecha,
-        gastoId: gasto.id
-      }));
-    }
+    upsertRetiroAhorroGasto(gasto, ahorroSelId);
   }
 
   // Actualizar el gasto
@@ -4854,13 +4864,7 @@ function actualizarSelectMotivos() {
   sel.innerHTML = catalogoMotivos.map(m => `<option${m===cur?' selected':''}>${m}</option>`).join('');
 }
 
-// El campo comentarios es un combo: dropdown + input libre
-function openComentarioDropdown() {
-  const dropdown = document.getElementById('comentario-dropdown');
-  const input    = document.getElementById('f-comentarios-input');
-  const q        = input.value.trim().toLowerCase();
-
-  // Asegurar catálogo con valores por defecto si está vacío
+function normalizarCatalogoComentarios() {
   if (!catalogoComentarios || catalogoComentarios.length === 0) {
     catalogoComentarios = [
       'Starbucks','Caffenio','Amazon','Mercado Libre','Chipotles',
@@ -4869,11 +4873,34 @@ function openComentarioDropdown() {
       '260','Costco','Gas','Luz','Agua','Internet'
     ];
   }
-
-  // Normalizar: el catálogo puede tener strings u objetos {nombre:...}
-  const todos = catalogoComentarios.map(c =>
+  const vistos = new Set();
+  catalogoComentarios = catalogoComentarios.map(c =>
     typeof c === 'string' ? c : (c.nombre || c.Nombre || String(c))
-  ).filter(Boolean);
+  ).map(c => c.trim()).filter(c => {
+    const key = c.toLowerCase();
+    if (!c || vistos.has(key)) return false;
+    vistos.add(key);
+    return true;
+  });
+  return catalogoComentarios;
+}
+
+function precargarComentarioDropdown() {
+  normalizarCatalogoComentarios();
+  const dropdown = document.getElementById('comentario-dropdown');
+  const input = document.getElementById('f-comentarios-input');
+  if (!dropdown || !input) return;
+  openComentarioDropdown();
+}
+
+// El campo comentarios es un combo: dropdown + input libre
+function openComentarioDropdown() {
+  const dropdown = document.getElementById('comentario-dropdown');
+  const input    = document.getElementById('f-comentarios-input');
+  if (!dropdown || !input) return;
+  const q        = input.value.trim().toLowerCase();
+
+  const todos = normalizarCatalogoComentarios();
 
   const items = q ? todos.filter(c => c.toLowerCase().includes(q)) : todos;
 
@@ -5148,6 +5175,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('main-app').style.display = 'block';
   actualizarSelectCuentas();
   actualizarSelectMotivos();
+  normalizarCatalogoComentarios();
   // Inicializar fecha
   const fechaEl = document.getElementById('f-fecha');
   if (fechaEl) fechaEl.value = new Date().toISOString().slice(0,10);
