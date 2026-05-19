@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.31';
+const APP_VERSION = 'v2.32';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -78,6 +78,7 @@ let excepciones = []; // [{Cuenta, FechaOriginal, FechaExcepcion, Nota}]
 let ajustesPresupuesto = []; // [{semana, cantidad, ahorroId, ahorroNombre, fecha}]
 
 let abonado = false;
+let abonoTarjeta = false;
 let ignorar = false;
 let externo = 'no';
 let descontarAhorro = false;
@@ -228,7 +229,7 @@ const SNAP_KEYS = {
   'motivo':'mo','cuenta':'cu','fecha':'fe','movimientos':'mv',
   'excluirTotal':'et','nombre':'no','grupo':'gr','meta':'me',
   'destino':'de','origen':'or','nota':'nt','tipo':'ti',
-  'tags':'tg',
+  'tags':'tg','abonoTarjeta':'at',
 };
 const SNAP_KEYS_REV = Object.fromEntries(Object.entries(SNAP_KEYS).map(([k,v])=>[v,k]));
 
@@ -1016,6 +1017,7 @@ function normGasto(x) {
     periodoCorte: x.periodoCorte || null,
     updatedAt:    x.updatedAt || null,
     tags:         x.tags || [],
+    abonoTarjeta: x.abonoTarjeta === true,
   };
 }
 
@@ -1410,6 +1412,7 @@ function renderGastos() {
           ${historicoBloqueaMasivo ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">Edita en historial</span>' : ''}
           ${gastoPendienteSync(g) ? '<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);border:1px solid rgba(255,159,67,.3);padding:1px 6px;border-radius:6px;font-weight:600">⬆️ Sin sync</span>' : ''}
           ${g.desdeConciliador ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Banco</span>' : ''}
+          ${g.abonoTarjeta ? '<span style="font-size:9px;background:rgba(34,211,165,.15);color:var(--green);border:1px solid rgba(34,211,165,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Abono</span>' : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
@@ -1583,13 +1586,17 @@ function renderCortes() {
       new Date(desde + 'T00:00:00'),
       new Date(hasta + 'T23:59:59')
     ) : [];
-    const total  = gp.reduce((s,g) => s+g.cantidad, 0);
-    const sinAbonar = gp.filter(g => !g.abonado && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
-    const histPend = historico.filter(g => g.cuenta === cuenta && !g.abonado && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
-    const externosPend = all.filter(g => g.cuenta === cuenta && g.externo === 'externo').reduce((s,g) => s+g.cantidad, 0);
+    const gastosPeriodo = gp.filter(g => !g.abonoTarjeta);
+    const abonosPeriodo = gp.filter(g => g.abonoTarjeta);
+    const totalGastos = gastosPeriodo.reduce((s,g) => s+g.cantidad, 0);
+    const totalAbonos = abonosPeriodo.reduce((s,g) => s+g.cantidad, 0);
+    const total = totalGastos - totalAbonos; // abonos reducen la deuda
+    const sinAbonar = gastosPeriodo.filter(g => !g.abonado && g.externo === 'no').reduce((s,g) => s+g.cantidad, 0);
+    const histPend = historico.filter(g => g.cuenta === cuenta && !g.abonado && g.externo === 'no' && !g.abonoTarjeta).reduce((s,g) => s+g.cantidad, 0);
+    const externosPend = all.filter(g => g.cuenta === cuenta && g.externo === 'externo' && !g.abonoTarjeta).reduce((s,g) => s+g.cantidad, 0);
     const diasR  = hasta ? Math.ceil((new Date(hasta+'T12:00:00') - hoy) / 864e5) : 0;
     const vencida = diasR < 0;
-    return { cuenta, c, key, hasta, desde, gp, total, sinAbonar, histPend, externosPend, diasR, vencida };
+    return { cuenta, c, key, hasta, desde, gp, total, totalGastos, totalAbonos, sinAbonar, histPend, externosPend, diasR, vencida };
   });
 
   const totalPeriodo = estados.reduce((s,e) => s + e.total, 0);
@@ -1600,14 +1607,14 @@ function renderCortes() {
   const resumen = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px;margin-bottom:12px">
     <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Estado de tarjeta</div>
     <div class="stat-grid" style="margin-bottom:0">
-      <div class="stat-card"><div class="stat-label">Periodo</div><div class="stat-val red">${fmt(totalPeriodo)}</div></div>
+      <div class="stat-card"><div class="stat-label">Deuda en periodo</div><div class="stat-val red">${fmt(totalPeriodo)}</div></div>
       <div class="stat-card"><div class="stat-label">Sin abonar</div><div class="stat-val orange">${fmt(totalSinAbonar)}</div></div>
       <div class="stat-card"><div class="stat-label">Hist. pendiente</div><div class="stat-val orange">${fmt(totalHistPend)}</div></div>
       <div class="stat-card"><div class="stat-label">Por cobrar</div><div class="stat-val green">${fmt(totalExternos)}</div></div>
     </div>
   </div>`;
 
-  const cards = estados.map(({cuenta, c, desde, hasta, total, sinAbonar, histPend, externosPend, diasR, vencida}) => {
+  const cards = estados.map(({cuenta, c, desde, hasta, totalGastos, totalAbonos, total, sinAbonar, histPend, externosPend, diasR, vencida}) => {
     return `<div class="tarjeta-card" onclick="openCorteTarjeta('${cuenta}')" style="${vencida?'border-color:var(--orange)':''}">
       <div class="tarjeta-header">
         <span class="tarjeta-nombre"><span class="dot" style="background:${c.color}"></span>${cuenta}</span>
@@ -1620,6 +1627,8 @@ function renderCortes() {
         </strong>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        <span style="font-size:10px;background:rgba(239,68,68,.12);color:var(--red);padding:2px 6px;border-radius:6px">Gastos ${fmt(totalGastos)}</span>
+        ${totalAbonos ? `<span style="font-size:10px;background:rgba(34,211,165,.12);color:var(--green);padding:2px 6px;border-radius:6px">Abonos ${fmt(totalAbonos)}</span>` : ''}
         ${sinAbonar ? `<span style="font-size:10px;background:rgba(255,159,67,.14);color:var(--orange);padding:2px 6px;border-radius:6px">Sin abonar ${fmt(sinAbonar)}</span>` : ''}
         ${histPend ? `<span style="font-size:10px;background:rgba(255,159,67,.14);color:var(--orange);padding:2px 6px;border-radius:6px">Hist. ${fmt(histPend)}</span>` : ''}
         ${externosPend ? `<span style="font-size:10px;background:rgba(34,211,165,.12);color:var(--green);padding:2px 6px;border-radius:6px">Por cobrar ${fmt(externosPend)}</span>` : ''}
@@ -1671,7 +1680,11 @@ function openCorteTarjeta(cuenta) {
       new Date(desde + 'T00:00:00'),
       new Date(hasta + 'T23:59:59')
     ) : [];
-    const total = gp.reduce((s,g) => s+g.cantidad, 0);
+    const gastosPeriodo = gp.filter(g => !g.abonoTarjeta);
+    const abonosPeriodo = gp.filter(g => g.abonoTarjeta);
+    const totalGastos = gastosPeriodo.reduce((s,g) => s+g.cantidad, 0);
+    const totalAbonos = abonosPeriodo.reduce((s,g) => s+g.cantidad, 0);
+    const total = totalGastos - totalAbonos;
 
     const label = esActual
       ? (vencida ? '⚠️ Período vencido' : `Período activo · ${diasR===0?'Corte hoy':diasR+' días para corte'}`)
@@ -1693,10 +1706,18 @@ function openCorteTarjeta(cuenta) {
       </div>
 
       <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Total del período</div>
-        <div style="font-size:26px;font-weight:700;color:${total>0?'var(--red)':'var(--text2)'}">${fmt(total)}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">${gp.length} gasto${gp.length!==1?'s':''}</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Deuda del período</div>
+        <div style="font-size:26px;font-weight:700;color:${total>0?'var(--red)':total<0?'var(--green)':'var(--text2)'}">${fmt(total)}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">
+          ${gastosPeriodo.length} gasto${gastosPeriodo.length!==1?'s':''}
+          ${abonosPeriodo.length ? `· ${abonosPeriodo.length} abono${abonosPeriodo.length!==1?'s':''}` : ''}
+        </div>
       </div>
+
+      ${totalAbonos ? `<div style="background:rgba(34,211,165,.08);border:1px solid rgba(34,211,165,.2);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:var(--green);font-weight:500">🏦 Abonos recibidos</span>
+        <span style="font-size:16px;font-weight:700;color:var(--green)">${fmt(totalAbonos)}</span>
+      </div>` : ''}
 
       ${esActual && vencida ? `<button onclick="showToast('Haz el corte semanal desde el Menú')" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:white;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:10px">✂️ Ir al corte semanal</button>` : ''}
 
@@ -1707,14 +1728,14 @@ function openCorteTarjeta(cuenta) {
       ${gp.length
         ? gp.sort((a,b)=>(Number(b.id)||0)-(Number(a.id)||0)||String(b.fecha).localeCompare(String(a.fecha))).map(g=>`
           <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:16px">${getMotivoIcon(g.motivo)}</span>
+            <span style="font-size:16px">${g.abonoTarjeta ? '🏦' : getMotivoIcon(g.motivo)}</span>
             <div style="flex:1">
-              <div style="font-size:13px;font-weight:600;color:var(--text)">${g.motivo}</div>
+              <div style="font-size:13px;font-weight:600;color:${g.abonoTarjeta?'var(--green)':'var(--text)'}">${g.abonoTarjeta ? 'Abono' : g.motivo}</div>
               <div style="font-size:11px;color:var(--text2)">${String(g.fecha).slice(0,10)}${g.comentarios?' · '+g.comentarios:''}</div>
             </div>
-            <div style="font-size:14px;font-weight:700;color:var(--text)">${fmt(g.cantidad)}</div>
+            <div style="font-size:14px;font-weight:700;color:${g.abonoTarjeta?'var(--green)':'var(--text)'}">${g.abonoTarjeta?'-':''}${fmt(g.cantidad)}</div>
           </div>`).join('')
-        : '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px">Sin gastos en este período</div>'}
+        : '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px">Sin movimientos en este período</div>'}
 
       <div class="modal-actions" style="margin-top:14px">
         <button class="mbtn sec" onclick="closeModal('modal-corte-tarjeta')">Cerrar</button>
@@ -2212,6 +2233,7 @@ function renderHistorico() {
             ${g.abonado?'<span style="font-size:9px;background:rgba(34,211,165,.15);color:var(--green);padding:1px 5px;border-radius:6px;font-weight:600">✓ Abonado</span>':''}
             ${g.ignorar?'<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">Ignorado</span>':''}
             ${g.desdeConciliador?'<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);padding:1px 5px;border-radius:6px;font-weight:600">🏦 Banco</span>':''}
+            ${g.abonoTarjeta?'<span style="font-size:9px;background:rgba(34,211,165,.15);color:var(--green);border:1px solid rgba(34,211,165,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Abono</span>':''}
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
@@ -2224,6 +2246,24 @@ function renderHistorico() {
 }
 
 // ── Formulario nuevo gasto ────────────────────────────────────
+function setAbonoTarjeta(v) {
+  abonoTarjeta = !!v;
+  document.getElementById('abono-tarjeta-si').classList.toggle('sel-no',!v);
+  document.getElementById('abono-tarjeta-no').classList.toggle('sel-no',v);
+}
+
+function toggleAbonoTarjetaVisibility() {
+  const sel = document.getElementById('f-cuenta');
+  const cuenta = sel ? sel.value : '';
+  const cfg = getCortesConfig();
+  const esTarjeta = !!cfg[cuenta];
+  const wrap = document.getElementById('abono-tarjeta-wrap');
+  if (wrap) {
+    wrap.style.display = esTarjeta ? '' : 'none';
+    if (!esTarjeta && abonoTarjeta) setAbonoTarjeta(false);
+  }
+}
+
 function setAb(v){
   abonado=v;
   document.getElementById('ab-no').className='tog'+(v?'':' sel-no');
@@ -2360,7 +2400,9 @@ async function guardarGasto() {
     motivo:       document.getElementById('f-motivo').value,
     cantidad,
     comentarios:  document.getElementById('f-comentarios-input').value,
-    abonado, ignorar, externo,
+    abonado:      abonoTarjeta ? true : abonado,
+    ignorar, externo,
+    abonoTarjeta,
     reembolsoPersona: externo !== 'no' ? (document.getElementById('f-reembolso-persona')?.value || '').trim() : '',
     reembolsoFecha:   externo !== 'no' ? (document.getElementById('f-reembolso-fecha')?.value || '') : '',
     reembolsoNota:    externo !== 'no' ? (document.getElementById('f-reembolso-nota')?.value || '').trim() : '',
@@ -2470,7 +2512,8 @@ function resetForm() {
   document.getElementById('f-cuenta').selectedIndex = 0;
   document.getElementById('f-motivo').selectedIndex  = 0;
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = today();
-  setAb(false); setIg(false); setExt('no'); setDescAhorro(false);
+  setAb(false); setAbonoTarjeta(false); setIg(false); setExt('no'); setDescAhorro(false);
+  document.getElementById('abono-tarjeta-wrap').style.display = 'none';
 }
 function cancelForm() {
   editingId=null; resetForm();
@@ -2537,6 +2580,8 @@ function editarHistorico(id) {
     setIg(!!g.ignorar);
     setExt(g.externo || 'no');
     llenarReembolsoForm(g);
+    toggleAbonoTarjetaVisibility();
+    if (g.abonoTarjeta) setAbonoTarjeta(true);
     // Marcar que es del historico
     window._editandoHistorico = true;
     showToast('Editando gasto del historial');
@@ -2552,6 +2597,8 @@ function editarDirecto(id) {
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
   setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); llenarReembolsoForm(g);
+  toggleAbonoTarjetaVisibility();
+  if (g.abonoTarjeta) setAbonoTarjeta(true);
   // Restaurar estado de descuento de ahorro
   if (g.ahorroDesc) {
     setDescAhorro(true);
@@ -2577,6 +2624,8 @@ function editar(id) {
   document.getElementById('f-comentarios-input').value  = g.comentarios||'';
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
   setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); llenarReembolsoForm(g);
+  toggleAbonoTarjetaVisibility();
+  if (g.abonoTarjeta) setAbonoTarjeta(true);
   // Restaurar estado de descuento de ahorro
   if (g.ahorroDesc) {
     setDescAhorro(true);
@@ -2840,9 +2889,10 @@ function confirmarRestaurarBackup() {
 function exportarBackupExcel() {
   if (typeof XLSX === 'undefined') { showToast('Cargando...'); return; }
   const wb  = XLSX.utils.book_new();
-  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Reembolso Persona','Reembolso Fecha','Reembolso Nota','Ignorar','Ahorro','Semana'];
+  const hdr = ['ID','Fecha','Cuenta','Motivo','Cantidad','Comentarios','Abonado','Externo','Reembolso Persona','Reembolso Fecha','Reembolso Nota','Ignorar','Ahorro','Semana','Abono Tarjeta'];
   const toR = g => [g.id,g.fecha,g.cuenta,g.motivo,g.cantidad,g.comentarios||'',
-    g.abonado?'SI':'NO',g.externo||'no',g.reembolsoPersona||'',g.reembolsoFecha||'',g.reembolsoNota||'',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana];
+    g.abonado?'SI':'NO',g.externo||'no',g.reembolsoPersona||'',g.reembolsoFecha||'',g.reembolsoNota||'',g.ignorar?'SI':'NO',g.ahorroDesc||'',g.semana,
+    g.abonoTarjeta?'SI':'NO'];
   const ws1 = XLSX.utils.aoa_to_sheet([hdr,...gastos.map(toR)]);
   XLSX.utils.book_append_sheet(wb, ws1, 'Semana Actual');
   const ws2 = XLSX.utils.aoa_to_sheet([hdr,...historico.map(toR)]);
