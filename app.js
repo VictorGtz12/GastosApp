@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.32';
+const APP_VERSION = 'v2.33';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -2379,6 +2379,14 @@ async function guardarGasto() {
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
   if (!cantidad||cantidad<=0) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
 
+  const isEditing = !!editingId;
+  const isHistorico = window._editandoHistorico === true;
+  let gastoAnterior = null;
+  if (isEditing && !isHistorico) {
+    const _idx = gastos.findIndex(x => x.id === editingId);
+    gastoAnterior = _idx >= 0 ? gastos[_idx] : null;
+  }
+
   // Verificar saldo si se descuenta de ahorro
   let ahorroSelId = null, ahorroSelNombre = '';
   if (descontarAhorro) {
@@ -2386,13 +2394,22 @@ async function guardarGasto() {
     ahorroSelId = parseInt(sel.value);
     const ca = cuentasAhorro.find(x=>x.id===ahorroSelId);
     if (!ca) { syncBloqueado = false; showToast('Selecciona una cuenta de ahorro'); return; }
-    if (cantidad > saldoCuenta(ca)) { syncBloqueado = false; showToast(`Saldo insuficiente en ${ca.nombre}`); return; }
+    // Si es edición y el gasto anterior ya tenía descuento en esta misma cuenta,
+    // la cantidad ya fue descontada previamente. Solo verificar si AUMENTÓ.
+    if (gastoAnterior && gastoAnterior.ahorroDesc === ca.nombre) {
+      const diferencia = cantidad - gastoAnterior.cantidad;
+      if (diferencia > 0 && diferencia > saldoCuenta(ca)) {
+        syncBloqueado = false;
+        showToast(`Saldo insuficiente en ${ca.nombre}`);
+        return;
+      }
+    } else if (cantidad > saldoCuenta(ca)) {
+      syncBloqueado = false;
+      showToast(`Saldo insuficiente en ${ca.nombre}`);
+      return;
+    }
     ahorroSelNombre = ca.nombre;
   }
-
-  const isEditing = !!editingId;
-  const isHistorico = window._editandoHistorico === true;
-  let gastoAnterior = null;
   const gasto = {
     id:           editingId || nextId++,
     fecha:        document.getElementById('f-fecha')?.value || today(),
@@ -2428,7 +2445,6 @@ async function guardarGasto() {
   }
   if (isEditing) {
     const idx = gastos.findIndex(x=>x.id===editingId);
-    gastoAnterior = idx >= 0 ? gastos[idx] : null;
 
     // Si el gasto anterior tenía descuento de ahorro y el nuevo no (o cambió de cuenta)
     if (gastoAnterior?.ahorroDesc && (!descontarAhorro || ahorroSelNombre !== gastoAnterior.ahorroDesc)) {

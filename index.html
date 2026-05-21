@@ -310,7 +310,7 @@
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Sincronizar ahora
     </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.32</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.33</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -791,18 +791,6 @@
   </div>
 </div>
 
-<div class="overlay" id="modal-confirm-eliminar">
-  <div class="modal">
-    <h2>🗑 Eliminar gasto</h2>
-    <p style="margin-bottom:8px">¿Seguro que quieres eliminar este gasto?</p>
-    <p style="font-size:12px;color:var(--accent2);font-weight:500" id="confirm-eliminar-desc"></p>
-    <div class="modal-actions">
-      <button class="mbtn sec" onclick="closeModal('modal-confirm-eliminar')">Cancelar</button>
-      <button class="mbtn danger" onclick="confirmarEliminar()">Eliminar</button>
-    </div>
-  </div>
-</div>
-
 <!-- MODAL: Ajustes -->
 <div class="overlay" id="modal-ajustes">
   <div class="modal">
@@ -865,6 +853,19 @@
     </div>
     <div id="hist-ahorro-saldo" style="font-size:13px;color:var(--accent2);font-weight:600;margin-bottom:12px"></div>
     <div id="hist-ahorro-lista" style="overflow-y:auto;flex:1;min-height:0"></div>
+  </div>
+</div>
+
+<!-- MODAL: Confirmar eliminación -->
+<div class="overlay" id="modal-confirm-eliminar">
+  <div class="modal">
+    <h2>🗑 Eliminar gasto</h2>
+    <p style="margin-bottom:8px">¿Seguro que quieres eliminar este gasto?</p>
+    <p style="font-size:12px;color:var(--accent2);font-weight:500" id="confirm-eliminar-desc"></p>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="closeModal('modal-confirm-eliminar')">Cancelar</button>
+      <button class="mbtn danger" onclick="confirmarEliminar()">Eliminar</button>
+    </div>
   </div>
 </div>
 
