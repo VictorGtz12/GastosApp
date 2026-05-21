@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.33';
+const APP_VERSION = 'v2.34';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -947,7 +947,7 @@ function saveLocal() {
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'flex';
         }
-      }, 3000);
+      }, 100); // ~instantáneo: sincroniza casi de inmediato después de guardar
     }
   } catch(e) {
     console.warn('saveLocal error:', e);
@@ -1071,8 +1071,6 @@ function showTab(tab) {
   document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
   if (tab === 'nuevo' && !editingId) {
     const fe = document.getElementById('f-fecha'); if (fe && !fe.value) fe.value = today();
-    // Mostrar el catálogo de comentarios automáticamente al abrir el formulario
-    setTimeout(() => precargarComentarioDropdown(), 50);
   }
   if (tab === 'gastos')    renderGastos();
   if (tab === 'externos')  renderExternos();
