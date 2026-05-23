@@ -1,7 +1,8 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.38';
+const APP_VERSION = 'v2.39';
+const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -195,6 +196,21 @@ function structuredMovimientoId(cuentaId, movId, index = 0) {
   return `${cuentaId}:${movId}:${index}`;
 }
 
+function structuredMovimientoIndex(rowId) {
+  const parts = String(rowId || '').split(':');
+  const idx = Number(parts[2]);
+  return Number.isFinite(idx) ? idx : 0;
+}
+
+function structuredMovimientoRowId(cuentaId, mov, index = 0) {
+  return mov?._syncId || structuredMovimientoId(cuentaId, mov?.movId, index);
+}
+
+function cleanMovimientoForStructured(mov, cuentaId) {
+  const { _syncId, _syncIndex, ...data } = mov || {};
+  return { ...data, cuentaId };
+}
+
 function getStructuredDeleted() {
   try { return JSON.parse(localStorage.getItem('supabaseStructuredDeleted') || '{}'); }
   catch(e) { return {}; }
@@ -285,9 +301,10 @@ function buildStructuredPayload() {
       const { movimientos, ...cuenta } = c;
       return structuredRow(c.id, { ...cuenta, updatedAt: now }, { deleted_at: null });
     }),
-    movimientosAhorro: snap.cuentasAhorro.flatMap(c => (c.movimientos || []).map((m, i) =>
-      structuredRow(structuredMovimientoId(c.id, m.movId, i), { ...m, cuentaId: c.id }, { cuenta_id: String(c.id), mov_id: String(m.movId), deleted_at: null })
-    )),
+    movimientosAhorro: snap.cuentasAhorro.flatMap(c => (c.movimientos || []).map((m, i) => {
+      const rowId = structuredMovimientoRowId(c.id, m, i);
+      return structuredRow(rowId, cleanMovimientoForStructured(m, c.id), { cuenta_id: String(c.id), mov_id: String(m.movId), deleted_at: null });
+    })),
     recurrentes: snap.recurrentes.map(r => structuredRow(r.id, r, { deleted_at: null })),
     deudas: snap.deudas.map(d => structuredRow(d.id, d, { deleted_at: null })),
     settings: structuredRow('main', {
@@ -496,7 +513,18 @@ async function downloadSupabaseStructured(force = false) {
       const cuentaId = Number(r.cuenta_id || r.data?.cuentaId);
       if (!movsByCuenta[cuentaId]) movsByCuenta[cuentaId] = [];
       const { cuentaId: _cuentaId, updatedAt, ...mov } = r.data || {};
-      movsByCuenta[cuentaId].push(mov);
+      movsByCuenta[cuentaId].push({
+        ...mov,
+        updatedAt: updatedAt || r.updated_at || null,
+        _syncId: String(r.id),
+        _syncIndex: structuredMovimientoIndex(r.id)
+      });
+    });
+    Object.keys(movsByCuenta).forEach(cuentaId => {
+      movsByCuenta[cuentaId].sort((a, b) => {
+        if (a._syncIndex !== b._syncIndex) return a._syncIndex - b._syncIndex;
+        return Number(a.movId || 0) - Number(b.movId || 0);
+      });
     });
     cuentasAhorro = caRows.filter(r => !r.deleted_at).map(r => normAhorro({
       ...r.data,
@@ -541,8 +569,8 @@ async function downloadSupabase(force = false) {
   if (!usingSupabase()) return false;
   const structured = await downloadSupabaseStructured(force);
   if (structured === 'skip') {
-    await uploadSupabaseStructured();
-    return true;
+    console.warn('[Sync Supabase] Descarga omitida por cache local mas reciente; no se sube automaticamente.');
+    return false;
   }
   return structured === true;
 }
@@ -1149,19 +1177,24 @@ function normAhorro(c) {
   const excluir = c.excluirTotal === true || c.excluirTotal === 'SI' || c.excluirTotal === 'true';
   // Si no hay nextMovId global, asignar uno inicial
   if (typeof nextMovId === 'undefined' || nextMovId < 1) nextMovId = 1;
+  const rawMovimientos = c.movimientos || c.mv || [];
   return {
     id:           c.id || c.ID,
-    nombre:       c.nombre || c.Nombre || '',
-    meta:         Number(c.meta || c.Meta) || 0,
-    grupo:        c.grupo || c.Grupo || 'General',
+    nombre:       c.nombre || c.Nombre || c.no || '',
+    meta:         Number(c.meta || c.Meta || c.me) || 0,
+    grupo:        c.grupo || c.Grupo || c.gr || 'General',
     excluirTotal: excluir,
-    movimientos:  (c.movimientos || []).map(m => ({
-      tipo:     m.tipo || '',
-      cantidad: Number(m.cantidad) || 0,
-      nota:     m.nota || '',
-      fecha:    String(m.fecha || '').slice(0, 10),
+    movimientos:  rawMovimientos.map(m => ({
+      tipo:     m.tipo || m.ti || '',
+      cantidad: Number(m.cantidad ?? m.ca) || 0,
+      nota:     m.nota ?? m.nt ?? '',
+      fecha:    String(m.fecha || m.fe || '').slice(0, 10),
       destino:  m.destino ? Number(m.destino) : undefined,
       origen:   m.origen  ? Number(m.origen)  : undefined,
+      gastoId:  m.gastoId,
+      updatedAt: m.updatedAt || null,
+      _syncId:  m._syncId,
+      _syncIndex: m._syncIndex,
       movId:    m.movId ?? nextMovId++, // ← asignar movId faltante (nullish coalescing)
     })),
   };
@@ -2170,7 +2203,7 @@ function confirmarEliminarMovimientoAhorroHandler() {
         );
         if (idxOtro >= 0) {
           const otroMov = otraCuenta.movimientos[idxOtro];
-          markStructuredDeleted('movimientosAhorro', structuredMovimientoId(otraCuenta.id, otroMov.movId, idxOtro));
+          markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(otraCuenta.id, otroMov, idxOtro));
           otraCuenta.movimientos.splice(idxOtro, 1);
         }
       }
@@ -2180,7 +2213,7 @@ function confirmarEliminarMovimientoAhorroHandler() {
   // Eliminar este movimiento
   const idx = movIndex;
   if (idx >= 0) {
-    markStructuredDeleted('movimientosAhorro', structuredMovimientoId(c.id, m.movId, idx));
+    markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(c.id, m, idx));
     c.movimientos.splice(idx, 1);
   }
 
@@ -2333,7 +2366,7 @@ async function eliminarCuenta(id) {
   const cuenta = cuentasAhorro.find(x => x.id === id);
   if (cuenta) {
     markStructuredDeleted('cuentasAhorro', id);
-    (cuenta.movimientos || []).forEach((m, i) => markStructuredDeleted('movimientosAhorro', structuredMovimientoId(id, m.movId, i)));
+    (cuenta.movimientos || []).forEach((m, i) => markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(id, m, i)));
   }
   markStructuredDirty('cuentasAhorro');
   cuentasAhorro = cuentasAhorro.filter(x=>x.id!==id);
@@ -5412,7 +5445,13 @@ window.addEventListener('DOMContentLoaded', () => {
   if (isTravelMode()) {
     mostrarEstadoSync(false);
   } else if (usingSupabase() && navigator.onLine) {
-    downloadSupabase().then(async ok => {
+    const needsSyncRepair = localStorage.getItem('syncRepairVersion') !== SYNC_REPAIR_VERSION;
+    if (needsSyncRepair) {
+      localStorage.removeItem('supabaseStructuredDeleted');
+      localStorage.removeItem('supabaseStructuredDirty');
+    }
+    downloadSupabase(needsSyncRepair).then(async ok => {
+      if (ok && needsSyncRepair) localStorage.setItem('syncRepairVersion', SYNC_REPAIR_VERSION);
       // Re-renderizar siempre con los datos más frescos
       actualizarSelectCuentas();
       actualizarSelectMotivos();
