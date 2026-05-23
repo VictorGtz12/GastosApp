@@ -14,7 +14,6 @@
  */
 
 const ALLOWED_ORIGIN = '*'; // Cambia a tu dominio si quieres restringir
-                              // ej: 'https://victorgtz12.github.io'
 
 export default {
   async fetch(request, env) {

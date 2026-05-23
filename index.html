@@ -305,12 +305,12 @@
     <div class="drawer-item" onclick="closeDrawer();verVersionHistorial()">
       <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/><polyline points="7 2 2 7 7 12"/></svg>Historial de versiones
     </div>
-    <div class="drawer-header" style="margin-top:8px">GitHub Sync</div>
+    <div class="drawer-header" style="margin-top:8px">Supabase Sync</div>
     <div class="drawer-item" onclick="closeDrawer();refreshData()">
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Sincronizar ahora
     </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.34</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.35</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -341,7 +341,7 @@
   <div id="banner-pendientes" style="display:none;position:fixed;top:calc(96px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:456px;background:rgba(40,25,0,.97);border:1px solid var(--orange);border-radius:12px;padding:10px 14px;align-items:center;justify-content:space-between;gap:8px;z-index:95;box-shadow:0 4px 20px rgba(255,159,67,.4)">
     <div>
       <div style="font-size:12px;font-weight:600;color:var(--orange)">⬆️ Cambios sin subir</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:1px">Toca para sincronizar con GitHub</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:1px">Toca para sincronizar con Supabase</div>
     </div>
     <button onclick="refreshData()" style="padding:6px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Sincronizar</button>
   </div>
@@ -810,19 +810,10 @@
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Opcional — permite conciliar PDFs automáticamente con IA</div>
     </div>
     <div class="field">
-      <label>Token GitHub <span style="font-size:10px;color:var(--text3)">(sync)</span></label>
-      <input type="password" id="ajuste-github-token" placeholder="github_pat_..." style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Fine-grained token con permiso Contents: Read &amp; Write. Déjalo vacío para desactivar.</div>
-    </div>
-    <div class="field">
-      <label>Supabase <span style="font-size:10px;color:var(--text3)">(sync alternativo)</span></label>
+      <label>Supabase <span style="font-size:10px;color:var(--text3)">(sync principal)</span></label>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <input type="checkbox" id="ajuste-supabase-enabled" style="width:16px;height:16px;cursor:pointer">
         <label for="ajuste-supabase-enabled" style="font-size:13px;cursor:pointer">Activar sync con Supabase</label>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px">
-        <input type="checkbox" id="ajuste-github-disabled" style="width:16px;height:16px;cursor:pointer">
-        <label for="ajuste-github-disabled" style="font-size:13px;cursor:pointer">Deshabilitar sync con GitHub</label>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:6px">ID dispositivo: <span id="supabase-device-id" style="font-family:monospace;font-size:10px"></span></div>
     </div>
@@ -908,23 +899,6 @@
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-backup-confirm')">Cancelar</button>
       <button class="mbtn prim" onclick="confirmarRestaurarBackup()">Restaurar</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL: GitHub Token -->
-<div class="overlay" id="modal-github-token">
-  <div class="modal">
-    <h2>🔑 GitHub Sync</h2>
-    <p style="margin-bottom:12px;font-size:12px;color:var(--text2)">Pega tu Personal Access Token (Fine-grained) con permiso <strong>Contents: Read & Write</strong> en el repo GastosApp.</p>
-    <div class="field">
-      <label>Token</label>
-      <input type="password" id="input-github-token" placeholder="github_pat_..." style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);font-size:14px;color:var(--text);font-family:inherit">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Déjalo vacío para desactivar el sync</div>
-    </div>
-    <div class="modal-actions">
-      <button class="mbtn sec" onclick="closeModal('modal-github-token')">Cancelar</button>
-      <button class="mbtn prim" onclick="guardarGithubToken()">Guardar</button>
     </div>
   </div>
 </div>

@@ -14,7 +14,7 @@ App web para control de gastos con tarjetas de crédito, ahorros y servicios rec
 - Gastos externos (por cobrar / cobrados)
 - Historial y resumen mensual
 - Búsqueda global
-- Sincronización con GitHub (multi-dispositivo)
+- Sincronización estructurada con Supabase (multi-dispositivo)
 - Modo oscuro / claro / Revolut
 - Exportar a Excel y backup JSON
 - Conciliación bancaria con estado de cuenta PDF o imagen
@@ -65,7 +65,6 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 | Deuda | `modal-deuda` | `abrirModalDeuda()` | Agregar / editar deuda |
 | Estadísticas | `modal-estadisticas` | `openEstadisticas()` | Gráficas por semana / cuenta / motivo |
 | Alertas | `modal-alertas` | `openAlertas()` | Cortes y recurrentes próximos |
-| GitHub Sync | `modal-github-token` | `openGithubToken()` | Configurar token de sincronización |
 | Historial sync | `modal-historial-sync` | — | Log de sincronizaciones |
 | Backup confirmación | `modal-backup-confirm` | — | Confirmar restauración de backup |
 | Catálogo cuenta | `modal-cat-cuenta` | — | Editar cuenta del catálogo |
@@ -75,7 +74,7 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 
 ### Navegación (Drawer / menú lateral)
 
-El drawer (menú hamburguesa) da acceso a: Historial, Catálogos, Recurrentes, Conciliación, Estadísticas, Alertas, Ajustes, GitHub Sync, Backup, Exportar Excel.
+El drawer (menú hamburguesa) da acceso a: Historial, Catálogos, Recurrentes, Conciliación, Estadísticas, Alertas, Ajustes, Supabase Sync, Backup, Exportar Excel.
 
 ---
 
@@ -149,17 +148,14 @@ Sube el PDF de tu estado de cuenta y la app compara automáticamente los cargos 
 
 ## Instalación
 
-### Opción A — GitHub Pages (recomendada, gratis)
-
-1. Crea un repo público en GitHub llamado `GastosApp`
-2. Sube todos los archivos del proyecto
-3. Ve a Settings → Pages → Deploy from branch → main
-4. Tu app estará en `https://TU_USUARIO.github.io/GastosApp/`
-
-### Opción B — Netlify
+### Opción A — Netlify
 
 1. Ve a app.netlify.com/drop
 2. Arrastra la carpeta del proyecto → URL pública al instante
+
+### Opción B — Servidor estático
+
+Publica la carpeta en cualquier hosting estático compatible con HTML, CSS y JS.
 
 ---
 
@@ -171,36 +167,33 @@ Sube el PDF de tu estado de cuenta y la app compara automáticamente los cargos 
 
 ---
 
-## Sincronización con GitHub
+## Sincronización con Supabase
 
-### Crear token
-
-1. GitHub → Settings → Developer settings → Fine-grained tokens
-2. Generate new token con permisos Contents: Read and Write en tu repo `GastosApp`
-3. Copia el token (`github_pat_...`)
-
-### Configurar
-
-En la app: Drawer → GitHub Sync → Configurar token → pega el token
+La app usa tablas estructuradas en Supabase. No sube un JSON gigante como fuente
+principal de datos.
 
 ### Comportamiento del sync
 
 | Evento | Acción |
 |--------|--------|
-| Guardar un gasto | Sube automáticamente en 1.5 segundos |
-| Abrir la app | Descarga cambios remotos |
-| Conflicto de versión | Reintenta con SHA actualizado automáticamente |
+| Guardar un gasto | Sube automáticamente en segundo plano |
+| Abrir la app | Descarga cambios remotos desde tablas |
+| Conflicto de versión | Conserva el cambio local más reciente por timestamp |
 | Sin internet | Guarda local, sube al reconectarse |
 
----
+### Supabase estructurado
 
-## Personalización
+La app ya no depende de un único JSON gigante para Supabase. El archivo
+`supabase-schema.sql` crea tablas `gs_*` para gastos, catálogos, ahorros,
+movimientos, recurrentes, deudas y ajustes.
 
-Edita en `app.js`:
-```javascript
-const GITHUB_OWNER = 'TU_USUARIO_GITHUB';
-const GITHUB_REPO  = 'TU_REPO';
-```
+1. Ejecuta `supabase-schema.sql` una vez en el SQL Editor de Supabase.
+2. Activa Supabase en Ajustes.
+3. La primera sincronización sube los datos locales a las tablas nuevas.
+
+Con las tablas creadas, la app usa Supabase estructurado como sync principal. El
+historial de versiones remoto evita duplicar datos para cuidar la cuota; el
+respaldo local sigue existiendo en el navegador.
 
 ### Cuentas y cortes predeterminados
 
@@ -227,8 +220,7 @@ const GITHUB_REPO  = 'TU_REPO';
 | `manifest.json` | Configuración PWA |
 | `sw.js` | Service worker (offline) |
 | `icon-192.png` / `icon-512.png` | Íconos |
-| `datos.json` | Datos sincronizados con GitHub |
-| `tasks.html` / `tasks.json` | Módulo de tareas independiente |
+| `tasks.html` | Módulo de tareas independiente |
 
 ---
 
@@ -237,13 +229,12 @@ const GITHUB_REPO  = 'TU_REPO';
 - **Backup JSON:** Drawer → Backup JSON — descarga con todos los datos
 - **Restaurar:** Drawer → Restaurar backup JSON — carga con confirmación
 - **Excel:** Drawer → Exportar Excel — pestañas: Gastos, Historial, Ahorros, Recurrentes, Deudas
-- **GitHub:** cada sync es un commit — ve al historial de `datos.json` para versiones anteriores
 
 ---
 
 ## Seguridad
 
-- Token de GitHub y URL del Worker se guardan en `localStorage` — no en el código
+- URL del Worker se guarda en `localStorage` — no en el código
 - La API key de Anthropic solo vive en variables secretas de Cloudflare Workers
 - No compartas tu repo `GastosApp` si tiene datos sensibles
 
@@ -252,7 +243,7 @@ const GITHUB_REPO  = 'TU_REPO';
 ## Tecnologías
 
 - HTML + CSS + JS puro (sin frameworks)
-- GitHub API para sync
+- Supabase REST API para sync estructurado
 - PDF.js para extracción de texto
 - SheetJS para Excel
 - Cloudflare Workers + Anthropic API para conciliación con IA

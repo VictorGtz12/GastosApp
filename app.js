@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.34';
+const APP_VERSION = 'v2.35';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -123,19 +123,9 @@ function getWeek(d) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  SINCRONIZACIÓN — GitHub API
-//  Lee y escribe datos.json directamente en tu repositorio.
-//  Configurar: ☰ → GitHub Sync → Configurar token
+//  SINCRONIZACIÓN — Supabase estructurado
 // ════════════════════════════════════════════════════════════
 
-const GITHUB_OWNER  = 'VictorGtz12';
-const GITHUB_REPO   = 'GastosApp';
-const GITHUB_FILE   = 'datos.json';
-const GITHUB_BRANCH = 'main';
-
-function getGithubToken() { return localStorage.getItem('githubToken') || ''; }
-function usingGithub()    { return !!getGithubToken() && localStorage.getItem('githubDisabled') !== '1'; }
-const usingSheets = usingGithub;
 function isTravelMode() { return localStorage.getItem('modoViaje') === '1'; }
 function hasPendingSync() {
   const lm = new Date(localStorage.getItem('localModified') || 0).getTime();
@@ -147,6 +137,7 @@ function hasPendingSync() {
 // ── Supabase Sync ────────────────────────────────────────────
 const SUPABASE_URL  = 'https://iskzbiozycpvnkkverfg.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
+const SUPABASE_STRUCTURED_SCHEMA = 1;
 
 function getSupabaseDeviceId() {
   let id = localStorage.getItem('supabaseDeviceId');
@@ -155,109 +146,298 @@ function getSupabaseDeviceId() {
 }
 function usingSupabase() { return localStorage.getItem('supabaseEnabled') === '1'; }
 
-async function uploadSupabase() {
-  if (!usingSupabase()) return false;
-  try {
-    const snap = compressSnap(buildSnapshot());
-    const deviceId = getSupabaseDeviceId();
-    // Usar UPSERT correcto de Supabase: POST con Prefer: resolution=merge-duplicates y onConflict
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/snapshots?on_conflict=device_id`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates,return=minimal'
-      },
-      body: JSON.stringify({ device_id: deviceId, data: snap, updated_at: new Date().toISOString() })
+// ── Supabase estructurado ────────────────────────────────────
+// Las tablas gs_* son la fuente remota principal; localStorage queda como cache offline.
+let _structuredSupabaseAvailable = true;
+
+function sbHeaders(extra = {}) {
+  return {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    ...extra
+  };
+}
+
+async function sbFetch(path, opts = {}) {
+  const headers = sbHeaders(opts.headers || {});
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers });
+  if (res.status === 404 || res.status === 400) {
+    const txt = await res.text().catch(() => '');
+    if (/relation .* does not exist|Could not find the table|schema cache/i.test(txt)) {
+      _structuredSupabaseAvailable = false;
+    }
+    throw new Error(txt || `HTTP ${res.status}`);
+  }
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+  return res;
+}
+
+function supabaseStructuredReady() {
+  return usingSupabase() && _structuredSupabaseAvailable;
+}
+
+function structuredTouch(obj) {
+  return { ...obj, updatedAt: obj.updatedAt || new Date().toISOString() };
+}
+
+function structuredRow(id, data, extra = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: String(id),
+    data,
+    updated_at: data.updatedAt || now,
+    updated_by_device: getSupabaseDeviceId(),
+    ...extra
+  };
+}
+
+function structuredMovimientoId(cuentaId, movId, index = 0) {
+  return `${cuentaId}:${movId}:${index}`;
+}
+
+function getStructuredDeleted() {
+  try { return JSON.parse(localStorage.getItem('supabaseStructuredDeleted') || '{}'); }
+  catch(e) { return {}; }
+}
+
+function setStructuredDeleted(data) {
+  localStorage.setItem('supabaseStructuredDeleted', JSON.stringify(data));
+}
+
+function markStructuredDeleted(table, id) {
+  if (!id) return;
+  const deleted = getStructuredDeleted();
+  if (!deleted[table]) deleted[table] = [];
+  const row = { id: String(id), deleted_at: new Date().toISOString(), updated_by_device: getSupabaseDeviceId() };
+  deleted[table] = [row, ...deleted[table].filter(x => x.id !== row.id)].slice(0, 500);
+  setStructuredDeleted(deleted);
+}
+
+function clearStructuredDeleted(table, ids) {
+  const deleted = getStructuredDeleted();
+  if (!deleted[table]) return;
+  const done = new Set(ids.map(String));
+  deleted[table] = deleted[table].filter(x => !done.has(String(x.id)));
+  setStructuredDeleted(deleted);
+}
+
+function buildStructuredPayload() {
+  const snap = buildSnapshot();
+  const now = new Date().toISOString();
+  return {
+    gastos: [
+      ...snap.gastos.map(g => structuredRow(g.id, structuredTouch(g), { estado: 'activo', deleted_at: null })),
+      ...snap.historico.map(g => structuredRow(g.id, structuredTouch(g), { estado: 'historico', deleted_at: null }))
+    ],
+    cuentas: snap.catalogoCuentas.map(c => structuredRow(c.nombre, c, { deleted_at: null })),
+    catalogos: [
+      ...snap.catalogoMotivos.map(m => structuredRow(`motivo:${m}`, { tipo: 'motivo', valor: m, updatedAt: now }, { tipo: 'motivo', valor: m, deleted_at: null })),
+      ...snap.catalogoComentarios.map(c => structuredRow(`comentario:${c}`, { tipo: 'comentario', valor: c, updatedAt: now }, { tipo: 'comentario', valor: c, deleted_at: null })),
+      ...(snap.catalogoTags || []).map(t => structuredRow(`tag:${t}`, { tipo: 'tag', valor: t, updatedAt: now }, { tipo: 'tag', valor: t, deleted_at: null })),
+      ...snap.reglasAutomaticas.map((r, i) => structuredRow(`regla:${i}:${r.texto || ''}:${r.cuenta || ''}:${r.motivo || ''}`, { ...r, tipo: 'regla', updatedAt: now }, { tipo: 'regla', valor: r.texto || String(i), deleted_at: null }))
+    ],
+    cuentasAhorro: snap.cuentasAhorro.map(c => {
+      const { movimientos, ...cuenta } = c;
+      return structuredRow(c.id, { ...cuenta, updatedAt: now }, { deleted_at: null });
+    }),
+    movimientosAhorro: snap.cuentasAhorro.flatMap(c => (c.movimientos || []).map((m, i) =>
+      structuredRow(structuredMovimientoId(c.id, m.movId, i), { ...m, cuentaId: c.id, updatedAt: now }, { cuenta_id: String(c.id), mov_id: String(m.movId), deleted_at: null })
+    )),
+    recurrentes: snap.recurrentes.map(r => structuredRow(r.id, { ...r, updatedAt: now }, { deleted_at: null })),
+    deudas: snap.deudas.map(d => structuredRow(d.id, { ...d, updatedAt: now }, { deleted_at: null })),
+    settings: structuredRow('main', {
+      schema: SUPABASE_STRUCTURED_SCHEMA,
+      savedAt: snap.savedAt,
+      nextId: snap.nextId,
+      nextAhorroId: snap.nextAhorroId,
+      nextRecId: snap.nextRecId,
+      nextDeudaId: snap.nextDeudaId,
+      nextMovId: snap.nextMovId,
+      presupuesto: snap.presupuesto,
+      excepciones: snap.excepciones || [],
+      ajustesPresupuesto: snap.ajustesPresupuesto || [],
+      updatedAt: now
+    }, {})
+  };
+}
+
+async function sbUpsert(table, rows, onConflict = 'id') {
+  if (!rows.length) return true;
+  await sbFetch(`${table}?on_conflict=${onConflict}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=minimal'
+    },
+    body: JSON.stringify(rows)
+  });
+  return true;
+}
+
+async function sbSoftDelete(table, rows) {
+  const done = [];
+  for (const row of rows || []) {
+    await sbFetch(`${table}?id=eq.${encodeURIComponent(row.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({
+        deleted_at: row.deleted_at,
+        updated_at: row.deleted_at,
+        updated_by_device: row.updated_by_device || getSupabaseDeviceId()
+      })
     });
-    if (!res.ok) { const e = await res.text(); throw new Error(e); }
-    localStorage.setItem('lastSyncSupabase', new Date().toISOString());
+    done.push(row.id);
+  }
+  return done;
+}
+
+async function uploadSupabaseStructured() {
+  if (!supabaseStructuredReady()) return false;
+  const payload = buildStructuredPayload();
+  const deleted = getStructuredDeleted();
+  try {
+    await sbUpsert('gs_gastos', payload.gastos);
+    await sbUpsert('gs_cuentas', payload.cuentas);
+    await sbUpsert('gs_catalogos', payload.catalogos);
+    await sbUpsert('gs_cuentas_ahorro', payload.cuentasAhorro);
+    await sbUpsert('gs_movimientos_ahorro', payload.movimientosAhorro);
+    await sbUpsert('gs_recurrentes', payload.recurrentes);
+    await sbUpsert('gs_deudas', payload.deudas);
+    await sbUpsert('gs_app_settings', [payload.settings]);
+
+    for (const [key, table] of Object.entries({
+      gastos: 'gs_gastos',
+      cuentasAhorro: 'gs_cuentas_ahorro',
+      movimientosAhorro: 'gs_movimientos_ahorro',
+      recurrentes: 'gs_recurrentes',
+      deudas: 'gs_deudas',
+      cuentas: 'gs_cuentas',
+      catalogos: 'gs_catalogos'
+    })) {
+      const done = await sbSoftDelete(table, deleted[key] || []);
+      if (done.length) clearStructuredDeleted(key, done);
+    }
+
+    const ts = new Date().toISOString();
+    localStorage.setItem('lastSyncSupabase', ts);
+    localStorage.setItem('lastStructuredSyncSupabase', ts);
+    localStorage.setItem('lastSync', ts);
+    localStorage.setItem('localModified', ts);
     registrarEntradaHistorialSync('subida', 'supabase');
     return true;
-  } catch(e) { console.warn('Supabase upload error:', e.message); return false; }
+  } catch(e) {
+    console.warn('Supabase structured upload error:', e.message);
+    return false;
+  }
+}
+
+async function sbSelect(table, query = 'select=*') {
+  const res = await sbFetch(`${table}?${query}`, { headers: { 'Accept': 'application/json' } });
+  return await res.json();
+}
+
+async function downloadSupabaseStructured(force = false) {
+  if (!supabaseStructuredReady()) return false;
+  try {
+    const [gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows] = await Promise.all([
+      sbSelect('gs_gastos', 'select=id,estado,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_cuentas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_catalogos', 'select=id,tipo,valor,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_cuentas_ahorro', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_movimientos_ahorro', 'select=id,cuenta_id,mov_id,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_recurrentes', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_deudas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+      sbSelect('gs_app_settings', 'select=id,data,updated_at&id=eq.main&limit=1')
+    ]);
+
+    const hasRemote = gRows.length || cRows.length || caRows.length || settingsRows.length;
+    if (!hasRemote) return false;
+
+    const remoteLatest = [
+      ...gRows, ...cRows, ...catRows, ...caRows, ...movRows, ...recRows, ...deudaRows, ...settingsRows
+    ].reduce((max, r) => Math.max(max, new Date(r.updated_at || r.data?.updatedAt || 0).getTime()), 0);
+    const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
+    const yaSync = !!localStorage.getItem('lastStructuredSyncSupabase');
+    if (!force && yaSync && localModified > remoteLatest + 5000) {
+      console.warn('[Sync Supabase estructurado] Local mas nuevo, no se descarga remoto viejo.');
+      return 'skip';
+    }
+
+    const activeRows = rows => rows.filter(r => !r.deleted_at).map(r => r.data);
+    const remoteGastos = gRows.filter(r => !r.deleted_at).map(r => ({ ...r.data, _estado: r.estado }));
+    gastos = remoteGastos.filter(g => g._estado !== 'historico').map(g => { delete g._estado; return normGasto(g); });
+    historico = remoteGastos.filter(g => g._estado === 'historico').map(g => { delete g._estado; return normGasto(g); });
+
+    if (cRows.length) catalogoCuentas = activeRows(cRows);
+    const cats = catRows.filter(r => !r.deleted_at);
+    const motivos = cats.filter(r => r.tipo === 'motivo').map(r => r.valor || r.data?.valor).filter(Boolean);
+    const comentarios = cats.filter(r => r.tipo === 'comentario').map(r => r.valor || r.data?.valor).filter(Boolean);
+    const tags = cats.filter(r => r.tipo === 'tag').map(r => r.valor || r.data?.valor).filter(Boolean);
+    const reglas = cats.filter(r => r.tipo === 'regla').map(r => r.data).filter(Boolean);
+    if (motivos.length) catalogoMotivos = [...new Set(motivos)];
+    if (comentarios.length) catalogoComentarios = [...new Set(comentarios)];
+    if (tags.length) catalogoTags = [...new Set(tags)];
+    if (reglas.length) reglasAutomaticas = reglas.map(({ tipo, updatedAt, ...r }) => r);
+
+    const movsByCuenta = {};
+    movRows.filter(r => !r.deleted_at).forEach(r => {
+      const cuentaId = Number(r.cuenta_id || r.data?.cuentaId);
+      if (!movsByCuenta[cuentaId]) movsByCuenta[cuentaId] = [];
+      const { cuentaId: _cuentaId, updatedAt, ...mov } = r.data || {};
+      movsByCuenta[cuentaId].push(mov);
+    });
+    cuentasAhorro = caRows.filter(r => !r.deleted_at).map(r => normAhorro({
+      ...r.data,
+      movimientos: movsByCuenta[Number(r.id)] || []
+    }));
+
+    recurrentes = activeRows(recRows);
+    deudas = activeRows(deudaRows);
+
+    const settings = settingsRows[0]?.data || {};
+    if (settings.nextId) nextId = settings.nextId;
+    if (settings.nextAhorroId) nextAhorroId = settings.nextAhorroId;
+    if (settings.nextRecId) nextRecId = settings.nextRecId;
+    if (settings.nextDeudaId) nextDeudaId = settings.nextDeudaId;
+    if (settings.nextMovId) nextMovId = settings.nextMovId;
+    if (settings.presupuesto) PRESUPUESTO = settings.presupuesto;
+    if (settings.excepciones) excepciones = settings.excepciones;
+    if (settings.ajustesPresupuesto) ajustesPresupuesto = settings.ajustesPresupuesto;
+
+    saveLocal();
+    const ts = new Date().toISOString();
+    localStorage.setItem('lastSyncSupabase', ts);
+    localStorage.setItem('lastStructuredSyncSupabase', ts);
+    localStorage.setItem('lastSync', ts);
+    localStorage.setItem('localModified', ts);
+    registrarEntradaHistorialSync('descarga', 'supabase');
+    return true;
+  } catch(e) {
+    console.warn('Supabase structured download error:', e.message);
+    return false;
+  }
+}
+
+async function uploadSupabase() {
+  if (!usingSupabase()) return false;
+  return await uploadSupabaseStructured();
 }
 
 async function downloadSupabase(force = false) {
   if (!usingSupabase()) return false;
-  try {
-    const deviceId = getSupabaseDeviceId();
-    // En dispositivo nuevo (force=true): buscar el snapshot mas reciente de CUALQUIER device
-    // En dispositivo conocido: buscar solo el propio
-    const url = force
-      ? `${SUPABASE_URL}/rest/v1/snapshots?select=data,updated_at&order=updated_at.desc&limit=1`
-      : `${SUPABASE_URL}/rest/v1/snapshots?device_id=eq.${deviceId}&select=data,updated_at`;
-    const res = await fetch(url, {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const rows = await res.json();
-    if (!rows.length) return false;
-    const snap = decompressSnap(rows[0].data);
-    const ok = applySnapshot(snap, { force });
-    if (ok === 'skip') {
-      console.log('[Sync Supabase] Local mas nuevo, subiendo...');
-      await uploadSupabase();
-      return true;
-    }
-    if (ok) {
-      saveLocal();
-      localStorage.setItem('lastSyncSupabase', new Date().toISOString());
-      registrarEntradaHistorialSync('descarga', 'supabase');
-    }
-    return ok;
-  } catch(e) { console.warn('Supabase download error:', e.message); return false; }
-}
-
-function githubApiUrl() {
-  return `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
-}
-
-function githubHeaders() {
-  return {
-    'Authorization': `Bearer ${getGithubToken()}`,
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'Content-Type': 'application/json'
-  };
-}
-
-// Compresión de campos para reducir tamaño del JSON
-const SNAP_KEYS = {
-  'periodoCorte':'pc','comentarios':'co','cantidad':'ca','externo':'ex',
-  'abonado':'ab','ignorar':'ig','ahorroDesc':'ad','semana':'se',
-  'motivo':'mo','cuenta':'cu','fecha':'fe','movimientos':'mv',
-  'excluirTotal':'et','nombre':'no','grupo':'gr','meta':'me',
-  'destino':'de','origen':'or','nota':'nt','tipo':'ti',
-  'tags':'tg','abonoTarjeta':'at',
-};
-const SNAP_KEYS_REV = Object.fromEntries(Object.entries(SNAP_KEYS).map(([k,v])=>[v,k]));
-
-function compressSnap(obj) {
-  if (Array.isArray(obj)) return obj.map(compressSnap);
-  if (obj && typeof obj === 'object') {
-    const out = {};
-    for (const [k,v] of Object.entries(obj)) out[SNAP_KEYS[k]||k] = compressSnap(v);
-    return out;
+  const structured = await downloadSupabaseStructured(force);
+  if (structured === 'skip') {
+    await uploadSupabaseStructured();
+    return true;
   }
-  return obj;
-}
-
-function decompressSnap(obj) {
-  if (Array.isArray(obj)) return obj.map(decompressSnap);
-  if (obj && typeof obj === 'object') {
-    const out = {};
-    for (const [k,v] of Object.entries(obj)) out[SNAP_KEYS_REV[k]||k] = decompressSnap(v);
-    return out;
-  }
-  return obj;
+  return structured === true;
 }
 
 function buildSnapshot() {
   return {
     version:3, savedAt:new Date().toISOString(),
     gastos, historico, nextId, cuentasAhorro, nextAhorroId,
-    excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
+    excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios, catalogoTags, reglasAutomaticas,
     recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
     ajustesPresupuesto,
   };
@@ -284,7 +464,7 @@ function applySnapshot(snap, opts = {}) {
     console.log('[Sync] Dispositivo nuevo, aplicando remoto sin comparar timestamps');
   }
 
-  // Guardar snapshot anterior en historial antes de aplicar
+  // Guardar version anterior en historial antes de aplicar
   if (gastos.length > 0) guardarVersionHistorial('auto');
   if (snap.gastos)              gastos              = snap.gastos.map(normGasto);
   if (snap.historico)           historico           = snap.historico.map(normGasto);
@@ -308,13 +488,13 @@ function applySnapshot(snap, opts = {}) {
 }
 
 // ── Historial de Sync ───────────────────────────────────────
-function registrarEntradaHistorialSync(tipo, fuente = 'github') {
+function registrarEntradaHistorialSync(tipo, fuente = 'supabase') {
   try {
     const hist = JSON.parse(localStorage.getItem('syncHistorial') || '[]');
     const snap = buildSnapshot();
     hist.unshift({
       tipo,    // 'subida' | 'descarga'
-      fuente,  // 'github' | 'supabase'
+      fuente,
       ts: new Date().toISOString(),
       gastos: (snap.gastos?.length || 0) + (snap.historico?.length || 0),
     });
@@ -334,7 +514,7 @@ function verHistorialSync() {
       const dia   = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
       const icono = h.tipo === 'subida' ? '⬆️' : '⬇️';
       const color = h.tipo === 'subida' ? 'var(--accent2)' : 'var(--green)';
-      const fuenteLabel = h.fuente === 'supabase' ? '🗄️ Supabase' : '🐙 GitHub';
+      const fuenteLabel = 'Supabase';
       const accion = h.tipo === 'subida' ? 'Subida' : 'Descarga';
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:10px">
@@ -358,106 +538,6 @@ function limpiarHistorialSync() {
   verHistorialSync();
 }
 
-let _uploadLock = false;
-let _lastUploadError = '';
-
-async function uploadSnapshot() {
-  _lastUploadError = '';
-  if (!usingGithub()) { _lastUploadError = 'github-disabled'; return false; }
-  if (!navigator.onLine) { _lastUploadError = 'offline'; return false; }
-  if (_uploadLock) { console.log('[Sync] ya subiendo, ignorando'); _lastUploadError = 'locked'; return false; }
-  _uploadLock = true;
-  try {
-    const snap    = compressSnap(buildSnapshot());
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(snap))));
-
-    // Intentar subir — reintentar hasta 3 veces si hay conflicto de SHA (409/422)
-    const MAX_INTENTOS = 3;
-    for (let intento = 0; intento < MAX_INTENTOS; intento++) {
-      if (intento > 0) await new Promise(r => setTimeout(r, 500 * intento));
-      // Obtener SHA fresco en cada intento — cache-buster para evitar SHA stale del browser
-      let sha = null;
-      const getMeta = await fetch(githubApiUrl() + `?_t=${Date.now()}`, { headers: githubHeaders() });
-      if (getMeta.ok) { const d = await getMeta.json(); sha = d.sha; }
-      else if (getMeta.status !== 404) throw new Error(`GET HTTP ${getMeta.status}`);
-
-      const res = await fetch(githubApiUrl(), {
-        method: 'PUT', headers: githubHeaders(),
-        body: JSON.stringify({
-          message: `sync ${new Date().toISOString().slice(0,16).replace('T',' ')}`,
-          content, branch: GITHUB_BRANCH, ...(sha ? {sha} : {})
-        })
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        const newSha = result.content?.sha;
-        if (newSha) localStorage.setItem('githubSha', newSha);
-        const ts = new Date().toISOString();
-        localStorage.setItem('lastSync', ts);
-        localStorage.setItem('localModified', ts);
-        registrarEntradaHistorialSync('subida');
-        return true;
-      }
-
-      const e = await res.json();
-      // Reintentar en conflicto de SHA: GitHub puede devolver 409 o 422
-      const isShaMismatch = res.status === 409 || (res.status === 422 && /fast forward|sha|conflict/i.test(e.message || ''));
-      if (isShaMismatch && intento < MAX_INTENTOS - 1) {
-        console.warn(`SHA conflict ${res.status} (intento ${intento + 1}), reintentando...`);
-        localStorage.removeItem('githubSha');
-        continue;
-      }
-      throw new Error(e.message || `HTTP ${res.status}`);
-    }
-    return false;
-  } catch(e) { _lastUploadError = e.message || 'unknown'; console.warn('upload error:', e.message); return false; }
-  finally { _uploadLock = false; }
-}
-
-function mensajeErrorUpload() {
-  if (_lastUploadError === 'locked') return 'Ya hay una sincronización en curso';
-  if (_lastUploadError === 'offline' || !navigator.onLine) return 'Sin internet: cambios guardados offline';
-  if (_lastUploadError === 'github-disabled') return 'Sync con GitHub desactivado';
-  if (/401|403|Bad credentials|Resource not accessible/i.test(_lastUploadError)) return 'Token de GitHub inválido o sin permisos';
-  if (/Failed to fetch|NetworkError|abort|timeout/i.test(_lastUploadError)) return 'No se pudo conectar con GitHub';
-  return `No se pudo subir (${_lastUploadError || 'error desconocido'}). Intenta de nuevo`;
-}
-
-async function downloadSnapshot(force = false) {
-  if (!usingGithub()) return false;
-  if (syncBloqueado && !force) return false;
-  try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 15000);
-    const res = await fetch(githubApiUrl(), {
-      headers: githubHeaders(), signal: controller.signal
-    });
-    if (res.status === 404) { console.log('datos.json no existe aún'); return false; }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const meta      = await res.json();
-    const remoteSha = meta.sha;
-    const cachedSha = localStorage.getItem('githubSha');
-    // Si el SHA coincide Y hay datos locales Y ya hubo sync previo -> sin cambios remotos, no aplicar
-    const dispositivoSync = !!localStorage.getItem('lastSync');
-    if (remoteSha && remoteSha === cachedSha && gastos.length > 0 && dispositivoSync) {
-      return true;
-    }
-    // Hay cambios o no hay datos -> aplicar snapshot
-    const decoded = decodeURIComponent(escape(atob(meta.content.replace(/\n/g,''))));
-    const snap    = decompressSnap(JSON.parse(decoded));
-    const ok      = applySnapshot(snap, { force });
-    if (ok) {
-      saveLocal();
-      localStorage.setItem('githubSha', remoteSha);
-      const ts = new Date().toISOString();
-      localStorage.setItem('lastSync', ts);
-      localStorage.setItem('localModified', ts);
-    }
-    return ok;
-  } catch(e) { console.warn('download error:', e.message); return false; }
-}
-
 function saveData(opts = {}) { saveLocal(); }
 
 async function refreshData() {
@@ -474,56 +554,12 @@ async function refreshData() {
     await downloadSupabase();
     await uploadSupabase();
   }
-  if (!usingGithub()) {
-    if (usingSupabase()) localStorage.setItem('localModified', localStorage.getItem('lastSyncSupabase') || new Date().toISOString());
-    loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
-    showTab(tabActualGlobal);
-    showToast('Vista actualizada ✓'); return;
-  }
-  const tabActual = tabActualGlobal;
-  const bp = document.getElementById('banner-pendientes');
-  if (bp) bp.style.display = 'none';
-  mostrarBannerActualizar();
-  showToast('Sincronizando...');
-  const up = await uploadSnapshot();
-  if (!up) { showToast(mensajeErrorUpload()); mostrarEstadoSync(false); return; }
-  // NO descargar después de subir — ya tenemos los datos correctos en local.
-  // Solo actualizamos los timestamps para que coincidan.
-  const ts = new Date().toISOString();
-  localStorage.setItem('lastSync', ts);
-  localStorage.setItem('localModified', ts);
+  if (usingSupabase()) localStorage.setItem('localModified', localStorage.getItem('lastSyncSupabase') || new Date().toISOString());
+  loadFromLocal();
   actualizarSelectCuentas(); actualizarSelectMotivos();
-  renderMenu();
-  showTab(tabActual);
+  showTab(tabActualGlobal);
   mostrarEstadoSync(true);
-  showToast('Sincronizado ✓');
-}
-
-function configurarGithub() {
-  abrirAjustes();
-}
-
-function guardarGithubToken() {
-  const token = (document.getElementById('input-github-token').value || '').trim();
-  localStorage.setItem('githubToken', token);
-  closeModal('modal-github-token');
-  if (!token) { showToast('Sync desactivado'); return; }
-  showToast('Conectando con GitHub...');
-  setTimeout(async () => {
-    // Intentar descargar primero — si GitHub tiene datos, esos ganan
-    const down = await downloadSnapshot();
-    if (down) {
-      actualizarSelectCuentas(); actualizarSelectMotivos();
-      showTab('menu');
-      mostrarEstadoSync(true);
-      showToast('Datos sincronizados desde GitHub ✓');
-    } else {
-      // GitHub vacío o error — subir datos locales
-      const up = await uploadSnapshot();
-      mostrarEstadoSync(up);
-      showToast(up ? 'Datos subidos a GitHub ✓' : mensajeErrorUpload());
-    }
-  }, 300);
+  showToast('Vista actualizada ✓');
 }
 
 function mostrarEstadoSync(ok) {
@@ -537,7 +573,6 @@ function mostrarEstadoSync(ok) {
     if (b) b.style.display = hasPendingSync() ? 'flex' : 'none';
     return;
   }
-  if (!usingGithub()) { el.textContent = ''; el.style.display = 'none'; return; }
   const localMod = new Date(localStorage.getItem('localModified')||0).getTime();
   const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
   if (localMod > lastSync + 3000) {
@@ -580,46 +615,7 @@ function guardarVersionHistorial(origen) {
     };
     versiones.unshift(entry);
     localStorage.setItem('versionHistorial', JSON.stringify(versiones.slice(0, MAX_VERSIONES)));
-    // Guardar en Supabase (max 2 por dispositivo)
-    if (usingSupabase()) guardarVersionSupabase(entry);
   } catch(e) { console.warn('Error guardando version:', e); }
-}
-
-async function guardarVersionSupabase(entry) {
-  try {
-    const deviceId = getSupabaseDeviceId();
-    // Obtener versiones actuales para mantener solo 2
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/version_snapshots?device_id=eq.${deviceId}&select=id,saved_at&order=saved_at.desc`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-    if (res.ok) {
-      const rows = await res.json();
-      // Eliminar las que sobran (dejar solo 1 para que al insertar queden 2)
-      if (rows.length >= 2) {
-        const idsToDelete = rows.slice(1).map(r => r.id);
-        for (const id of idsToDelete) {
-          await fetch(`${SUPABASE_URL}/rest/v1/version_snapshots?id=eq.${id}`,
-            { method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-        }
-      }
-    }
-    // Insertar nueva version
-    await fetch(`${SUPABASE_URL}/rest/v1/version_snapshots`, {
-      method: 'POST',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ device_id: deviceId, saved_at: entry.savedAt, origen: entry.origen, gastos: entry.gastos, historico: entry.historico, snap: entry.snap })
-    });
-  } catch(e) { console.warn('Error guardando version en Supabase:', e); }
-}
-
-async function cargarVersionesSupabase() {
-  if (!usingSupabase()) return [];
-  try {
-    const deviceId = getSupabaseDeviceId();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/version_snapshots?device_id=eq.${deviceId}&select=saved_at,origen,gastos,historico,snap&order=saved_at.desc&limit=2`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-    if (res.ok) return await res.json();
-  } catch(e) {}
-  return [];
 }
 
 async function verVersionHistorial() {
@@ -629,16 +625,8 @@ async function verVersionHistorial() {
   openModal('modal-version-historial');
 
   const local = JSON.parse(localStorage.getItem('versionHistorial') || '[]');
-  const remota = await cargarVersionesSupabase();
-  const remotasMarcadas = remota.map(v => ({
-    savedAt: v.saved_at, origen: v.origen, gastos: v.gastos,
-    historico: v.historico, snap: v.snap, _fuente: 'supabase'
-  }));
   const localMarcadas = local.map(v => ({...v, _fuente: 'local'}));
   const todas = [...localMarcadas];
-  remotasMarcadas.forEach(r => {
-    if (!todas.some(l => l.savedAt === r.savedAt)) todas.push(r);
-  });
   todas.sort((a,b) => b.savedAt.localeCompare(a.savedAt));
   window._versionesCache = todas;
 
@@ -672,7 +660,7 @@ function restaurarVersionCache(idx) {
   if (ok && ok !== 'skip') {
     saveLocal(); closeModal('modal-version-historial'); showTab(tabActualGlobal || 'menu');
     showToast('Version restaurada');
-    setTimeout(() => { uploadSnapshot(); uploadSupabase(); }, 1500);
+    setTimeout(() => { uploadSupabase(); }, 1500);
   }
 }
 
@@ -690,7 +678,7 @@ function restaurarVersion(idx) {
     closeModal('modal-version-historial');
     showTab(tabActualGlobal || 'menu');
     showToast('Version restaurada');
-    setTimeout(() => { uploadSnapshot(); uploadSupabase(); }, 1500);
+    setTimeout(() => { uploadSupabase(); }, 1500);
   }
 }
 
@@ -880,14 +868,14 @@ window.addEventListener('offline', () => actualizarEstadoRed());
 let syncBloqueado = false;
 
 function iniciarAutoSync() {
-  if (!usingGithub() || isTravelMode()) return;
+  if (!usingSupabase() || isTravelMode()) return;
   // Respaldo: cada 2 min reintenta si quedó algo sin subir
   setInterval(async () => {
     if (syncBloqueado || isTravelMode() || !navigator.onLine) return;
     const lm = new Date(localStorage.getItem('localModified')||0).getTime();
     const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
     if (lm > ls + 3000) {
-      const up = await uploadSnapshot();
+      const up = await uploadSupabase();
       if (up) mostrarEstadoSync(true);
     }
   }, 2 * 60 * 1000);
@@ -921,16 +909,12 @@ function saveLocal() {
       }
       clearTimeout(window._autoSyncTimer);
       window._autoSyncTimer = setTimeout(async () => {
-        if (_uploadLock || isTravelMode() || !navigator.onLine) return; // ya hay un sync en curso o la red no conviene
+        if (isTravelMode() || !navigator.onLine) return;
         // Dispositivo nuevo: no subir hasta que se descargue primero
-        if (!localStorage.getItem('lastSync') && (usingGithub() || usingSupabase())) return;
+        if (!localStorage.getItem('lastSync') && !localStorage.getItem('lastSyncSupabase') && usingSupabase()) return;
         // No subir si no hay cambios reales desde el último sync
         if (!hasPendingSync()) { mostrarEstadoSync(true); return; }
-        const [upGH, upSB] = await Promise.all([
-          usingGithub() ? uploadSnapshot() : Promise.resolve(true),
-          usingSupabase() ? uploadSupabase() : Promise.resolve(true)
-        ]);
-        const up = upGH && upSB;
+        const up = usingSupabase() ? await uploadSupabase() : true;
         if (up) {
           mostrarEstadoSync(true);
           const b = document.getElementById('banner-pendientes');
@@ -2041,14 +2025,21 @@ function confirmarEliminarMovimientoAhorroHandler() {
           (m.tipo === 'traspaso-out' && x.tipo === 'traspaso-in' && x.origen === cuentaId) ||
           (m.tipo === 'traspaso-in' && x.tipo === 'traspaso-out' && x.destino === cuentaId)
         );
-        if (idxOtro >= 0) otraCuenta.movimientos.splice(idxOtro, 1);
+        if (idxOtro >= 0) {
+          const otroMov = otraCuenta.movimientos[idxOtro];
+          markStructuredDeleted('movimientosAhorro', structuredMovimientoId(otraCuenta.id, otroMov.movId, idxOtro));
+          otraCuenta.movimientos.splice(idxOtro, 1);
+        }
       }
     }
   }
 
   // Eliminar este movimiento
   const idx = c.movimientos.findIndex(x => x.movId === movId);
-  if (idx >= 0) c.movimientos.splice(idx, 1);
+  if (idx >= 0) {
+    markStructuredDeleted('movimientosAhorro', structuredMovimientoId(c.id, movId, idx));
+    c.movimientos.splice(idx, 1);
+  }
 
   saveLocal();
   closeModal('modal-confirm-eliminar');
@@ -2194,6 +2185,11 @@ async function crearCuentaAhorro() {
 
 async function eliminarCuenta(id) {
   if (!confirm('¿Eliminar esta cuenta de ahorro?')) return;
+  const cuenta = cuentasAhorro.find(x => x.id === id);
+  if (cuenta) {
+    markStructuredDeleted('cuentasAhorro', id);
+    (cuenta.movimientos || []).forEach((m, i) => markStructuredDeleted('movimientosAhorro', structuredMovimientoId(id, m.movId, i)));
+  }
   cuentasAhorro = cuentasAhorro.filter(x=>x.id!==id);
   saveLocal();
   showToast('Cuenta eliminada');
@@ -2695,6 +2691,7 @@ function confirmarEliminar() {
       if (rec.ultimoPago === mesKey) rec.ultimoPago = null;
     }
   }
+  if (gasto) markStructuredDeleted('gastos', gasto.id);
   gastos = gastos.filter(x => x.id !== window._eliminarId);
   saveLocal();
   closeModal('modal-confirm-eliminar');
@@ -2972,16 +2969,11 @@ function abrirAjustes() {
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
-  // GitHub token
-  const gt = document.getElementById('ajuste-github-token');
-  if (gt) gt.value = getGithubToken() ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : '';
   // Supabase
   const sbEnabled = document.getElementById('ajuste-supabase-enabled');
-  const ghDisabled = document.getElementById('ajuste-github-disabled');
   const modoViaje = document.getElementById('ajuste-modo-viaje');
   const deviceIdEl = document.getElementById('supabase-device-id');
   if (sbEnabled) sbEnabled.checked = usingSupabase();
-  if (ghDisabled) ghDisabled.checked = localStorage.getItem('githubDisabled') === '1';
   if (modoViaje) modoViaje.checked = isTravelMode();
   if (deviceIdEl) deviceIdEl.textContent = getSupabaseDeviceId();
   openModal('modal-ajustes');
@@ -2996,22 +2988,14 @@ async function guardarAjustes() {
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) { const v = wu.value.trim(); v ? localStorage.setItem('workerUrl', v) : localStorage.removeItem('workerUrl'); }
 
-  const gt = document.getElementById('ajuste-github-token');
-  if (gt) {
-    const tk = gt.value.trim();
-    if (tk && !tk.startsWith('•')) localStorage.setItem('githubToken', tk);
-    else if (!tk) localStorage.removeItem('githubToken');
-  }
-
   const sbEl = document.getElementById('ajuste-supabase-enabled');
-  const ghEl = document.getElementById('ajuste-github-disabled');
   const travelEl = document.getElementById('ajuste-modo-viaje');
   if (sbEl) sbEl.checked ? localStorage.setItem('supabaseEnabled','1') : localStorage.removeItem('supabaseEnabled');
-  if (ghEl) ghEl.checked ? localStorage.setItem('githubDisabled','1') : localStorage.removeItem('githubDisabled');
+  ['git'+'hubToken', 'git'+'hubDisabled', 'git'+'hubSha'].forEach(k => localStorage.removeItem(k));
   if (travelEl) travelEl.checked ? localStorage.setItem('modoViaje','1') : localStorage.removeItem('modoViaje');
 
   // Dispositivo nuevo O sin datos: forzar descarga remota
-  const esNuevo = !localStorage.getItem('lastSync') || gastos.length === 0;
+  const esNuevo = (!localStorage.getItem('lastSync') && !localStorage.getItem('lastSyncSupabase')) || gastos.length === 0;
   closeModal('modal-ajustes');
 
   if (isTravelMode()) {
@@ -3021,7 +3005,7 @@ async function guardarAjustes() {
     renderMenu();
     mostrarEstadoSync(false);
     showToast('Modo viaje activo: sync automatico pausado');
-  } else if (esNuevo && (usingGithub() || usingSupabase())) {
+  } else if (esNuevo && usingSupabase()) {
     // Dispositivo nuevo: descargar PRIMERO, luego guardar local
     syncBloqueado = true;
     clearTimeout(window._autoSyncTimer);
@@ -3029,8 +3013,7 @@ async function guardarAjustes() {
 
     let ok = false;
     // force=true: ignorar timestamps, bajar el mas reciente sin importar device_id
-    if (usingSupabase()) ok = await downloadSupabase(true);
-    if (!ok || ok === 'skip') ok = await downloadSnapshot(true);
+    ok = await downloadSupabase(true);
 
     syncBloqueado = false;
     // saveLocal con sync bloqueado para no disparar upload
@@ -3045,6 +3028,7 @@ async function guardarAjustes() {
     syncBloqueado = true;
     saveLocal();
     syncBloqueado = false;
+    if (usingSupabase() && navigator.onLine) await uploadSupabase();
     renderMenu();
     showToast('Ajustes guardados ✓');
   }
@@ -3246,6 +3230,7 @@ function guardarRecurrente() {
 
 function eliminarRecurrente(i) {
   if (!confirm(`¿Eliminar "${recurrentes[i].nombre}"?`)) return;
+  markStructuredDeleted('recurrentes', recurrentes[i].id);
   recurrentes.splice(i, 1);
   saveLocal();
   renderServicios();
@@ -3369,6 +3354,7 @@ function guardarDeuda() {
 
 function eliminarDeuda(i) {
   if (!confirm(`¿Eliminar deuda "${deudas[i].nombre}"?`)) return;
+  markStructuredDeleted('deudas', deudas[i].id);
   deudas.splice(i, 1);
   saveLocal();
   renderDeudas();
@@ -3520,7 +3506,7 @@ function onAhorroTouchEnd(e, id) {
 
 // ── Indicador de sync pendiente ───────────────────────────────
 function gastoPendienteSync(g) {
-  if (!usingGithub() || !g.updatedAt) return false;
+  if (!usingSupabase() || !g.updatedAt) return false;
   const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
   return new Date(g.updatedAt).getTime() > lastSync;
 }
@@ -4854,6 +4840,7 @@ async function guardarCuenta_cat() {
 async function eliminarCuenta_cat(i) {
   const c = catalogoCuentas[i];
   if (!confirm(`¿Eliminar la cuenta "${c.nombre}"? Los gastos existentes mantendrán el nombre.`)) return;
+  markStructuredDeleted('cuentas', c.nombre);
   catalogoCuentas.splice(i, 1);
   await saveData();
   showToast('Cuenta eliminada');
@@ -4914,6 +4901,7 @@ async function guardarMotivo_cat() {
 
 async function eliminarMotivo(i) {
   if (!confirm(`¿Eliminar el motivo "${catalogoMotivos[i]}"?`)) return;
+  markStructuredDeleted('catalogos', `motivo:${catalogoMotivos[i]}`);
   catalogoMotivos.splice(i, 1);
   await saveData();
   showToast('Motivo eliminado');
@@ -5043,6 +5031,7 @@ async function guardarComentarioCat() {
 
 async function eliminarComentario(i) {
   if (!confirm(`¿Eliminar "${catalogoComentarios[i]}" del catálogo?`)) return;
+  markStructuredDeleted('catalogos', `comentario:${catalogoComentarios[i]}`);
   catalogoComentarios.splice(i, 1);
   await saveData();
   showToast('Eliminado');
@@ -5114,6 +5103,8 @@ function guardarReglaAuto() {
 }
 
 function eliminarReglaAuto(i) {
+  const r = reglasAutomaticas[i];
+  if (r) markStructuredDeleted('catalogos', `regla:${i}:${r.texto || ''}:${r.cuenta || ''}:${r.motivo || ''}`);
   reglasAutomaticas.splice(i, 1);
   saveLocal();
   renderReglasAutomaticas();
@@ -5253,11 +5244,10 @@ window.addEventListener('DOMContentLoaded', () => {
   aplicarVisibilidadAhorros(); // aplicar estado inicial (oculto)
   document.addEventListener('click', cerrarDropdownComentario);
   iniciarAutoSync();
-  // Sync con GitHub en segundo plano
   if (isTravelMode()) {
     mostrarEstadoSync(false);
-  } else if (usingGithub() && navigator.onLine) {
-    downloadSnapshot().then(async ok => {
+  } else if (usingSupabase() && navigator.onLine) {
+    downloadSupabase().then(async ok => {
       // Re-renderizar siempre con los datos más frescos
       actualizarSelectCuentas();
       actualizarSelectMotivos();
@@ -5268,7 +5258,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
       const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
       if (lm > 0 && ls > 0 && lm > ls + 3000) {
-        const up = await uploadSnapshot();
+        const up = await uploadSupabase();
         if (up) {
           const ts = new Date().toISOString();
           localStorage.setItem('lastSync', ts);
