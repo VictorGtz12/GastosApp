@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.35';
+const APP_VERSION = 'v2.36';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -291,21 +291,31 @@ async function sbSoftDelete(table, rows) {
   return done;
 }
 
+let _supabaseUploadLock = false;
+let _supabaseUploadQueued = false;
+
 async function uploadSupabaseStructured() {
   if (!supabaseStructuredReady()) return false;
+  if (_supabaseUploadLock) {
+    _supabaseUploadQueued = true;
+    return true;
+  }
+  _supabaseUploadLock = true;
   const payload = buildStructuredPayload();
   const deleted = getStructuredDeleted();
   try {
-    await sbUpsert('gs_gastos', payload.gastos);
-    await sbUpsert('gs_cuentas', payload.cuentas);
-    await sbUpsert('gs_catalogos', payload.catalogos);
-    await sbUpsert('gs_cuentas_ahorro', payload.cuentasAhorro);
-    await sbUpsert('gs_movimientos_ahorro', payload.movimientosAhorro);
-    await sbUpsert('gs_recurrentes', payload.recurrentes);
-    await sbUpsert('gs_deudas', payload.deudas);
-    await sbUpsert('gs_app_settings', [payload.settings]);
+    await Promise.all([
+      sbUpsert('gs_gastos', payload.gastos),
+      sbUpsert('gs_cuentas', payload.cuentas),
+      sbUpsert('gs_catalogos', payload.catalogos),
+      sbUpsert('gs_cuentas_ahorro', payload.cuentasAhorro),
+      sbUpsert('gs_movimientos_ahorro', payload.movimientosAhorro),
+      sbUpsert('gs_recurrentes', payload.recurrentes),
+      sbUpsert('gs_deudas', payload.deudas),
+      sbUpsert('gs_app_settings', [payload.settings])
+    ]);
 
-    for (const [key, table] of Object.entries({
+    const deleteMap = {
       gastos: 'gs_gastos',
       cuentasAhorro: 'gs_cuentas_ahorro',
       movimientosAhorro: 'gs_movimientos_ahorro',
@@ -313,10 +323,14 @@ async function uploadSupabaseStructured() {
       deudas: 'gs_deudas',
       cuentas: 'gs_cuentas',
       catalogos: 'gs_catalogos'
-    })) {
-      const done = await sbSoftDelete(table, deleted[key] || []);
+    };
+    const deleteResults = await Promise.all(Object.entries(deleteMap).map(async ([key, table]) => ({
+      key,
+      done: await sbSoftDelete(table, deleted[key] || [])
+    })));
+    deleteResults.forEach(({ key, done }) => {
       if (done.length) clearStructuredDeleted(key, done);
-    }
+    });
 
     const ts = new Date().toISOString();
     localStorage.setItem('lastSyncSupabase', ts);
@@ -328,6 +342,14 @@ async function uploadSupabaseStructured() {
   } catch(e) {
     console.warn('Supabase structured upload error:', e.message);
     return false;
+  } finally {
+    _supabaseUploadLock = false;
+    if (_supabaseUploadQueued) {
+      _supabaseUploadQueued = false;
+      setTimeout(() => uploadSupabaseStructured().then(ok => {
+        if (ok) mostrarEstadoSync(true);
+      }), 50);
+    }
   }
 }
 
@@ -404,7 +426,9 @@ async function downloadSupabaseStructured(force = false) {
     if (settings.excepciones) excepciones = settings.excepciones;
     if (settings.ajustesPresupuesto) ajustesPresupuesto = settings.ajustesPresupuesto;
 
+    syncBloqueado = true;
     saveLocal();
+    syncBloqueado = false;
     const ts = new Date().toISOString();
     localStorage.setItem('lastSyncSupabase', ts);
     localStorage.setItem('lastStructuredSyncSupabase', ts);
@@ -431,6 +455,26 @@ async function downloadSupabase(force = false) {
     return true;
   }
   return structured === true;
+}
+
+let _supabaseDownloadLock = false;
+
+async function pullSupabaseIfIdle(render = false) {
+  if (!usingSupabase() || isTravelMode() || !navigator.onLine || _supabaseDownloadLock || hasPendingSync()) return false;
+  _supabaseDownloadLock = true;
+  try {
+    const ok = await downloadSupabase();
+    if (ok && render) {
+      actualizarSelectCuentas();
+      actualizarSelectMotivos();
+      renderMenu();
+      showTab(tabActualGlobal);
+      mostrarEstadoSync(true);
+    }
+    return ok;
+  } finally {
+    _supabaseDownloadLock = false;
+  }
 }
 
 function buildSnapshot() {
@@ -864,12 +908,16 @@ function actualizarEstadoRed() {
 }
 window.addEventListener('online',  () => { actualizarEstadoRed(); if (!isTravelMode() && typeof syncUp === 'function') syncUp(); });
 window.addEventListener('offline', () => actualizarEstadoRed());
+window.addEventListener('focus', () => { pullSupabaseIfIdle(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pullSupabaseIfIdle(true);
+});
 
 let syncBloqueado = false;
 
 function iniciarAutoSync() {
   if (!usingSupabase() || isTravelMode()) return;
-  // Respaldo: cada 2 min reintenta si quedó algo sin subir
+  // Respaldo: reintenta subidas pendientes y trae cambios de otros dispositivos.
   setInterval(async () => {
     if (syncBloqueado || isTravelMode() || !navigator.onLine) return;
     const lm = new Date(localStorage.getItem('localModified')||0).getTime();
@@ -877,8 +925,10 @@ function iniciarAutoSync() {
     if (lm > ls + 3000) {
       const up = await uploadSupabase();
       if (up) mostrarEstadoSync(true);
+    } else {
+      await pullSupabaseIfIdle(true);
     }
-  }, 2 * 60 * 1000);
+  }, 15 * 1000);
 }
 
 
@@ -931,7 +981,7 @@ function saveLocal() {
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'flex';
         }
-      }, 100); // ~instantáneo: sincroniza casi de inmediato después de guardar
+      }, 50); // casi inmediato, sin bloquear el render del guardado
     }
   } catch(e) {
     console.warn('saveLocal error:', e);

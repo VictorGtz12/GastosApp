@@ -1002,12 +1002,13 @@ let _syncTimer;
 function scheduleSync() {
   actualizarSyncStatus('pending');
   clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(syncUp, 2000);
+  _syncTimer = setTimeout(syncUp, 250);
 }
 
 let _taskSyncLock = false;
+let _taskSyncQueued = false;
 async function syncUp() {
-  if (_taskSyncLock) return;
+  if (_taskSyncLock) { _taskSyncQueued = true; return; }
   _taskSyncLock = true;
   actualizarSyncStatus('syncing');
   const now = new Date().toISOString();
@@ -1028,6 +1029,10 @@ async function syncUp() {
     actualizarSyncStatus('error');
   } finally {
     _taskSyncLock = false;
+    if (_taskSyncQueued) {
+      _taskSyncQueued = false;
+      setTimeout(syncUp, 50);
+    }
   }
 }
 
