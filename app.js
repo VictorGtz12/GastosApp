@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.37';
+const APP_VERSION = 'v2.38';
 
 // ── Configuración ─────────────────────────────────────────────
 let PRESUPUESTO = 3400.09; // Configurable desde Ajustes
@@ -1995,18 +1995,18 @@ function verHistorialAhorro(id) {
   const saldoFinal = saldoCuenta(c);
 
   // Ordenar por fecha descendente (más reciente primero) y movId como desempate
-  const ordenados = [...c.movimientos].sort((a,b) => {
-    const fA = a.fecha || '', fB = b.fecha || '';
+  const ordenados = c.movimientos.map((m, idx) => ({ m, idx })).sort((a,b) => {
+    const fA = a.m.fecha || '', fB = b.m.fecha || '';
     if (fA !== fB) return fB.localeCompare(fA); // descendente por fecha
-    return ((b.movId||0) - (a.movId||0));        // descendente por movId como desempate
+    return ((b.m.movId||0) - (a.m.movId||0));    // descendente por movId como desempate
   });
   // Calcular saldo acumulado desde el más antiguo (orden cronológico inverso)
   const crono = [...ordenados].reverse();
   let saldoAcum = 0;
-  const movsConSaldo = crono.map(m => {
+  const movsConSaldo = crono.map(({ m, idx }) => {
     const pos = m.tipo === 'abono' || m.tipo === 'traspaso-in';
     saldoAcum += pos ? m.cantidad : -m.cantidad;
-    return { ...m, saldoAcum };
+    return { ...m, _idx: idx, saldoAcum };
   }).reverse(); // regresar a orden descendente (más reciente primero)
 
   const tipoLabel = m => {
@@ -2035,8 +2035,8 @@ function verHistorialAhorro(id) {
             <div style="font-size:10px;color:var(--text3)">${fmt(m.saldoAcum)}</div>
           </div>
           <div style="display:flex;gap:4px;flex-shrink:0;margin-left:4px">
-            <button onclick="event.stopPropagation();editarMovimientoAhorro(${c.id},${m.movId})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:4px 7px;font-size:10px;cursor:pointer" title="Editar movimiento">✏️</button>
-            <button onclick="event.stopPropagation();eliminarMovimientoAhorro(${c.id},${m.movId})" style="background:rgba(255,94,122,.1);border:1px solid rgba(255,94,122,.3);color:var(--red);border-radius:6px;padding:4px 7px;font-size:10px;cursor:pointer" title="Eliminar movimiento">🗑</button>
+            <button onclick="event.stopPropagation();editarMovimientoAhorro(${c.id},${m._idx})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:4px 7px;font-size:10px;cursor:pointer" title="Editar movimiento">✏️</button>
+            <button onclick="event.stopPropagation();eliminarMovimientoAhorro(${c.id},${m._idx})" style="background:rgba(255,94,122,.1);border:1px solid rgba(255,94,122,.3);color:var(--red);border-radius:6px;padding:4px 7px;font-size:10px;cursor:pointer" title="Eliminar movimiento">🗑</button>
           </div>
         </div>`;
       }).join('')
@@ -2045,16 +2045,17 @@ function verHistorialAhorro(id) {
   openModal('modal-hist-ahorro');
 }
 
-function editarMovimientoAhorro(cuentaId, movId) {
+function editarMovimientoAhorro(cuentaId, movIndex) {
   const c = cuentasAhorro.find(x => x.id === cuentaId);
   if (!c) return;
-  const m = c.movimientos.find(x => x.movId === movId);
+  const m = c.movimientos[movIndex];
   if (!m) return;
+  window._editarMovIndex = movIndex;
 
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
 
   document.getElementById('editar-mov-cuenta-id').value = cuentaId;
-  document.getElementById('editar-mov-id').value = movId;
+  document.getElementById('editar-mov-id').value = m.movId;
   document.getElementById('editar-mov-fecha').value = m.fecha || today();
   document.getElementById('editar-mov-cantidad').value = m.cantidad;
   document.getElementById('editar-mov-nota').value = m.nota || '';
@@ -2081,10 +2082,10 @@ function editarMovimientoAhorro(cuentaId, movId) {
 
 function confirmarEditarMovAhorro() {
   const cuentaId = parseInt(document.getElementById('editar-mov-cuenta-id').value);
-  const movId = parseInt(document.getElementById('editar-mov-id').value);
+  const movIndex = Number(window._editarMovIndex);
   const c = cuentasAhorro.find(x => x.id === cuentaId);
   if (!c) return;
-  const m = c.movimientos.find(x => x.movId === movId);
+  const m = c.movimientos[movIndex];
   if (!m) return;
 
   const nuevaCantidad = parseFloat(document.getElementById('editar-mov-cantidad').value);
@@ -2127,11 +2128,11 @@ function confirmarEditarMovAhorro() {
   verHistorialAhorro(cuentaId);
 }
 
-function eliminarMovimientoAhorro(cuentaId, movId) {
+function eliminarMovimientoAhorro(cuentaId, movIndex) {
   window._eliminarMovCuentaId = cuentaId;
-  window._eliminarMovId = movId;
+  window._eliminarMovIndex = movIndex;
   const c = cuentasAhorro.find(x => x.id === cuentaId);
-  const m = c?.movimientos.find(x => x.movId === movId);
+  const m = c?.movimientos[movIndex];
   if (!c || !m) return;
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
   document.getElementById('confirm-eliminar-desc').textContent =
@@ -2149,10 +2150,10 @@ function eliminarMovimientoAhorro(cuentaId, movId) {
 
 function confirmarEliminarMovimientoAhorroHandler() {
   const cuentaId = window._eliminarMovCuentaId;
-  const movId = window._eliminarMovId;
+  const movIndex = window._eliminarMovIndex;
   const c = cuentasAhorro.find(x => x.id === cuentaId);
   if (!c) return;
-  const m = c.movimientos.find(x => x.movId === movId);
+  const m = c.movimientos[movIndex];
   if (!m) return;
 
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
@@ -2177,9 +2178,9 @@ function confirmarEliminarMovimientoAhorroHandler() {
   }
 
   // Eliminar este movimiento
-  const idx = c.movimientos.findIndex(x => x.movId === movId);
+  const idx = movIndex;
   if (idx >= 0) {
-    markStructuredDeleted('movimientosAhorro', structuredMovimientoId(c.id, movId, idx));
+    markStructuredDeleted('movimientosAhorro', structuredMovimientoId(c.id, m.movId, idx));
     c.movimientos.splice(idx, 1);
   }
 
