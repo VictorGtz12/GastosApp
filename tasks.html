@@ -724,12 +724,14 @@ function toggleTask(id) {
     } else {
       base.completadasFechas.push(fechaInst);
     }
+    base.updatedAt = new Date().toISOString();
     saveLocal(); renderAll(); return;
   }
   const t = tasks.find(t => t.id === id);
   if (!t) return;
   t.completada = !t.completada;
   t.completadaAt = t.completada ? new Date().toISOString() : null;
+  t.updatedAt = new Date().toISOString();
   if (t.completada && t.tiempoEst && !t.tiempoReal) {
     // Preguntar tiempo real
     const r = prompt('¿Cuántos minutos tardaste realmente? (dejar vacío para omitir)');
@@ -742,6 +744,7 @@ function toggleSubtarea(taskId, idx) {
   const t = tasks.find(t => t.id === taskId);
   if (!t || !t.subtareas?.[idx]) return;
   t.subtareas[idx].done = !t.subtareas[idx].done;
+  t.updatedAt = new Date().toISOString();
   saveLocal(); renderAll();
 }
 
@@ -810,6 +813,7 @@ function guardarTask() {
     subtareas:    _subtareasEdit,
     completada:   false,
     createdAt:    new Date().toISOString(),
+    updatedAt:    new Date().toISOString(),
   };
   if (editingId) {
     const idx = tasks.findIndex(x => x.id === editingId);
@@ -817,6 +821,7 @@ function guardarTask() {
       t.completada    = tasks[idx].completada;
       t.completadaAt  = tasks[idx].completadaAt;
       t.completadasFechas = tasks[idx].completadasFechas;
+      t.createdAt     = tasks[idx].createdAt;
       tasks[idx] = t;
     }
   } else {
@@ -899,7 +904,8 @@ function guardarProyecto() {
   const nombre = document.getElementById('fp-nombre').value.trim();
   if (!nombre) { alert('Ingresa un nombre'); return; }
   const color = document.querySelector('.color-dot.active')?.style.background || COLORES[0];
-  const p = { id: editingProjId||'pj'+Date.now(), nombre, icono: document.getElementById('fp-icono').value||'📁', color, createdAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const p = { id: editingProjId||'pj'+Date.now(), nombre, icono: document.getElementById('fp-icono').value||'📁', color, createdAt: now, updatedAt: now };
   if (editingProjId) { const i = proyectos.findIndex(x=>x.id===editingProjId); if(i>=0) proyectos[i]=p; }
   else proyectos.unshift(p);
   saveLocal(); cerrarModal('modal-proyecto'); renderAll();
@@ -919,7 +925,12 @@ function eliminarProyecto() {
   if (!editingProjId||!confirm('¿Eliminar proyecto?')) return;
   markTaskDeleted('projects', editingProjId);
   proyectos = proyectos.filter(p=>p.id!==editingProjId);
-  tasks.forEach(t=>{if(t.proyecto===editingProjId) t.proyecto='';});
+  tasks.forEach(t=>{
+    if(t.proyecto===editingProjId) {
+      t.proyecto='';
+      t.updatedAt = new Date().toISOString();
+    }
+  });
   saveLocal(); cerrarModal('modal-proj'); renderAll();
 }
 
@@ -1013,8 +1024,11 @@ async function syncUp() {
   actualizarSyncStatus('syncing');
   const now = new Date().toISOString();
   try {
-    const rowsTasks = tasks.map(t => ({ id:String(t.id), data:{...t, updatedAt:t.updatedAt||now}, updated_at:t.updatedAt||now, updated_by_device:taskDeviceId(), deleted_at:null }));
-    const rowsProjects = proyectos.map(p => ({ id:String(p.id), data:{...p, updatedAt:p.updatedAt||now}, updated_at:p.updatedAt||now, updated_by_device:taskDeviceId(), deleted_at:null }));
+    const lastSync = new Date(localStorage.getItem('mr_lastSync') || 0).getTime();
+    if (!lastSync) { await syncDown(true); return; }
+    const changed = x => x.updatedAt && new Date(x.updatedAt).getTime() > lastSync - 5000;
+    const rowsTasks = tasks.filter(changed).map(t => ({ id:String(t.id), data:t, updated_at:t.updatedAt, updated_by_device:taskDeviceId(), deleted_at:null }));
+    const rowsProjects = proyectos.filter(changed).map(p => ({ id:String(p.id), data:p, updated_at:p.updatedAt, updated_by_device:taskDeviceId(), deleted_at:null }));
     await taskUpsert('gs_tasks', rowsTasks);
     await taskUpsert('gs_task_projects', rowsProjects);
     const deleted = getTaskDeleted();
