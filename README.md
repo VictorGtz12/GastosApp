@@ -198,6 +198,21 @@ Cada fila guarda `workspace_id`, las políticas RLS solo permiten ver/modificar
 bases donde el usuario sea miembro y el respaldo local queda separado por base
 en el navegador.
 
+### Usuarios de la app
+
+La app usa Supabase Auth solo como motor interno de sesión; no se crean keys por
+usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
+`app_workspaces`.
+
+- Si Supabase Auth tiene el registro público activado, cualquier persona con el
+  link puede usar **Crear usuario** desde la app. Al entrar por primera vez, se
+  crea su perfil interno y su base personal vacía.
+- Si quieres controlar quién puede usar la app, desactiva el registro público en
+  Supabase y crea los usuarios manualmente en **Authentication**. Luego el usuario
+  entra desde la app con su correo y contraseña.
+- Para compartir la base de Victor con otro usuario, agrega una fila en
+  `app_workspace_members` con rol `viewer`, `editor` o `admin`.
+
 ### Cuentas y cortes predeterminados
 
 | Cuenta | Día de corte |
