@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.43';
+const APP_VERSION = 'v2.44';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -576,6 +576,7 @@ async function uploadSupabaseStructured(opts = {}) {
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
     localStorage.removeItem('lastSyncError');
+    localStorage.removeItem('syncConflictPending');
     clearPendingSyncOps();
     registrarEntradaHistorialSync('subida', 'supabase');
     return true;
@@ -687,11 +688,12 @@ async function downloadSupabaseStructured(force = false) {
     syncBloqueado = true;
     saveLocal();
     syncBloqueado = false;
-    const ts = new Date().toISOString();
+    const ts = new Date(remoteLatest || Date.now()).toISOString();
     localStorage.setItem('lastSyncSupabase', ts);
     localStorage.setItem('lastStructuredSyncSupabase', ts);
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
+    localStorage.removeItem('syncConflictPending');
     registrarEntradaHistorialSync('descarga', 'supabase');
     return true;
   } catch(e) {
