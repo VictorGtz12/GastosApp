@@ -80,6 +80,21 @@ begin
     $role$
   $fn$;
 
+  execute $fn$
+    create or replace function public.app_is_admin(p_user_id uuid default auth.uid())
+    returns boolean
+    language sql
+    security definer
+    set search_path = public
+    as $admin$
+      select exists (
+        select 1
+        from public.app_users
+        where id = p_user_id and role = 'admin'
+      )
+    $admin$
+  $fn$;
+
   foreach t in array array[
     'gs_gastos',
     'gs_cuentas',
@@ -107,10 +122,10 @@ begin
     execute format('drop policy if exists "gastosapp workspace delete" on public.%I', t);
 
     execute format('alter table public.%I enable row level security', t);
-    execute format('create policy "gastosapp workspace select" on public.%I for select to authenticated using (public.app_workspace_role(workspace_id) is not null)', t);
-    execute format('create policy "gastosapp workspace insert" on public.%I for insert to authenticated with check (public.app_workspace_role(workspace_id) in (''admin'', ''editor''))', t);
-    execute format('create policy "gastosapp workspace update" on public.%I for update to authenticated using (public.app_workspace_role(workspace_id) in (''admin'', ''editor'')) with check (public.app_workspace_role(workspace_id) in (''admin'', ''editor''))', t);
-    execute format('create policy "gastosapp workspace delete" on public.%I for delete to authenticated using (public.app_workspace_role(workspace_id) in (''admin'', ''editor''))', t);
+    execute format('create policy "gastosapp workspace select" on public.%I for select to authenticated using (public.app_workspace_role(workspace_id) is not null or public.app_is_admin())', t);
+    execute format('create policy "gastosapp workspace insert" on public.%I for insert to authenticated with check (public.app_workspace_role(workspace_id) in (''admin'', ''editor'') or public.app_is_admin())', t);
+    execute format('create policy "gastosapp workspace update" on public.%I for update to authenticated using (public.app_workspace_role(workspace_id) in (''admin'', ''editor'') or public.app_is_admin()) with check (public.app_workspace_role(workspace_id) in (''admin'', ''editor'') or public.app_is_admin())', t);
+    execute format('create policy "gastosapp workspace delete" on public.%I for delete to authenticated using (public.app_workspace_role(workspace_id) in (''admin'', ''editor'') or public.app_is_admin())', t);
 
     execute format('create index if not exists idx_%I_workspace_id on public.%I(workspace_id)', t, t);
 
@@ -141,6 +156,21 @@ $$;
 
 grant execute on function public.app_workspace_role(uuid, uuid) to authenticated;
 
+create or replace function public.app_is_admin(p_user_id uuid default auth.uid())
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.app_users
+    where id = p_user_id and role = 'admin'
+  )
+$$;
+
+grant execute on function public.app_is_admin(uuid) to authenticated;
+
 alter table public.app_users enable row level security;
 alter table public.app_workspaces enable row level security;
 alter table public.app_workspace_members enable row level security;
@@ -156,26 +186,26 @@ drop policy if exists "members creator insert" on public.app_workspace_members;
 drop policy if exists "members admin manage" on public.app_workspace_members;
 
 create policy "app users self select" on public.app_users
-  for select to authenticated using (id = auth.uid());
+  for select to authenticated using (id = auth.uid() or public.app_is_admin());
 
 create policy "app users self insert" on public.app_users
   for insert to authenticated with check (id = auth.uid());
 
 create policy "app users self update" on public.app_users
-  for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
+  for update to authenticated using (id = auth.uid() or public.app_is_admin()) with check (id = auth.uid() or public.app_is_admin());
 
 create policy "workspaces member select" on public.app_workspaces
-  for select to authenticated using (created_by = auth.uid() or public.app_workspace_role(id) is not null);
+  for select to authenticated using (created_by = auth.uid() or public.app_workspace_role(id) is not null or public.app_is_admin());
 
 create policy "workspaces self insert" on public.app_workspaces
   for insert to authenticated with check (created_by = auth.uid());
 
 create policy "workspaces admin update" on public.app_workspaces
-  for update to authenticated using (public.app_workspace_role(id) = 'admin');
+  for update to authenticated using (public.app_workspace_role(id) = 'admin' or public.app_is_admin());
 
 create policy "members self select" on public.app_workspace_members
   for select to authenticated using (
-    user_id = auth.uid() or public.app_workspace_role(workspace_id) = 'admin'
+    user_id = auth.uid() or public.app_workspace_role(workspace_id) = 'admin' or public.app_is_admin()
   );
 
 create policy "members creator insert" on public.app_workspace_members
@@ -188,5 +218,5 @@ create policy "members creator insert" on public.app_workspace_members
   );
 
 create policy "members admin manage" on public.app_workspace_members
-  for all to authenticated using (public.app_workspace_role(workspace_id) = 'admin')
-  with check (public.app_workspace_role(workspace_id) = 'admin');
+  for all to authenticated using (public.app_workspace_role(workspace_id) = 'admin' or public.app_is_admin())
+  with check (public.app_workspace_role(workspace_id) = 'admin' or public.app_is_admin());

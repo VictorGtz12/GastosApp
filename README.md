@@ -74,7 +74,7 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 
 ### Navegación (Drawer / menú lateral)
 
-El drawer (menú hamburguesa) da acceso a: Historial, Catálogos, Recurrentes, Conciliación, Estadísticas, Alertas, Ajustes, Supabase Sync, Backup, Exportar Excel.
+El drawer (menú hamburguesa) queda solo para navegación y cuenta: Historial, Catálogos, Recurrentes, Conciliación, Alertas, Mis Recordatorios, Ajustes y Cerrar sesión. Las herramientas de datos viven dentro de Ajustes para no saturar el menú.
 
 ---
 
@@ -204,12 +204,15 @@ La app usa Supabase Auth solo como motor interno de sesión; no se crean keys po
 usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
 `app_workspaces`.
 
-- Si Supabase Auth tiene el registro público activado, cualquier persona con el
-  link puede usar **Crear usuario** desde la app. Al entrar por primera vez, se
-  crea su perfil interno y su base personal vacía.
+- Crear usuario está en **Ajustes** y solo aparece para el admin
+  `vedu.gutierrez@gmail.com`; el login solo permite entrar.
+- Si Supabase Auth tiene el registro público activado, el admin puede dar de alta
+  usuarios desde la app. Al entrar por primera vez, se crea su perfil interno y
+  su base personal vacía.
 - Si quieres controlar quién puede usar la app, desactiva el registro público en
-  Supabase y crea los usuarios manualmente en **Authentication**. Luego el usuario
-  entra desde la app con su correo y contraseña.
+  Supabase y crea los usuarios manualmente en **Authentication**, o agrega una
+  función admin segura. Luego el usuario entra desde la app con su correo y
+  contraseña.
 - Para compartir la base de Victor con otro usuario, agrega una fila en
   `app_workspace_members` con rol `viewer`, `editor` o `admin`.
 
@@ -244,9 +247,9 @@ usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
 
 ## Backup
 
-- **Backup JSON:** Drawer → Backup JSON — descarga con todos los datos
-- **Restaurar:** Drawer → Restaurar backup JSON — carga con confirmación
-- **Excel:** Drawer → Exportar Excel — pestañas: Gastos, Historial, Ahorros, Recurrentes, Deudas
+- **Backup JSON:** Ajustes → Herramientas de datos → Backup JSON — descarga los datos de la base activa
+- **Restaurar:** Ajustes → Herramientas de datos → Restaurar JSON — carga con confirmación sobre la base activa
+- **Excel:** Ajustes → Herramientas de datos → Exportar Excel — exporta la base activa a Excel
 
 ---
 

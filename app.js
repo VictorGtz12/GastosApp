@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.49';
+const APP_VERSION = 'v2.52';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -278,6 +278,7 @@ function clearPendingSyncOps() {
 // Las tablas gs_* son la fuente remota principal; localStorage queda como cache offline.
 let _structuredSupabaseAvailable = true;
 let appWorkspaces = [];
+let appUserProfile = null;
 
 function sbHeaders(extra = {}) {
   const auth = getSupabaseAuth();
@@ -307,10 +308,32 @@ async function supabaseAuthFetch(path, body) {
   return data;
 }
 
+function mostrarAuthError(message) {
+  const el = document.getElementById('auth-error');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.display = message ? 'block' : 'none';
+}
+
+function friendlyAuthError(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  if (msg.includes('invalid login') || msg.includes('invalid credentials')) return 'Correo o contraseña incorrectos.';
+  if (msg.includes('email not confirmed')) return 'Confirma tu correo antes de iniciar sesión.';
+  if (msg.includes('signup') || msg.includes('not allowed') || msg.includes('disabled')) return 'El registro está cerrado. Pide a Victor que cree el usuario.';
+  if (msg.includes('password')) return 'La contraseña no cumple los requisitos o es incorrecta.';
+  if (msg.includes('rate limit')) return 'Demasiados intentos. Espera un momento e inténtalo de nuevo.';
+  return 'No se pudo completar la operación. Revisa los datos e inténtalo otra vez.';
+}
+
 async function loginUsuario() {
   const email = (document.getElementById('auth-email')?.value || '').trim();
   const password = document.getElementById('auth-password')?.value || '';
-  if (!email || !password) { showToast('Ingresa correo y contraseña'); return; }
+  mostrarAuthError('');
+  if (!email || !password) {
+    mostrarAuthError('Ingresa correo y contraseña.');
+    showToast('Ingresa correo y contraseña');
+    return;
+  }
   try {
     const data = await supabaseAuthFetch('token?grant_type=password', { email, password });
     setSupabaseAuth(data);
@@ -319,27 +342,44 @@ async function loginUsuario() {
     await afterAuthReady(true);
     showToast('Sesión iniciada ✓');
   } catch(e) {
+    mostrarAuthError(friendlyAuthError(e));
     showToast('No se pudo iniciar sesión');
     console.warn('Login error:', e.message);
   }
 }
 
-async function crearUsuario() {
-  const email = (document.getElementById('auth-email')?.value || '').trim();
-  const password = document.getElementById('auth-password')?.value || '';
-  const displayName = (document.getElementById('auth-name')?.value || '').trim();
-  if (!email || !password) { showToast('Ingresa correo y contraseña'); return; }
+function mostrarAdminUserError(message) {
+  const el = document.getElementById('admin-user-error');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.display = message ? 'block' : 'none';
+}
+
+async function crearUsuarioAdmin() {
+  if (!isAppAdmin()) {
+    showToast('Solo el admin puede crear usuarios');
+    return;
+  }
+  const email = (document.getElementById('admin-new-user-email')?.value || '').trim().toLowerCase();
+  const password = document.getElementById('admin-new-user-password')?.value || '';
+  const displayName = (document.getElementById('admin-new-user-name')?.value || '').trim();
+  mostrarAdminUserError('');
+  if (!email || !password) {
+    mostrarAdminUserError('Ingresa correo y contraseña temporal.');
+    showToast('Faltan datos del usuario');
+    return;
+  }
   try {
-    const data = await supabaseAuthFetch('signup', { email, password, data: { display_name: displayName || email } });
-    setSupabaseAuth(data);
-    localStorage.setItem('supabaseEnabled', '1');
-    await ensureUserProfile(displayName || email);
-    closeModal('modal-auth');
-    await afterAuthReady(true);
+    await supabaseAuthFetch('signup', { email, password, data: { display_name: displayName || email } });
+    document.getElementById('admin-new-user-email').value = '';
+    document.getElementById('admin-new-user-password').value = '';
+    document.getElementById('admin-new-user-name').value = '';
     showToast('Usuario creado ✓');
   } catch(e) {
+    const msg = friendlyAuthError(e);
+    mostrarAdminUserError(msg);
     showToast('No se pudo crear usuario');
-    console.warn('Signup error:', e.message);
+    console.warn('Admin signup error:', e.message);
   }
 }
 
@@ -354,6 +394,7 @@ async function ensureUserProfile(displayName = '') {
   const user = currentUser();
   if (!user) return false;
   const name = authUserName(displayName);
+  const role = (user.email || '').toLowerCase() === 'vedu.gutierrez@gmail.com' ? 'admin' : 'user';
   await sbFetch('app_users?on_conflict=id', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
@@ -361,10 +402,11 @@ async function ensureUserProfile(displayName = '') {
       id: user.id,
       email: user.email || '',
       display_name: name,
-      role: (user.email || '').toLowerCase().includes('victor') ? 'admin' : 'user',
+      role,
       updated_at: new Date().toISOString()
     }])
   });
+  appUserProfile = { id: user.id, email: user.email || '', display_name: name, role };
   const memberships = await sbFetch('app_workspace_members?select=workspace_id,role&order=created_at.asc', {
     headers: { 'Accept': 'application/json' }
   }).then(r => r.json()).catch(() => []);
@@ -395,17 +437,33 @@ async function ensureUserProfile(displayName = '') {
   return true;
 }
 
+function isAppAdmin() {
+  return appUserProfile?.role === 'admin' || (currentUser()?.email || '').toLowerCase() === 'vedu.gutierrez@gmail.com';
+}
+
 async function cargarWorkspaces() {
   if (!usingSupabaseAuth()) return [];
-  const rows = await sbFetch('app_workspace_members?select=workspace_id,role,app_workspaces(id,name,is_personal)&order=created_at.asc', {
-    headers: { 'Accept': 'application/json' }
-  }).then(r => r.json()).catch(() => []);
-  appWorkspaces = rows.map(r => ({
-    id: r.workspace_id,
-    role: r.role,
-    name: r.app_workspaces?.name || 'Base sin nombre',
-    isPersonal: !!r.app_workspaces?.is_personal
-  }));
+  if (isAppAdmin()) {
+    const rows = await sbFetch('app_workspaces?select=id,name,is_personal,created_at&order=created_at.asc', {
+      headers: { 'Accept': 'application/json' }
+    }).then(r => r.json()).catch(() => []);
+    appWorkspaces = rows.map(r => ({
+      id: r.id,
+      role: 'admin',
+      name: r.name || 'Base sin nombre',
+      isPersonal: !!r.is_personal
+    }));
+  } else {
+    const rows = await sbFetch('app_workspace_members?select=workspace_id,role,app_workspaces(id,name,is_personal)&order=created_at.asc', {
+      headers: { 'Accept': 'application/json' }
+    }).then(r => r.json()).catch(() => []);
+    appWorkspaces = rows.map(r => ({
+      id: r.workspace_id,
+      role: r.role,
+      name: r.app_workspaces?.name || 'Base sin nombre',
+      isPersonal: !!r.app_workspaces?.is_personal
+    }));
+  }
   if (appWorkspaces.length && !appWorkspaces.some(w => w.id === currentWorkspaceId())) {
     setCurrentWorkspaceId(appWorkspaces[0].id);
   }
@@ -3507,8 +3565,44 @@ function exportarExcel() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────
-function openModal(id)  { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+let modalScrollY = 0;
+
+function hayModalAbierto() {
+  return !!document.querySelector('.overlay.open');
+}
+
+function bloquearFondoModal() {
+  if (document.body.classList.contains('modal-open')) return;
+  modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  document.documentElement.classList.add('modal-open');
+  document.body.classList.add('modal-open');
+  document.body.style.top = `-${modalScrollY}px`;
+}
+
+function liberarFondoModalSiAplica() {
+  if (hayModalAbierto()) return;
+  const top = document.body.style.top;
+  document.documentElement.classList.remove('modal-open');
+  document.body.classList.remove('modal-open');
+  document.body.style.top = '';
+  const y = top ? Math.abs(parseInt(top, 10)) || modalScrollY : modalScrollY;
+  window.scrollTo(0, y);
+  modalScrollY = 0;
+}
+
+function openModal(id)  {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.add('open');
+  bloquearFondoModal();
+}
+
+function closeModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.remove('open');
+  liberarFondoModalSiAplica();
+}
 
 function showToast(msg) {
   const t=document.getElementById('toast');
@@ -3752,11 +3846,17 @@ async function abrirAjustes() {
   const modoViaje = document.getElementById('ajuste-modo-viaje');
   const deviceIdEl = document.getElementById('supabase-device-id');
   const userEl = document.getElementById('ajuste-usuario-actual');
+  const roleEl = document.getElementById('ajuste-usuario-rol');
   const workspaceEl = document.getElementById('ajuste-workspace');
+  const workspaceField = document.getElementById('ajuste-workspace-field');
+  const adminUsersField = document.getElementById('ajuste-admin-users-field');
   if (modoViaje) modoViaje.checked = isTravelMode();
   if (deviceIdEl) deviceIdEl.textContent = getSupabaseDeviceId();
   if (userEl) userEl.textContent = currentUser()?.email || 'Sin sesión';
-  if (workspaceEl) {
+  if (roleEl) roleEl.textContent = `Rol: ${isAppAdmin() ? 'Admin' : 'Usuario'}`;
+  if (workspaceField) workspaceField.style.display = isAppAdmin() ? 'block' : 'none';
+  if (adminUsersField) adminUsersField.style.display = isAppAdmin() ? 'block' : 'none';
+  if (workspaceEl && isAppAdmin()) {
     const workspaces = await cargarWorkspaces();
     workspaceEl.innerHTML = workspaces.length
       ? workspaces.map(w => `<option value="${w.id}" ${w.id === currentWorkspaceId() ? 'selected' : ''}>${w.name}${w.role === 'viewer' ? ' (solo lectura)' : ''}</option>`).join('')
