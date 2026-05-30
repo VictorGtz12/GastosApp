@@ -326,9 +326,12 @@
   <div id="banner-pendientes" style="display:none;position:fixed;top:calc(96px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:456px;background:rgba(40,25,0,.97);border:1px solid var(--orange);border-radius:12px;padding:10px 14px;align-items:center;justify-content:space-between;gap:8px;z-index:95;box-shadow:0 4px 20px rgba(255,159,67,.4)">
     <div>
       <div style="font-size:12px;font-weight:600;color:var(--orange)">⬆️ Cambios sin subir</div>
-      <div style="font-size:10px;color:var(--text2);margin-top:1px">Toca para sincronizar con Supabase</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:1px">Puedes ver la cola o sincronizar con Supabase</div>
     </div>
-    <button onclick="refreshData()" style="padding:6px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Sincronizar</button>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button onclick="verColaSync()" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,159,67,.45);background:transparent;color:var(--orange);font-size:12px;font-weight:600;cursor:pointer">Ver cola</button>
+      <button onclick="refreshData()" style="padding:6px 14px;border-radius:8px;border:none;background:var(--orange);color:white;font-size:12px;font-weight:600;cursor:pointer">Sincronizar</button>
+    </div>
   </div>
 
   <button class="fab" onclick="showTab('nuevo')" title="Nuevo gasto">+</button>
@@ -1016,6 +1019,19 @@
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-alertas')">Cancelar</button>
       <button class="mbtn" onclick="guardarAlertasCorte()">Activar alertas</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Cola sync -->
+<div class="overlay" id="modal-cola-sync" onclick="if(event.target===this)closeModal('modal-cola-sync')">
+  <div class="modal" style="max-height:80vh;display:flex;flex-direction:column">
+    <h2>⬆️ Cola pendiente</h2>
+    <div id="cola-sync-body" style="overflow-y:auto;flex:1;margin-top:8px"></div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="mbtn sec" onclick="verColaSync()">Actualizar</button>
+      <button class="mbtn sec" onclick="refreshData()">Sincronizar</button>
+      <button class="mbtn" onclick="closeModal('modal-cola-sync')">Cerrar</button>
     </div>
   </div>
 </div>
