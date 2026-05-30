@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.47';
-const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260529e', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'gastos-v2.49';
+const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260529f', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

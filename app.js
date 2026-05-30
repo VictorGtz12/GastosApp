@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.47';
+const APP_VERSION = 'v2.49';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -3721,6 +3721,28 @@ function mostrarVersionCache() {
   const drawer = document.getElementById('drawer-version-label');
   if (drawer) drawer.textContent = APP_VERSION;
 }
+
+async function reiniciarAppCache() {
+  try {
+    closeModal('modal-ajustes');
+    showToast('Actualizando app...');
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    const url = new URL(location.href);
+    url.searchParams.set('refresh', Date.now().toString());
+    setTimeout(() => location.replace(url.toString()), 250);
+  } catch(e) {
+    console.warn('Reinicio de cache falló:', e);
+    showToast('No se pudo limpiar cache');
+  }
+}
+window.reiniciarAppCache = reiniciarAppCache;
 
 async function abrirAjustes() {
   mostrarVersionCache();

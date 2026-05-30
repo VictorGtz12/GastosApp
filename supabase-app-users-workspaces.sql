@@ -72,12 +72,12 @@ begin
     language sql
     security definer
     set search_path = public
-    as $$
+    as $role$
       select role
       from public.app_workspace_members
       where workspace_id = p_workspace_id and user_id = p_user_id
       limit 1
-    $$
+    $role$
   $fn$;
 
   foreach t in array array[

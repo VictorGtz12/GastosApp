@@ -313,7 +313,7 @@
       <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Cerrar sesión
     </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.47</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.49</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -866,6 +866,11 @@
       </div>
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Ideal para roaming o redes inestables. Tus cambios se guardan en este telefono y se suben cuando sincronices manualmente.</div>
     </div>
+    <div class="field">
+      <label>Actualizar app</label>
+      <button onclick="reiniciarAppCache()" style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;cursor:pointer;text-align:left">Reiniciar app y borrar cache</button>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Fuerza la última versión sin borrar tus datos, sesión ni bases.</div>
+    </div>
     <div style="text-align:center;margin-top:16px">
       <span id="app-version-label" style="font-size:11px;color:var(--text3);cursor:pointer" onclick="mostrarVersionCache()">cargando versión...</span>
     </div>
@@ -976,7 +981,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="db.js?v=1"></script>
-<script src="app.js?v=20260529e"></script>
+<script src="app.js?v=20260529f"></script>
 <script async src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script async src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <!-- MODAL: Historial de versiones -->
