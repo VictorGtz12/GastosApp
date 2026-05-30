@@ -305,12 +305,15 @@
     <div class="drawer-item" onclick="closeDrawer();verVersionHistorial()">
       <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/><polyline points="7 2 2 7 7 12"/></svg>Historial de versiones
     </div>
-    <div class="drawer-header" style="margin-top:8px">Supabase Sync</div>
+    <div class="drawer-header" style="margin-top:8px">Sincronización</div>
     <div class="drawer-item" onclick="closeDrawer();refreshData()">
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Sincronizar ahora
     </div>
+    <div class="drawer-item" onclick="closeDrawer();cerrarSesion()">
+      <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Cerrar sesión
+    </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.44</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.47</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -678,6 +681,19 @@
     </div>
   </div>
 </div>
+<div class="overlay" id="modal-auth">
+  <div class="modal">
+    <h2>Iniciar sesión</h2>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada usuario entra a sus bases personales o compartidas dentro de GastosApp.</p>
+    <div class="field"><label>Nombre (solo al crear usuario)</label><input type="text" id="auth-name" placeholder="Ej. Victor"></div>
+    <div class="field"><label>Correo <span class="req">*</span></label><input type="text" id="auth-email" placeholder="correo@ejemplo.com" autocomplete="username"></div>
+    <div class="field"><label>Contraseña <span class="req">*</span></label><input type="password" id="auth-password" placeholder="Contraseña" autocomplete="current-password"></div>
+    <div class="modal-actions">
+      <button class="mbtn sec" onclick="crearUsuario()">Crear usuario</button>
+      <button class="mbtn prim" onclick="loginUsuario()">Entrar</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="modal-detail"><div class="modal" id="modal-detail-body"></div></div>
 <div class="overlay" id="modal-corte-tarjeta"><div class="modal" id="modal-corte-body"></div></div>
 <div class="overlay" id="modal-excepcion">
@@ -831,12 +847,16 @@
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Opcional — permite conciliar PDFs automáticamente con IA</div>
     </div>
     <div class="field">
-      <label>Supabase <span style="font-size:10px;color:var(--text3)">(sync principal)</span></label>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <input type="checkbox" id="ajuste-supabase-enabled" style="width:16px;height:16px;cursor:pointer">
-        <label for="ajuste-supabase-enabled" style="font-size:13px;cursor:pointer">Activar sync con Supabase</label>
+      <label>Usuario</label>
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:10px 12px">
+        <div id="ajuste-usuario-actual" style="font-size:13px;color:var(--text);font-weight:600">Sin sesión</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">ID dispositivo: <span id="supabase-device-id" style="font-family:monospace;font-size:10px"></span></div>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">ID dispositivo: <span id="supabase-device-id" style="font-family:monospace;font-size:10px"></span></div>
+    </div>
+    <div class="field">
+      <label>Base activa</label>
+      <select id="ajuste-workspace" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none"></select>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Tus datos se guardan separados por base personal o compartida.</div>
     </div>
     <div class="field">
       <label>Modo viaje</label>
@@ -956,7 +976,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="db.js?v=1"></script>
-<script src="app.js?v=20260529b"></script>
+<script src="app.js?v=20260529e"></script>
 <script async src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script async src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <!-- MODAL: Historial de versiones -->

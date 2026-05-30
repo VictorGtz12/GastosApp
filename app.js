@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.44';
+const APP_VERSION = 'v2.47';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -55,6 +55,14 @@ let reglasAutomaticas = [
   { texto:'Apple', cuenta:'', motivo:'Servicios' },
   { texto:'HBO', cuenta:'', motivo:'Servicios' }
 ];
+
+const DEFAULT_APP_STATE = JSON.parse(JSON.stringify({
+  catalogoCuentas,
+  catalogoMotivos,
+  catalogoComentarios,
+  catalogoTags,
+  reglasAutomaticas
+}));
 
 // Helpers que reemplazan las constantes estáticas anteriores
 function getCuentas()      { return catalogoCuentas.map(c => c.nombre); }
@@ -145,10 +153,105 @@ function getSupabaseDeviceId() {
   if (!id) { id = 'device_' + Math.random().toString(36).slice(2) + Date.now(); localStorage.setItem('supabaseDeviceId', id); }
   return id;
 }
-function usingSupabase() { return localStorage.getItem('supabaseEnabled') === '1'; }
-
 function makeLocalId(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getSupabaseAuth() {
+  try { return JSON.parse(localStorage.getItem('supabaseAuth') || 'null'); }
+  catch(e) { return null; }
+}
+
+function setSupabaseAuth(auth) {
+  if (!auth) localStorage.removeItem('supabaseAuth');
+  else localStorage.setItem('supabaseAuth', JSON.stringify(auth));
+}
+
+function currentUser() {
+  return getSupabaseAuth()?.user || null;
+}
+
+function currentUserId() {
+  return currentUser()?.id || null;
+}
+
+function currentWorkspaceId() {
+  return localStorage.getItem('currentWorkspaceId') || null;
+}
+
+function setCurrentWorkspaceId(id) {
+  if (id) localStorage.setItem('currentWorkspaceId', id);
+  else localStorage.removeItem('currentWorkspaceId');
+}
+
+function appDataStorageKey() {
+  const wid = currentWorkspaceId();
+  return wid ? `appData_v1:${wid}` : 'appData_v1';
+}
+
+function workspaceStorageKey(name) {
+  const wid = currentWorkspaceId();
+  return wid ? `${name}:${wid}` : name;
+}
+
+function resetPersonalState() {
+  gastos = [];
+  historico = [];
+  nextId = 1;
+  cuentasAhorro = [];
+  nextAhorroId = 1;
+  excepciones = [];
+  ajustesPresupuesto = [];
+  recurrentes = [];
+  nextRecId = 1;
+  deudas = [];
+  nextDeudaId = 1;
+  nextMovId = 1;
+  PRESUPUESTO = 3400.09;
+  catalogoCuentas = JSON.parse(JSON.stringify(DEFAULT_APP_STATE.catalogoCuentas));
+  catalogoMotivos = [...DEFAULT_APP_STATE.catalogoMotivos];
+  catalogoComentarios = [...DEFAULT_APP_STATE.catalogoComentarios];
+  catalogoTags = [...DEFAULT_APP_STATE.catalogoTags];
+  reglasAutomaticas = JSON.parse(JSON.stringify(DEFAULT_APP_STATE.reglasAutomaticas));
+}
+
+function usingSupabaseAuth() {
+  return !!getSupabaseAuth()?.access_token && !!currentUserId();
+}
+
+function usingSupabase() {
+  return usingSupabaseAuth();
+}
+
+function userScopedTable(table) {
+  return [
+    'gs_gastos',
+    'gs_cuentas',
+    'gs_catalogos',
+    'gs_cuentas_ahorro',
+    'gs_movimientos_ahorro',
+    'gs_recurrentes',
+    'gs_deudas',
+    'gs_app_settings',
+    'gs_tasks',
+    'gs_task_projects'
+  ].includes(table);
+}
+
+async function refreshSupabaseSession() {
+  const auth = getSupabaseAuth();
+  if (!auth?.refresh_token) return false;
+  const expiresAt = Number(auth.expires_at || 0) * 1000;
+  if (expiresAt && expiresAt - Date.now() > 60000) return true;
+  try {
+    const data = await supabaseAuthFetch('token?grant_type=refresh_token', { refresh_token: auth.refresh_token });
+    setSupabaseAuth({ ...auth, ...data });
+    return true;
+  } catch(e) {
+    console.warn('Refresh session error:', e.message);
+    setSupabaseAuth(null);
+    return false;
+  }
 }
 
 function getPendingSyncOps() {
@@ -174,13 +277,164 @@ function clearPendingSyncOps() {
 // ── Supabase estructurado ────────────────────────────────────
 // Las tablas gs_* son la fuente remota principal; localStorage queda como cache offline.
 let _structuredSupabaseAvailable = true;
+let appWorkspaces = [];
 
 function sbHeaders(extra = {}) {
+  const auth = getSupabaseAuth();
   return {
     'apikey': SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Authorization': `Bearer ${auth?.access_token || SUPABASE_KEY}`,
     ...extra
   };
+}
+
+function authUserName(displayName = '') {
+  const user = currentUser();
+  return displayName || user?.user_metadata?.display_name || user?.email || '';
+}
+
+async function supabaseAuthFetch(path, body) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || `Auth HTTP ${res.status}`);
+  return data;
+}
+
+async function loginUsuario() {
+  const email = (document.getElementById('auth-email')?.value || '').trim();
+  const password = document.getElementById('auth-password')?.value || '';
+  if (!email || !password) { showToast('Ingresa correo y contraseña'); return; }
+  try {
+    const data = await supabaseAuthFetch('token?grant_type=password', { email, password });
+    setSupabaseAuth(data);
+    localStorage.setItem('supabaseEnabled', '1');
+    closeModal('modal-auth');
+    await afterAuthReady(true);
+    showToast('Sesión iniciada ✓');
+  } catch(e) {
+    showToast('No se pudo iniciar sesión');
+    console.warn('Login error:', e.message);
+  }
+}
+
+async function crearUsuario() {
+  const email = (document.getElementById('auth-email')?.value || '').trim();
+  const password = document.getElementById('auth-password')?.value || '';
+  const displayName = (document.getElementById('auth-name')?.value || '').trim();
+  if (!email || !password) { showToast('Ingresa correo y contraseña'); return; }
+  try {
+    const data = await supabaseAuthFetch('signup', { email, password, data: { display_name: displayName || email } });
+    setSupabaseAuth(data);
+    localStorage.setItem('supabaseEnabled', '1');
+    await ensureUserProfile(displayName || email);
+    closeModal('modal-auth');
+    await afterAuthReady(true);
+    showToast('Usuario creado ✓');
+  } catch(e) {
+    showToast('No se pudo crear usuario');
+    console.warn('Signup error:', e.message);
+  }
+}
+
+function cerrarSesion() {
+  setSupabaseAuth(null);
+  ['lastSync', 'lastSyncSupabase', 'lastStructuredSyncSupabase', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
+  showToast('Sesión cerrada');
+  setTimeout(() => location.reload(), 300);
+}
+
+async function ensureUserProfile(displayName = '') {
+  const user = currentUser();
+  if (!user) return false;
+  const name = authUserName(displayName);
+  await sbFetch('app_users?on_conflict=id', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([{
+      id: user.id,
+      email: user.email || '',
+      display_name: name,
+      role: (user.email || '').toLowerCase().includes('victor') ? 'admin' : 'user',
+      updated_at: new Date().toISOString()
+    }])
+  });
+  const memberships = await sbFetch('app_workspace_members?select=workspace_id,role&order=created_at.asc', {
+    headers: { 'Accept': 'application/json' }
+  }).then(r => r.json()).catch(() => []);
+  if (memberships.length) {
+    if (!currentWorkspaceId() || !memberships.some(m => m.workspace_id === currentWorkspaceId())) {
+      setCurrentWorkspaceId(memberships[0].workspace_id);
+    }
+    return true;
+  }
+  const workspaceId = crypto.randomUUID();
+  await sbFetch('app_workspaces', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+    body: JSON.stringify([{
+      id: workspaceId,
+      name: `Base de ${name || user.email || 'usuario'}`,
+      created_by: user.id,
+      is_personal: true,
+      updated_at: new Date().toISOString()
+    }])
+  });
+  await sbFetch('app_workspace_members', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+    body: JSON.stringify([{ workspace_id: workspaceId, user_id: user.id, role: 'admin' }])
+  });
+  setCurrentWorkspaceId(workspaceId);
+  return true;
+}
+
+async function cargarWorkspaces() {
+  if (!usingSupabaseAuth()) return [];
+  const rows = await sbFetch('app_workspace_members?select=workspace_id,role,app_workspaces(id,name,is_personal)&order=created_at.asc', {
+    headers: { 'Accept': 'application/json' }
+  }).then(r => r.json()).catch(() => []);
+  appWorkspaces = rows.map(r => ({
+    id: r.workspace_id,
+    role: r.role,
+    name: r.app_workspaces?.name || 'Base sin nombre',
+    isPersonal: !!r.app_workspaces?.is_personal
+  }));
+  if (appWorkspaces.length && !appWorkspaces.some(w => w.id === currentWorkspaceId())) {
+    setCurrentWorkspaceId(appWorkspaces[0].id);
+  }
+  return appWorkspaces;
+}
+
+async function cambiarWorkspace(workspaceId) {
+  if (!workspaceId || workspaceId === currentWorkspaceId()) return;
+  guardarBackupMinimo('antes-cambiar-base');
+  setCurrentWorkspaceId(workspaceId);
+  ['lastSync', 'lastSyncSupabase', 'lastStructuredSyncSupabase', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
+  resetPersonalState();
+  loadFromLocal();
+  if (navigator.onLine) await downloadSupabase(true);
+  actualizarSelectCuentas();
+  actualizarSelectMotivos();
+  renderMenu();
+  showTab(tabActualGlobal || 'menu');
+  mostrarEstadoSync(true);
+  showToast('Base cambiada ✓');
+}
+
+function requireAuth() {
+  if (usingSupabaseAuth()) return true;
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main-app').style.display = 'block';
+  openModal('modal-auth');
+  mostrarEstadoSync(false, 'error');
+  return false;
 }
 
 async function sbFetch(path, opts = {}) {
@@ -208,6 +462,7 @@ function structuredTouch(obj) {
 function structuredRow(id, data, extra = {}) {
   const now = new Date().toISOString();
   return {
+    workspace_id: currentWorkspaceId(),
     id: String(id),
     data,
     updated_at: data.updatedAt || now,
@@ -238,12 +493,12 @@ function cleanMovimientoForStructured(mov, cuentaId) {
 }
 
 function getStructuredDeleted() {
-  try { return JSON.parse(localStorage.getItem('supabaseStructuredDeleted') || '{}'); }
+  try { return JSON.parse(localStorage.getItem(workspaceStorageKey('supabaseStructuredDeleted')) || '{}'); }
   catch(e) { return {}; }
 }
 
 function setStructuredDeleted(data) {
-  localStorage.setItem('supabaseStructuredDeleted', JSON.stringify(data));
+  localStorage.setItem(workspaceStorageKey('supabaseStructuredDeleted'), JSON.stringify(data));
 }
 
 function markStructuredDeleted(table, id) {
@@ -264,20 +519,20 @@ function clearStructuredDeleted(table, ids) {
 }
 
 function getStructuredDirty() {
-  try { return JSON.parse(localStorage.getItem('supabaseStructuredDirty') || '{}'); }
+  try { return JSON.parse(localStorage.getItem(workspaceStorageKey('supabaseStructuredDirty')) || '{}'); }
   catch(e) { return {}; }
 }
 
 function markStructuredDirty(key) {
   const dirty = getStructuredDirty();
   dirty[key] = true;
-  localStorage.setItem('supabaseStructuredDirty', JSON.stringify(dirty));
+  localStorage.setItem(workspaceStorageKey('supabaseStructuredDirty'), JSON.stringify(dirty));
 }
 
 function clearStructuredDirty(keys) {
   const dirty = getStructuredDirty();
   keys.forEach(k => delete dirty[k]);
-  localStorage.setItem('supabaseStructuredDirty', JSON.stringify(dirty));
+  localStorage.setItem(workspaceStorageKey('supabaseStructuredDirty'), JSON.stringify(dirty));
 }
 
 function structuredLastSyncMs() {
@@ -447,13 +702,15 @@ function validateStructuredPayload(payload, opts = {}) {
 
 async function sbUpsert(table, rows, onConflict = 'id') {
   if (!rows.length) return true;
-  await sbFetch(`${table}?on_conflict=${onConflict}`, {
+  const scopedRows = userScopedTable(table) ? rows.map(r => ({ ...r, workspace_id: r.workspace_id || currentWorkspaceId() })) : rows;
+  const conflict = userScopedTable(table) ? 'workspace_id,id' : onConflict;
+  await sbFetch(`${table}?on_conflict=${conflict}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates,return=minimal'
     },
-    body: JSON.stringify(rows)
+    body: JSON.stringify(scopedRows)
   });
   return true;
 }
@@ -461,7 +718,8 @@ async function sbUpsert(table, rows, onConflict = 'id') {
 async function sbSoftDelete(table, rows) {
   const done = [];
   for (const row of rows || []) {
-    await sbFetch(`${table}?id=eq.${encodeURIComponent(row.id)}`, {
+    const workspaceFilter = userScopedTable(table) ? `workspace_id=eq.${encodeURIComponent(currentWorkspaceId())}&` : '';
+    await sbFetch(`${table}?${workspaceFilter}id=eq.${encodeURIComponent(row.id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({
@@ -595,7 +853,12 @@ async function uploadSupabaseStructured(opts = {}) {
 }
 
 async function sbSelect(table, query = 'select=*') {
-  const res = await sbFetch(`${table}?${query}`, { headers: { 'Accept': 'application/json' } });
+  const workspaceId = currentWorkspaceId();
+  let scopedQuery = query;
+  if (workspaceId && userScopedTable(table) && !/(^|&)workspace_id=/.test(query)) {
+    scopedQuery += `${query ? '&' : ''}workspace_id=eq.${encodeURIComponent(workspaceId)}`;
+  }
+  const res = await sbFetch(`${table}?${scopedQuery}`, { headers: { 'Accept': 'application/json' } });
   return await res.json();
 }
 
@@ -932,6 +1195,8 @@ function limpiarHistorialSync() {
 function saveData(opts = {}) { saveLocal(); }
 
 async function refreshData() {
+  if (!requireAuth()) return;
+  await ensureUserProfile();
   if (!navigator.onLine) {
     loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
     showTab(tabActualGlobal);
@@ -953,6 +1218,23 @@ async function refreshData() {
   showTab(tabActualGlobal);
   mostrarEstadoSync(true);
   showToast('Vista actualizada ✓');
+}
+
+async function afterAuthReady(forceDownload = false) {
+  if (!requireAuth()) return false;
+  localStorage.setItem('supabaseEnabled', '1');
+  await ensureUserProfile();
+  await cargarWorkspaces();
+  resetPersonalState();
+  if (navigator.onLine) {
+    await downloadSupabase(forceDownload);
+  }
+  actualizarSelectCuentas();
+  actualizarSelectMotivos();
+  renderMenu();
+  showTab(tabActualGlobal || 'menu');
+  mostrarEstadoSync(true);
+  return true;
 }
 
 function mostrarEstadoSync(ok, estado = null) {
@@ -1321,7 +1603,7 @@ function saveLocal() {
       recurrentes, nextRecId, deudas, nextDeudaId, nextMovId,
       ajustesPresupuesto,
     };
-    localStorage.setItem('appData_v1', JSON.stringify(data));
+    localStorage.setItem(appDataStorageKey(), JSON.stringify(data));
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
     if (!syncBloqueado) queueSyncOperation('snapshot', { tab: tabActualGlobal || 'menu' });
@@ -1369,7 +1651,7 @@ function saveLocal() {
 
 function loadFromLocal() {
   try {
-    const raw = localStorage.getItem('appData_v1');
+    const raw = localStorage.getItem(appDataStorageKey());
     if (raw) {
       const data = JSON.parse(raw);
       if (data.gastos)              gastos              = data.gastos.map(normGasto);
@@ -1392,6 +1674,7 @@ function loadFromLocal() {
     if (data.ajustesPresupuesto)  ajustesPresupuesto  = data.ajustesPresupuesto;
     return;
     }
+    if (currentUserId()) return;
     // Fallback: claves legacy
     const tryGet = (...keys) => { for (const k of keys) { const v = localStorage.getItem(k); if (v !== null) return v; } return null; };
     const g = tryGet('gastos','gastos_v7','gastos_v6','gastos_v5');
@@ -3439,18 +3722,24 @@ function mostrarVersionCache() {
   if (drawer) drawer.textContent = APP_VERSION;
 }
 
-function abrirAjustes() {
+async function abrirAjustes() {
   mostrarVersionCache();
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
-  // Supabase
-  const sbEnabled = document.getElementById('ajuste-supabase-enabled');
   const modoViaje = document.getElementById('ajuste-modo-viaje');
   const deviceIdEl = document.getElementById('supabase-device-id');
-  if (sbEnabled) sbEnabled.checked = usingSupabase();
+  const userEl = document.getElementById('ajuste-usuario-actual');
+  const workspaceEl = document.getElementById('ajuste-workspace');
   if (modoViaje) modoViaje.checked = isTravelMode();
   if (deviceIdEl) deviceIdEl.textContent = getSupabaseDeviceId();
+  if (userEl) userEl.textContent = currentUser()?.email || 'Sin sesión';
+  if (workspaceEl) {
+    const workspaces = await cargarWorkspaces();
+    workspaceEl.innerHTML = workspaces.length
+      ? workspaces.map(w => `<option value="${w.id}" ${w.id === currentWorkspaceId() ? 'selected' : ''}>${w.name}${w.role === 'viewer' ? ' (solo lectura)' : ''}</option>`).join('')
+      : '<option value="">Sin base</option>';
+  }
   openModal('modal-ajustes');
 }
 
@@ -3463,15 +3752,20 @@ async function guardarAjustes() {
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) { const v = wu.value.trim(); v ? localStorage.setItem('workerUrl', v) : localStorage.removeItem('workerUrl'); }
 
-  const sbEl = document.getElementById('ajuste-supabase-enabled');
   const travelEl = document.getElementById('ajuste-modo-viaje');
-  if (sbEl) sbEl.checked ? localStorage.setItem('supabaseEnabled','1') : localStorage.removeItem('supabaseEnabled');
+  const workspaceEl = document.getElementById('ajuste-workspace');
+  localStorage.setItem('supabaseEnabled','1');
   ['git'+'hubToken', 'git'+'hubDisabled', 'git'+'hubSha'].forEach(k => localStorage.removeItem(k));
   if (travelEl) travelEl.checked ? localStorage.setItem('modoViaje','1') : localStorage.removeItem('modoViaje');
 
   // Dispositivo nuevo O sin datos: forzar descarga remota
   const esNuevo = (!localStorage.getItem('lastSync') && !localStorage.getItem('lastSyncSupabase')) || gastos.length === 0;
   closeModal('modal-ajustes');
+
+  if (workspaceEl?.value && workspaceEl.value !== currentWorkspaceId()) {
+    await cambiarWorkspace(workspaceEl.value);
+    return;
+  }
 
   if (isTravelMode()) {
     syncBloqueado = true;
@@ -5717,7 +6011,8 @@ function aplicarVisibilidadAhorros() {
 }
 
 // ── Init ──────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  await refreshSupabaseSession();
   try { loadFromLocal(); } catch(e) { console.error('Error cargando datos:', e); }
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
@@ -5731,6 +6026,16 @@ window.addEventListener('DOMContentLoaded', () => {
   // Inicializar IndexedDB (no crítico, en segundo plano)
   try { if (window.DB) DB.migrar(); } catch(e) {}
 
+  if (!usingSupabaseAuth()) {
+    mostrarEstadoSync(false, 'error');
+    openModal('modal-auth');
+    return;
+  }
+  await ensureUserProfile();
+  await cargarWorkspaces();
+  resetPersonalState();
+  try { loadFromLocal(); } catch(e) { console.error('Error cargando cache de workspace:', e); }
+
   // Renderizar menú con datos locales INMEDIATAMENTE
   showTab('menu');
   renderMenu();
@@ -5740,13 +6045,14 @@ window.addEventListener('DOMContentLoaded', () => {
   if (isTravelMode()) {
     mostrarEstadoSync(false);
   } else if (usingSupabase() && navigator.onLine) {
-    const needsSyncRepair = localStorage.getItem('syncRepairVersion') !== SYNC_REPAIR_VERSION;
+    const repairKey = workspaceStorageKey('syncRepairVersion');
+    const needsSyncRepair = localStorage.getItem(repairKey) !== SYNC_REPAIR_VERSION;
     if (needsSyncRepair) {
-      localStorage.removeItem('supabaseStructuredDeleted');
-      localStorage.removeItem('supabaseStructuredDirty');
+      localStorage.removeItem(workspaceStorageKey('supabaseStructuredDeleted'));
+      localStorage.removeItem(workspaceStorageKey('supabaseStructuredDirty'));
     }
     downloadSupabase(needsSyncRepair).then(async ok => {
-      if (ok && needsSyncRepair) localStorage.setItem('syncRepairVersion', SYNC_REPAIR_VERSION);
+      if (ok && needsSyncRepair) localStorage.setItem(repairKey, SYNC_REPAIR_VERSION);
       // Re-renderizar siempre con los datos más frescos
       actualizarSelectCuentas();
       actualizarSelectMotivos();

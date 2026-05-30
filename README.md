@@ -188,12 +188,15 @@ La app ya no depende de un único JSON gigante para Supabase. El archivo
 movimientos, recurrentes, deudas y ajustes.
 
 1. Ejecuta `supabase-schema.sql` una vez en el SQL Editor de Supabase.
-2. Activa Supabase en Ajustes.
-3. La primera sincronización sube los datos locales a las tablas nuevas.
+2. Crea o confirma el usuario principal Victor en Authentication.
+3. Confirma que `supabase-app-users-workspaces.sql` tenga el correo de Victor: `vedu.gutierrez@gmail.com`.
+4. Ejecuta `supabase-app-users-workspaces.sql` para asignar los datos existentes a la base personal de Victor y activar RLS por base.
+5. Entra a la app con correo y contraseña. Supabase queda siempre activo; ya no hay switch en Ajustes.
 
-Con las tablas creadas, la app usa Supabase estructurado como sync principal. El
-historial de versiones remoto evita duplicar datos para cuidar la cuota; el
-respaldo local sigue existiendo en el navegador.
+Con las tablas creadas, la app usa Supabase estructurado como sync principal.
+Cada fila guarda `workspace_id`, las políticas RLS solo permiten ver/modificar
+bases donde el usuario sea miembro y el respaldo local queda separado por base
+en el navegador.
 
 ### Cuentas y cortes predeterminados
 
