@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.39';
+const APP_VERSION = 'v2.40';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -2886,16 +2886,34 @@ function openCorte() {
 }
 
 async function hacerCorte() {
+  if (window._corteEnCurso) return;
   if (!gastos.length) { closeModal('modal-corte-sem'); showToast('No hay gastos que cortar'); return; }
-  historico = [...gastos, ...historico];
-  gastos = [];
-  // Reiniciar ajustes de presupuesto acumulados al comenzar nueva semana
-  const teniaAjustes = ajustesPresupuesto.length > 0;
-  ajustesPresupuesto = [];
-  saveLocal();
-  closeModal('modal-corte-sem');
-  showToast(teniaAjustes ? '¡Corte realizado! Presupuesto reiniciado a la base ✓' : '¡Corte semanal realizado! ✓');
-  renderMenu();
+  window._corteEnCurso = true;
+  try {
+    const corteAt = new Date().toISOString();
+    const gastosCortados = gastos.map(g => ({ ...g, updatedAt: corteAt, corteAt }));
+    historico = [...gastosCortados, ...historico];
+    gastos = [];
+    // Reiniciar ajustes de presupuesto acumulados al comenzar nueva semana
+    const teniaAjustes = ajustesPresupuesto.length > 0;
+    ajustesPresupuesto = [];
+    syncBloqueado = true;
+    saveLocal();
+    syncBloqueado = false;
+    closeModal('modal-corte-sem');
+    clearTimeout(window._autoSyncTimer);
+    renderMenu();
+    renderGastos();
+    if (usingSupabase() && !isTravelMode() && navigator.onLine) {
+      const ok = await uploadSupabaseStructured({ full: true });
+      if (ok) mostrarEstadoSync(true);
+      else mostrarEstadoSync(false);
+    }
+    showToast(teniaAjustes ? '¡Corte realizado! Presupuesto reiniciado a la base ✓' : '¡Corte semanal realizado! ✓');
+  } finally {
+    syncBloqueado = false;
+    window._corteEnCurso = false;
+  }
 }
 
 // ── Exportar Excel ────────────────────────────────────────────
