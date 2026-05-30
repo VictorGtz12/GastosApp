@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.40';
-const ASSETS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'gastos-v2.43';
+const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260529b', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -38,7 +38,7 @@ self.addEventListener('fetch', e => {
 self.addEventListener('push', e => {
   const data = e.data?.json() || { title: '📅 Corte próximo', body: 'Revisa tu tarjeta' };
   e.waitUntil(self.registration.showNotification(data.title, {
-    body: data.body, icon: '/icon-192.png', badge: '/icon-192.png', tag: data.tag || 'gastos'
+    body: data.body, icon: './icon-192.png', badge: './icon-192.png', tag: data.tag || 'gastos'
   }));
 });
 
@@ -52,7 +52,7 @@ self.addEventListener('message', e => {
   if (e.data?.type === 'SCHEDULE_NOTIFICATION') {
     const { title, body, delay, tag } = e.data;
     setTimeout(() => {
-      self.registration.showNotification(title, { body, icon: '/icon-192.png', tag });
+      self.registration.showNotification(title, { body, icon: './icon-192.png', tag });
     }, delay);
   }
 });

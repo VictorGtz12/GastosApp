@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.40';
+const APP_VERSION = 'v2.43';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -132,7 +132,7 @@ function hasPendingSync() {
   const lm = new Date(localStorage.getItem('localModified') || 0).getTime();
   const ls = new Date(localStorage.getItem('lastSync') || 0).getTime();
   const lsb = new Date(localStorage.getItem('lastSyncSupabase') || 0).getTime();
-  return lm > Math.max(ls, lsb) + 3000;
+  return lm > Math.max(ls, lsb) + 3000 || getPendingSyncOps().length > 0;
 }
 
 // ── Supabase Sync ────────────────────────────────────────────
@@ -146,6 +146,30 @@ function getSupabaseDeviceId() {
   return id;
 }
 function usingSupabase() { return localStorage.getItem('supabaseEnabled') === '1'; }
+
+function makeLocalId(prefix = 'id') {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getPendingSyncOps() {
+  try { return JSON.parse(localStorage.getItem('pendingSyncOps') || '[]'); }
+  catch(e) { return []; }
+}
+
+function setPendingSyncOps(ops) {
+  localStorage.setItem('pendingSyncOps', JSON.stringify((ops || []).slice(-200)));
+}
+
+function queueSyncOperation(type, details = {}) {
+  if (syncBloqueado) return;
+  const ops = getPendingSyncOps();
+  ops.push({ id: makeLocalId('op'), type, details, ts: new Date().toISOString(), deviceId: getSupabaseDeviceId() });
+  setPendingSyncOps(ops);
+}
+
+function clearPendingSyncOps() {
+  localStorage.removeItem('pendingSyncOps');
+}
 
 // ── Supabase estructurado ────────────────────────────────────
 // Las tablas gs_* son la fuente remota principal; localStorage queda como cache offline.
@@ -203,7 +227,9 @@ function structuredMovimientoIndex(rowId) {
 }
 
 function structuredMovimientoRowId(cuentaId, mov, index = 0) {
-  return mov?._syncId || structuredMovimientoId(cuentaId, mov?.movId, index);
+  if (mov?._syncId) return mov._syncId;
+  if (mov?.uid) return `${cuentaId}:uid:${mov.uid}`;
+  return structuredMovimientoId(cuentaId, mov?.movId, index);
 }
 
 function cleanMovimientoForStructured(mov, cuentaId) {
@@ -263,7 +289,11 @@ function structuredLastSyncMs() {
 
 function filterIncrementalPayload(payload) {
   const lastSync = structuredLastSyncMs();
+  const pendingOps = getPendingSyncOps();
   if (!lastSync) return null;
+  if (pendingOps.some(op => op.type === 'corte' || op.type === 'restore' || op.type === 'import' || op.type === 'snapshot')) {
+    return payload;
+  }
   const dirty = getStructuredDirty();
   const changed = row => {
     const ts = row?.data?.updatedAt || row?.updated_at;
@@ -285,6 +315,8 @@ function filterIncrementalPayload(payload) {
 function buildStructuredPayload() {
   const snap = buildSnapshot();
   const now = new Date().toISOString();
+  const maxGastoId = Math.max(0, ...[...snap.gastos, ...snap.historico].map(g => Number(g.id) || 0));
+  const maxMovId = Math.max(0, ...snap.cuentasAhorro.flatMap(c => (c.movimientos || []).map(m => Number(m.movId) || 0)));
   return {
     gastos: [
       ...snap.gastos.map(g => structuredRow(g.id, structuredTouch(g), { estado: 'activo', deleted_at: null })),
@@ -295,7 +327,7 @@ function buildStructuredPayload() {
       ...snap.catalogoMotivos.map(m => structuredRow(`motivo:${m}`, { tipo: 'motivo', valor: m, updatedAt: now }, { tipo: 'motivo', valor: m, deleted_at: null })),
       ...snap.catalogoComentarios.map(c => structuredRow(`comentario:${c}`, { tipo: 'comentario', valor: c, updatedAt: now }, { tipo: 'comentario', valor: c, deleted_at: null })),
       ...(snap.catalogoTags || []).map(t => structuredRow(`tag:${t}`, { tipo: 'tag', valor: t, updatedAt: now }, { tipo: 'tag', valor: t, deleted_at: null })),
-      ...snap.reglasAutomaticas.map((r, i) => structuredRow(`regla:${i}:${r.texto || ''}:${r.cuenta || ''}:${r.motivo || ''}`, { ...r, tipo: 'regla', updatedAt: now }, { tipo: 'regla', valor: r.texto || String(i), deleted_at: null }))
+      ...snap.reglasAutomaticas.map((r, i) => structuredRow(`regla:${r.id || r.uid || `${r.texto || ''}:${r.cuenta || ''}:${r.motivo || ''}`}`, { ...r, tipo: 'regla', updatedAt: now }, { tipo: 'regla', valor: r.texto || String(i), deleted_at: null }))
     ],
     cuentasAhorro: snap.cuentasAhorro.map(c => {
       const { movimientos, ...cuenta } = c;
@@ -310,17 +342,107 @@ function buildStructuredPayload() {
     settings: structuredRow('main', {
       schema: SUPABASE_STRUCTURED_SCHEMA,
       savedAt: snap.savedAt,
-      nextId: snap.nextId,
+      nextId: Math.max(Number(snap.nextId) || 1, maxGastoId + 1),
       nextAhorroId: snap.nextAhorroId,
       nextRecId: snap.nextRecId,
       nextDeudaId: snap.nextDeudaId,
-      nextMovId: snap.nextMovId,
+      nextMovId: Math.max(Number(snap.nextMovId) || 1, maxMovId + 1),
       presupuesto: snap.presupuesto,
       excepciones: snap.excepciones || [],
       ajustesPresupuesto: snap.ajustesPresupuesto || [],
       updatedAt: now
     }, {})
   };
+}
+
+function summarizeSnapshotForSync(snap = buildSnapshot()) {
+  const savings = (snap.cuentasAhorro || []).map(c => ({
+    id: c.id,
+    nombre: c.nombre,
+    movimientos: (c.movimientos || []).length,
+    saldo: Number(saldoCuenta(c).toFixed(2))
+  }));
+  return {
+    gastosActivos: (snap.gastos || []).length,
+    historico: (snap.historico || []).length,
+    totalGastos: (snap.gastos || []).length + (snap.historico || []).length,
+    cuentasAhorro: savings.length,
+    movimientosAhorro: savings.reduce((s, c) => s + c.movimientos, 0),
+    saldoAhorro: Number(savings.reduce((s, c) => s + c.saldo, 0).toFixed(2)),
+    nextId: snap.nextId,
+    nextMovId: snap.nextMovId
+  };
+}
+
+function summarizeRemoteRows(gRows, caRows, movRows, settingsRows) {
+  const activeGastos = gRows.filter(r => !r.deleted_at && r.estado !== 'historico');
+  const histGastos = gRows.filter(r => !r.deleted_at && r.estado === 'historico');
+  const activeMovs = movRows.filter(r => !r.deleted_at);
+  const saldoAhorro = activeMovs.reduce((sum, r) => {
+    const m = r.data || {};
+    const amount = Number(m.cantidad || 0);
+    return sum + ((m.tipo === 'abono' || m.tipo === 'traspaso-in') ? amount : -amount);
+  }, 0);
+  const settings = settingsRows[0]?.data || {};
+  return {
+    gastosActivos: activeGastos.length,
+    historico: histGastos.length,
+    totalGastos: activeGastos.length + histGastos.length,
+    cuentasAhorro: caRows.filter(r => !r.deleted_at).length,
+    movimientosAhorro: activeMovs.length,
+    saldoAhorro: Number(saldoAhorro.toFixed(2)),
+    nextId: settings.nextId || 0,
+    nextMovId: settings.nextMovId || 0
+  };
+}
+
+function diffSyncSummaries(local, remote) {
+  const labels = {
+    gastosActivos: 'Gastos activos',
+    historico: 'Histórico',
+    totalGastos: 'Total gastos',
+    cuentasAhorro: 'Cuentas ahorro',
+    movimientosAhorro: 'Movimientos ahorro',
+    saldoAhorro: 'Saldo ahorro',
+    nextId: 'Siguiente gasto',
+    nextMovId: 'Siguiente mov.'
+  };
+  return Object.keys(labels)
+    .filter(k => String(local[k]) !== String(remote[k]))
+    .map(k => ({ key: k, label: labels[k], local: local[k], remote: remote[k] }));
+}
+
+function validateStructuredPayload(payload, opts = {}) {
+  const errors = [];
+  const idsByEstado = {};
+  (payload.gastos || []).forEach(row => {
+    if (!row.id) errors.push('Hay un gasto sin ID.');
+    if (!idsByEstado[row.id]) idsByEstado[row.id] = new Set();
+    idsByEstado[row.id].add(row.estado || 'activo');
+    if (!row.data?.fecha || !row.data?.cuenta || !row.data?.motivo || !(Number(row.data?.cantidad) > 0)) {
+      errors.push(`Gasto ${row.id} incompleto o con cantidad inválida.`);
+    }
+  });
+  Object.entries(idsByEstado).forEach(([id, estados]) => {
+    if (estados.has('activo') && estados.has('historico')) errors.push(`Gasto ${id} existe activo e histórico a la vez.`);
+  });
+  const movimientoIds = new Set();
+  (payload.movimientosAhorro || []).forEach(row => {
+    if (!row.id) errors.push('Hay un movimiento de ahorro sin ID estable.');
+    if (movimientoIds.has(row.id)) errors.push(`Movimiento de ahorro duplicado: ${row.id}`);
+    movimientoIds.add(row.id);
+    if (!row.cuenta_id || !row.data?.tipo || !(Number(row.data?.cantidad) > 0)) {
+      errors.push(`Movimiento de ahorro ${row.id || '?'} incompleto.`);
+    }
+  });
+  const maxGastoId = Math.max(0, ...(payload.gastos || []).map(r => Number(r.id) || 0));
+  const maxMovId = Math.max(0, ...(payload.movimientosAhorro || []).map(r => Number(r.mov_id) || 0));
+  const settings = payload.settings?.data || {};
+  if (Number(settings.nextId || 0) <= maxGastoId) errors.push('nextId no puede ser menor o igual al gasto máximo.');
+  if (Number(settings.nextMovId || 0) <= maxMovId) errors.push('nextMovId no puede ser menor o igual al movimiento máximo.');
+  if (opts.full && (payload.cuentas || []).length === 0) errors.push('El catálogo de cuentas está vacío.');
+  if (opts.full && (payload.catalogos || []).filter(r => r.tipo === 'motivo').length === 0) errors.push('El catálogo de motivos está vacío.');
+  return errors;
 }
 
 async function sbUpsert(table, rows, onConflict = 'id') {
@@ -383,6 +505,7 @@ async function uploadSupabaseStructured(opts = {}) {
     return true;
   }
   _supabaseUploadLock = true;
+  mostrarEstadoSync(false, 'subiendo');
   let payload = buildStructuredPayload();
   const deleted = getStructuredDeleted();
   try {
@@ -408,6 +531,14 @@ async function uploadSupabaseStructured(opts = {}) {
         setTimeout(() => downloadSupabase(true), 50);
         return false;
       }
+    }
+    const validationErrors = validateStructuredPayload(payload, { full: !!opts.full });
+    if (validationErrors.length) {
+      console.warn('[Sync Supabase] Subida bloqueada por validación:', validationErrors);
+      localStorage.setItem('lastSyncError', validationErrors.slice(0, 5).join(' · '));
+      mostrarEstadoSync(false, 'error');
+      showToast('Sync bloqueado: datos inválidos. Revisa consola.');
+      return false;
     }
 
     await Promise.all([
@@ -444,6 +575,8 @@ async function uploadSupabaseStructured(opts = {}) {
     localStorage.setItem('lastStructuredSyncSupabase', ts);
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
+    localStorage.removeItem('lastSyncError');
+    clearPendingSyncOps();
     registrarEntradaHistorialSync('subida', 'supabase');
     return true;
   } catch(e) {
@@ -467,6 +600,7 @@ async function sbSelect(table, query = 'select=*') {
 
 async function downloadSupabaseStructured(force = false) {
   if (!supabaseStructuredReady()) return false;
+  mostrarEstadoSync(false, 'descargando');
   try {
     const [gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows] = await Promise.all([
       sbSelect('gs_gastos', 'select=id,estado,data,updated_at,deleted_at&order=updated_at.asc'),
@@ -489,6 +623,12 @@ async function downloadSupabaseStructured(force = false) {
     const yaSync = !!localStorage.getItem('lastStructuredSyncSupabase');
     if (!force && yaSync && localModified > remoteLatest + 5000) {
       console.warn('[Sync Supabase estructurado] Local mas nuevo, no se descarga remoto viejo.');
+      showSyncConflict({
+        local: summarizeSnapshotForSync(),
+        remote: summarizeRemoteRows(gRows, caRows, movRows, settingsRows),
+        localModified,
+        remoteLatest
+      });
       return 'skip';
     }
 
@@ -575,6 +715,64 @@ async function downloadSupabase(force = false) {
   return structured === true;
 }
 
+function showSyncConflict(info) {
+  window._syncConflictInfo = info;
+  localStorage.setItem('syncConflictPending', '1');
+  const body = document.getElementById('sync-conflict-body');
+  if (!body) return;
+  const diffs = diffSyncSummaries(info.local, info.remote);
+  const localTime = info.localModified ? new Date(info.localModified).toLocaleString('es-MX') : '—';
+  const remoteTime = info.remoteLatest ? new Date(info.remoteLatest).toLocaleString('es-MX') : '—';
+  body.innerHTML = `
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">
+      El cache de este dispositivo parece más reciente que Supabase. Revisa diferencias antes de decidir.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Este dispositivo</div>
+        <div style="font-size:12px;color:var(--text2)">${localTime}</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Supabase</div>
+        <div style="font-size:12px;color:var(--text2)">${remoteTime}</div>
+      </div>
+    </div>
+    ${diffs.length ? diffs.map(d => `
+      <div style="display:grid;grid-template-columns:1.2fr .9fr .9fr;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:12px;color:var(--text)">${d.label}</div>
+        <div style="font-size:12px;color:var(--orange);text-align:right">${d.local}</div>
+        <div style="font-size:12px;color:var(--green);text-align:right">${d.remote}</div>
+      </div>`).join('') : '<div class="empty">No hay diferencias de conteo visibles.</div>'}
+  `;
+  openModal('modal-sync-conflict');
+  mostrarEstadoSync(false, 'conflict');
+}
+
+async function resolverSyncConflict(accion) {
+  closeModal('modal-sync-conflict');
+  localStorage.removeItem('syncConflictPending');
+  if (accion === 'download') {
+    syncBloqueado = true;
+    const ok = await downloadSupabaseStructured(true);
+    syncBloqueado = false;
+    if (ok) {
+      actualizarSelectCuentas();
+      actualizarSelectMotivos();
+      renderMenu();
+      showTab(tabActualGlobal);
+      mostrarEstadoSync(true);
+      showToast('Datos descargados desde Supabase ✓');
+    }
+    return;
+  }
+  if (accion === 'upload') {
+    guardarBackupMinimo('antes-subir-conflicto');
+    queueSyncOperation('snapshot', { reason: 'resolver-conflicto-subir-local' });
+    const ok = await uploadSupabaseStructured({ full: true });
+    showToast(ok ? 'Cache local subido a Supabase ✓' : 'No se pudo subir cache local');
+  }
+}
+
 let _supabaseDownloadLock = false;
 
 async function pullSupabaseIfIdle(render = false) {
@@ -603,6 +801,35 @@ function buildSnapshot() {
     recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
     ajustesPresupuesto,
   };
+}
+
+function guardarBackupMinimo(reason = 'auto') {
+  try {
+    const snap = buildSnapshot();
+    const backup = {
+      id: makeLocalId('backup'),
+      reason,
+      savedAt: snap.savedAt,
+      summary: summarizeSnapshotForSync(snap),
+      data: {
+        gastos: snap.gastos,
+        historico: snap.historico,
+        cuentasAhorro: snap.cuentasAhorro,
+        nextId: snap.nextId,
+        nextMovId: snap.nextMovId,
+        nextAhorroId: snap.nextAhorroId,
+        presupuesto: snap.presupuesto,
+        ajustesPresupuesto: snap.ajustesPresupuesto
+      }
+    };
+    const backups = JSON.parse(localStorage.getItem('backupsMinimos') || '[]');
+    backups.unshift(backup);
+    localStorage.setItem('backupsMinimos', JSON.stringify(backups.slice(0, 5)));
+    return backup;
+  } catch(e) {
+    console.warn('No se pudo guardar backup mínimo:', e);
+    return null;
+  }
 }
 
 function applySnapshot(snap, opts = {}) {
@@ -713,8 +940,10 @@ async function refreshData() {
 
   // Supabase sync (download primero, luego upload)
   if (usingSupabase()) {
-    await downloadSupabase();
-    await uploadSupabase();
+    const down = await downloadSupabase();
+    if (!localStorage.getItem('syncConflictPending')) {
+      if (down || hasPendingSync()) await uploadSupabase();
+    }
   }
   if (usingSupabase()) localStorage.setItem('localModified', localStorage.getItem('lastSyncSupabase') || new Date().toISOString());
   loadFromLocal();
@@ -724,10 +953,32 @@ async function refreshData() {
   showToast('Vista actualizada ✓');
 }
 
-function mostrarEstadoSync(ok) {
+function mostrarEstadoSync(ok, estado = null) {
   const el = document.getElementById('sync-status');
   if (!el) return;
   el.style.display = 'inline'; el.style.cursor = 'pointer'; el.onclick = () => refreshData();
+  if (estado === 'subiendo') {
+    el.textContent = '⟳ Subiendo';
+    el.style.color = 'var(--text3)';
+    return;
+  }
+  if (estado === 'descargando') {
+    el.textContent = '⟳ Descargando';
+    el.style.color = 'var(--text3)';
+    return;
+  }
+  if (estado === 'conflict') {
+    el.textContent = '⚠️ Conflicto';
+    el.style.color = 'var(--orange)';
+    const b = document.getElementById('banner-pendientes'); if (b) b.style.display = 'flex';
+    return;
+  }
+  if (estado === 'error') {
+    el.textContent = '⚠️ Error sync';
+    el.style.color = 'var(--red)';
+    const b = document.getElementById('banner-pendientes'); if (b) b.style.display = 'flex';
+    return;
+  }
   if (isTravelMode()) {
     el.textContent = hasPendingSync() ? 'Modo viaje · sin subir' : 'Modo viaje';
     el.style.color = hasPendingSync() ? 'var(--orange)' : 'var(--accent2)';
@@ -737,8 +988,10 @@ function mostrarEstadoSync(ok) {
   }
   const localMod = new Date(localStorage.getItem('localModified')||0).getTime();
   const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
-  if (localMod > lastSync + 3000) {
-    el.textContent = '⬆️ Cambios sin subir'; el.style.color = 'var(--orange)';
+  const pendingOps = getPendingSyncOps();
+  if (localMod > lastSync + 3000 || pendingOps.length) {
+    el.textContent = pendingOps.length ? `⬆️ ${pendingOps.length} pendiente${pendingOps.length === 1 ? '' : 's'}` : '⬆️ Cambios sin subir';
+    el.style.color = 'var(--orange)';
     const b = document.getElementById('banner-pendientes'); if (b) b.style.display = 'flex';
   } else if (ok && lastSync) {
     const d = new Date(lastSync);
@@ -1069,6 +1322,7 @@ function saveLocal() {
     localStorage.setItem('appData_v1', JSON.stringify(data));
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
+    if (!syncBloqueado) queueSyncOperation('snapshot', { tab: tabActualGlobal || 'menu' });
     // Sincronizar automáticamente en segundo plano
     if (!syncBloqueado) {
       if (isTravelMode() || !navigator.onLine) {
@@ -1192,6 +1446,7 @@ function normAhorro(c) {
       destino:  m.destino ? Number(m.destino) : undefined,
       origen:   m.origen  ? Number(m.origen)  : undefined,
       gastoId:  m.gastoId,
+      uid:      m.uid,
       updatedAt: m.updatedAt || null,
       _syncId:  m._syncId,
       _syncIndex: m._syncIndex,
@@ -1294,6 +1549,10 @@ function renderDashboard() {
 
 // ── Gráficas del Dashboard (Chart.js) ─────────────────────────
 function renderGraficosDashboard() {
+  if (typeof Chart === 'undefined') {
+    console.warn('Chart.js no disponible; se omiten gráficas.');
+    return;
+  }
   renderChartGastoMensual();
   renderChartGastoPorCategoria();
   renderChartEgresosUltimos();
@@ -2019,7 +2278,7 @@ function renderAhorros() {
 
 
 function nuevoMov(campos) {
-  return { ...campos, movId: nextMovId++, updatedAt: new Date().toISOString() };
+  return { ...campos, uid: campos.uid || makeLocalId('mov'), movId: nextMovId++, updatedAt: new Date().toISOString() };
 }
 
 function verHistorialAhorro(id) {
@@ -2881,7 +3140,13 @@ function confirmarEliminar() {
 
 // ── Corte semanal ─────────────────────────────────────────────
 function openCorte() {
+  const total = gastos.reduce((s, g) => s + Number(g.cantidad || 0), 0);
+  const pendientes = gastos.filter(g => !g.abonado && !g.ignorar && g.externo === 'no').length;
   document.getElementById('corte-count').textContent = gastos.length;
+  const totalEl = document.getElementById('corte-total');
+  if (totalEl) totalEl.textContent = fmt(total);
+  const pendEl = document.getElementById('corte-pendientes');
+  if (pendEl) pendEl.textContent = pendientes;
   openModal('modal-corte-sem');
 }
 
@@ -2892,6 +3157,8 @@ async function hacerCorte() {
   try {
     const corteAt = new Date().toISOString();
     const gastosCortados = gastos.map(g => ({ ...g, updatedAt: corteAt, corteAt }));
+    guardarBackupMinimo('antes-corte');
+    queueSyncOperation('corte', { count: gastos.length, total: gastos.reduce((s, g) => s + Number(g.cantidad || 0), 0), corteAt });
     historico = [...gastosCortados, ...historico];
     gastos = [];
     // Reiniciar ajustes de presupuesto acumulados al comenzar nueva semana
@@ -2908,6 +3175,14 @@ async function hacerCorte() {
       const ok = await uploadSupabaseStructured({ full: true });
       if (ok) mostrarEstadoSync(true);
       else mostrarEstadoSync(false);
+      if (ok) {
+        const remoteRows = await sbSelect('gs_gastos', 'select=id,estado,deleted_at&estado=neq.historico&deleted_at=is.null&limit=1');
+        if (remoteRows.length) {
+          mostrarEstadoSync(false, 'error');
+          showToast('Corte local hecho, pero Supabase aún tiene activos');
+          return;
+        }
+      }
     }
     showToast(teniaAjustes ? '¡Corte realizado! Presupuesto reiniciado a la base ✓' : '¡Corte semanal realizado! ✓');
   } finally {
