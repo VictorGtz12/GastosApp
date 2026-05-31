@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.52';
+const APP_VERSION = 'v2.54';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -625,6 +625,21 @@ function filterIncrementalPayload(payload) {
   };
 }
 
+function normalizeStructuredPayloadForSync(payload) {
+  if (!payload) return payload;
+  return {
+    ...payload,
+    gastos: dedupeRowsForUpsert(payload.gastos || [], 'workspace_id,id', 'payload.gs_gastos'),
+    cuentas: dedupeRowsForUpsert(payload.cuentas || [], 'workspace_id,id', 'payload.gs_cuentas'),
+    catalogos: dedupeRowsForUpsert(payload.catalogos || [], 'workspace_id,id', 'payload.gs_catalogos'),
+    cuentasAhorro: dedupeRowsForUpsert(payload.cuentasAhorro || [], 'workspace_id,id', 'payload.gs_cuentas_ahorro'),
+    movimientosAhorro: dedupeRowsForUpsert(payload.movimientosAhorro || [], 'workspace_id,id', 'payload.gs_movimientos_ahorro'),
+    recurrentes: dedupeRowsForUpsert(payload.recurrentes || [], 'workspace_id,id', 'payload.gs_recurrentes'),
+    deudas: dedupeRowsForUpsert(payload.deudas || [], 'workspace_id,id', 'payload.gs_deudas'),
+    settings: payload.settings ? dedupeRowsForUpsert([payload.settings], 'workspace_id,id', 'payload.gs_app_settings')[0] : payload.settings
+  };
+}
+
 function buildStructuredPayload() {
   const snap = buildSnapshot();
   const now = new Date().toISOString();
@@ -728,6 +743,20 @@ function diffSyncSummaries(local, remote) {
 function validateStructuredPayload(payload, opts = {}) {
   const errors = [];
   const idsByEstado = {};
+  const assertUnique = (rows, label) => {
+    const seen = new Set();
+    (rows || []).forEach(row => {
+      const key = `${row.workspace_id || currentWorkspaceId()}::${row.id || ''}`;
+      if (!row.id) errors.push(`${label}: hay una fila sin ID.`);
+      if (seen.has(key)) errors.push(`${label}: ID duplicado ${row.id}.`);
+      seen.add(key);
+    });
+  };
+  assertUnique(payload.cuentas, 'Cuentas');
+  assertUnique(payload.catalogos, 'Catálogos');
+  assertUnique(payload.cuentasAhorro, 'Cuentas de ahorro');
+  assertUnique(payload.recurrentes, 'Recurrentes');
+  assertUnique(payload.deudas, 'Deudas');
   (payload.gastos || []).forEach(row => {
     if (!row.id) errors.push('Hay un gasto sin ID.');
     if (!idsByEstado[row.id]) idsByEstado[row.id] = new Set();
@@ -762,20 +791,52 @@ async function sbUpsert(table, rows, onConflict = 'id') {
   if (!rows.length) return true;
   const scopedRows = userScopedTable(table) ? rows.map(r => ({ ...r, workspace_id: r.workspace_id || currentWorkspaceId() })) : rows;
   const conflict = userScopedTable(table) ? 'workspace_id,id' : onConflict;
+  const safeRows = dedupeRowsForUpsert(scopedRows, conflict, table);
+  if (!safeRows.length) return true;
   await sbFetch(`${table}?on_conflict=${conflict}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates,return=minimal'
     },
-    body: JSON.stringify(scopedRows)
+    body: JSON.stringify(safeRows)
   });
   return true;
 }
 
+function rowUpdatedMs(row) {
+  return new Date(row?.updated_at || row?.data?.updatedAt || 0).getTime() || 0;
+}
+
+function dedupeRowsForUpsert(rows, conflict, table = '') {
+  const fields = String(conflict || 'id').split(',').map(s => s.trim()).filter(Boolean);
+  const byKey = new Map();
+  let duplicates = 0;
+  (rows || []).forEach((row, index) => {
+    const keyParts = fields.map(f => row?.[f]);
+    if (keyParts.some(v => v === undefined || v === null || v === '')) {
+      byKey.set(`__row_${index}`, row);
+      return;
+    }
+    const key = keyParts.map(String).join('||');
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, row);
+      return;
+    }
+    duplicates++;
+    byKey.set(key, rowUpdatedMs(row) >= rowUpdatedMs(existing) ? row : existing);
+  });
+  if (duplicates) {
+    console.warn(`[Sync Supabase] ${table}: ${duplicates} fila(s) duplicada(s) en el lote; se conservó la más reciente antes de subir.`);
+  }
+  return [...byKey.values()];
+}
+
 async function sbSoftDelete(table, rows) {
   const done = [];
-  for (const row of rows || []) {
+  const safeRows = dedupeRowsForUpsert(rows || [], 'id', `delete.${table}`);
+  for (const row of safeRows) {
     const workspaceFilter = userScopedTable(table) ? `workspace_id=eq.${encodeURIComponent(currentWorkspaceId())}&` : '';
     await sbFetch(`${table}?${workspaceFilter}id=eq.${encodeURIComponent(row.id)}`, {
       method: 'PATCH',
@@ -848,6 +909,7 @@ async function uploadSupabaseStructured(opts = {}) {
         return false;
       }
     }
+    payload = normalizeStructuredPayloadForSync(payload);
     const validationErrors = validateStructuredPayload(payload, { full: !!opts.full });
     if (validationErrors.length) {
       console.warn('[Sync Supabase] Subida bloqueada por validación:', validationErrors);
