@@ -194,6 +194,47 @@ function workspaceStorageKey(name) {
   return wid ? `${name}:${wid}` : name;
 }
 
+function ensureStableNumericIds(items, nextValue, key = 'id') {
+  let next = Math.max(Number(nextValue) || 1, 1);
+  const taken = new Set();
+  const seen = new Set();
+  (items || []).forEach(item => {
+    const value = Number(item?.[key]);
+    if (Number.isFinite(value) && value > 0) {
+      taken.add(value);
+      if (value >= next) next = value + 1;
+    }
+  });
+  let changed = false;
+  (items || []).forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const value = Number(item[key]);
+    const needsId = !Number.isFinite(value) || value <= 0 || seen.has(value);
+    if (needsId) {
+      while (taken.has(next)) next += 1;
+      item[key] = next;
+      item.updatedAt = item.updatedAt || new Date().toISOString();
+      taken.add(next);
+      seen.add(next);
+      next += 1;
+      changed = true;
+    } else {
+      seen.add(value);
+    }
+  });
+  return { next, changed };
+}
+
+function repairStructuredEntityIds() {
+  const rec = ensureStableNumericIds(recurrentes, nextRecId);
+  const deu = ensureStableNumericIds(deudas, nextDeudaId);
+  nextRecId = Math.max(Number(nextRecId) || 1, rec.next);
+  nextDeudaId = Math.max(Number(nextDeudaId) || 1, deu.next);
+  if (rec.changed) markStructuredDirty('recurrentes');
+  if (deu.changed) markStructuredDirty('deudas');
+  return rec.changed || deu.changed;
+}
+
 function resetPersonalState() {
   gastos = [];
   historico = [];
@@ -261,6 +302,17 @@ function getPendingSyncOps() {
 
 function setPendingSyncOps(ops) {
   localStorage.setItem('pendingSyncOps', JSON.stringify((ops || []).slice(-200)));
+}
+
+function pendingSyncLabel(type) {
+  return ({
+    snapshot: 'Cambios generales',
+    corte: 'Corte',
+    restore: 'Restauracion',
+    import: 'Importacion',
+    recurrentes: 'Recurrentes',
+    gastos: 'Gastos'
+  })[type] || type || 'Cambio';
 }
 
 function queueSyncOperation(type, details = {}) {
@@ -641,6 +693,7 @@ function normalizeStructuredPayloadForSync(payload) {
 }
 
 function buildStructuredPayload() {
+  repairStructuredEntityIds();
   const snap = buildSnapshot();
   const now = new Date().toISOString();
   const maxGastoId = Math.max(0, ...[...snap.gastos, ...snap.historico].map(g => Number(g.id) || 0));
@@ -960,6 +1013,8 @@ async function uploadSupabaseStructured(opts = {}) {
     return true;
   } catch(e) {
     console.warn('Supabase structured upload error:', e.message);
+    localStorage.setItem('lastSyncError', e.message || 'Error desconocido al subir a Supabase');
+    mostrarEstadoSync(false, 'error');
     return false;
   } finally {
     _supabaseUploadLock = false;
@@ -1307,6 +1362,82 @@ function verHistorialSync() {
   openModal('modal-historial-sync');
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function syncQueueItems() {
+  const items = [];
+  const lastSync = Math.max(
+    new Date(localStorage.getItem('lastSync') || 0).getTime(),
+    new Date(localStorage.getItem('lastSyncSupabase') || 0).getTime()
+  );
+  getPendingSyncOps().forEach(op => {
+    items.push({
+      title: pendingSyncLabel(op.type),
+      sub: op.ts ? new Date(op.ts).toLocaleString('es-MX') : 'Sin fecha',
+      detail: op.details && Object.keys(op.details).length ? JSON.stringify(op.details) : ''
+    });
+  });
+  const dirty = getStructuredDirty();
+  Object.keys(dirty).filter(k => dirty[k]).forEach(k => {
+    items.push({ title: `Tabla marcada: ${pendingSyncLabel(k)}`, sub: 'Cambio estructurado pendiente', detail: k });
+  });
+  const deleted = getStructuredDeleted();
+  Object.entries(deleted).forEach(([key, rows]) => {
+    if ((rows || []).length) items.push({ title: `Eliminaciones: ${pendingSyncLabel(key)}`, sub: `${rows.length} registro(s) por borrar en Supabase`, detail: rows.map(r => r.id).slice(0, 8).join(', ') });
+  });
+  gastos.concat(historico).filter(g => g.updatedAt && new Date(g.updatedAt).getTime() > lastSync + 1000).slice(0, 30).forEach(g => {
+    items.push({
+      title: `Gasto #${g.id} · ${g.motivo || 'Sin motivo'}`,
+      sub: `${g.fecha || ''} · ${g.cuenta || 'Sin cuenta'} · ${fmt(g.cantidad || 0)}`,
+      detail: g.comentarios || ''
+    });
+  });
+  recurrentes.filter(r => r.updatedAt && new Date(r.updatedAt).getTime() > lastSync + 1000).slice(0, 20).forEach(r => {
+    items.push({
+      title: `Recurrente #${r.id} · ${r.nombre || 'Sin nombre'}`,
+      sub: `${r.cuenta || 'Sin cuenta'} · dia ${r.dia || '?'} · ${fmt(r.cantidad || 0)}`,
+      detail: r.ultimoPago ? `Ultimo pago: ${r.ultimoPago}` : ''
+    });
+  });
+  return items;
+}
+
+function verColaSync() {
+  const body = document.getElementById('cola-sync-body');
+  if (!body) return;
+  const items = syncQueueItems();
+  const error = localStorage.getItem('lastSyncError') || '';
+  const localModified = localStorage.getItem('localModified') || '';
+  const lastSync = localStorage.getItem('lastSyncSupabase') || localStorage.getItem('lastSync') || '';
+  const statusCards = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Ultimo cambio local</div>
+        <div style="font-size:12px;color:var(--text2)">${localModified ? new Date(localModified).toLocaleString('es-MX') : 'Sin cambios'}</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Ultima subida</div>
+        <div style="font-size:12px;color:var(--text2)">${lastSync ? new Date(lastSync).toLocaleString('es-MX') : 'Sin sync'}</div>
+      </div>
+    </div>`;
+  const errorHtml = error ? `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:9px;margin-bottom:10px;color:var(--red);font-size:12px">${escapeHtml(error)}</div>` : '';
+  const listHtml = items.length ? items.map(item => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(item.title)}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(item.sub)}</div>
+      ${item.detail ? `<div style="font-size:11px;color:var(--text2);margin-top:4px;word-break:break-word">${escapeHtml(item.detail)}</div>` : ''}
+    </div>`).join('') : '<div class="empty">No hay elementos pendientes en la cola.</div>';
+  body.innerHTML = statusCards + errorHtml + listHtml;
+  openModal('modal-cola-sync');
+}
+
 function limpiarHistorialSync() {
   localStorage.removeItem('syncHistorial');
   verHistorialSync();
@@ -1396,6 +1527,7 @@ function mostrarEstadoSync(ok, estado = null) {
   if (localMod > lastSync + 3000 || pendingOps.length) {
     el.textContent = pendingOps.length ? `⬆️ ${pendingOps.length} pendiente${pendingOps.length === 1 ? '' : 's'}` : '⬆️ Cambios sin subir';
     el.style.color = 'var(--orange)';
+    el.onclick = () => verColaSync();
     const b = document.getElementById('banner-pendientes'); if (b) b.style.display = 'flex';
   } else if (ok && lastSync) {
     const d = new Date(lastSync);
@@ -1715,6 +1847,7 @@ function iniciarAutoSync() {
 
 function saveLocal() {
   try {
+    repairStructuredEntityIds();
     const data = {
       gastos, historico, nextId, nextAhorroId,
       cuentasAhorro, excepciones,
@@ -4094,6 +4227,8 @@ function marcarPagadoManual(i) {
   if (!r) return;
   const hoy = new Date();
   r.ultimoPago = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+  r.updatedAt = new Date().toISOString();
+  markStructuredDirty('recurrentes');
   saveLocal();
   renderServicios();
   verificarRecurrentesProximos();
@@ -4173,12 +4308,16 @@ function guardarRecurrente() {
   if (!nombre || !dia || dia<1 || dia>31 || Number.isNaN(cantidad) || cantidad<0) { showToast('Completa todos los campos'); return; }
   const obj = { id: 0, nombre, cuenta, motivo, cantidad, dia, activo: true, updatedAt: new Date().toISOString() };
   if (window._editRecIdx !== null) {
-    obj.id = recurrentes[window._editRecIdx].id;
+    const anterior = recurrentes[window._editRecIdx] || {};
+    obj.id = anterior.id || 0;
+    obj.ultimoPago = anterior.ultimoPago || null;
+    obj.ultimoAviso = anterior.ultimoAviso || null;
     recurrentes[window._editRecIdx] = obj;
   } else {
     obj.id = nextRecId++;
     recurrentes.push(obj);
   }
+  repairStructuredEntityIds();
   markStructuredDirty('recurrentes');
   saveLocal();
   closeModal('modal-rec-servicio');
@@ -4188,6 +4327,7 @@ function guardarRecurrente() {
 
 function eliminarRecurrente(i) {
   if (!confirm(`¿Eliminar "${recurrentes[i].nombre}"?`)) return;
+  repairStructuredEntityIds();
   markStructuredDeleted('recurrentes', recurrentes[i].id);
   markStructuredDirty('recurrentes');
   recurrentes.splice(i, 1);
