@@ -66,7 +66,6 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 | Estadísticas | `modal-estadisticas` | `openEstadisticas()` | Gráficas por semana / cuenta / motivo |
 | Alertas | `modal-alertas` | `openAlertas()` | Cortes y recurrentes próximos |
 | Historial sync | `modal-historial-sync` | — | Log de sincronizaciones |
-| Backup confirmación | `modal-backup-confirm` | — | Confirmar restauración de backup |
 | Catálogo cuenta | `modal-cat-cuenta` | — | Editar cuenta del catálogo |
 | Catálogo motivo | `modal-cat-motivo` | — | Editar motivo del catálogo |
 | Regla automática | `modal-regla-auto` | — | Regla de auto-categorización |
@@ -169,15 +168,15 @@ Publica la carpeta en cualquier hosting estático compatible con HTML, CSS y JS.
 
 ## Sincronización con SQLite / FastAPI
 
-La app ya puede correr fuera de GitHub/Supabase usando un backend FastAPI con
-SQLite. El backend se sirve en otro puerto para convivir con otros proyectos en
-el mismo servidor, por ejemplo:
+La app usa un backend FastAPI con SQLite como fuente central de datos. El navegador conserva una copia local para uso offline y sincroniza contra el servidor cuando hay conexión.
+
+Servidor actual:
 
 ```text
 http://45.76.0.95:8010
 ```
 
-La base SQLite no se sube a git. El archivo queda en:
+La base SQLite no se sube al repo. El archivo queda en:
 
 ```text
 backend/data/gastosapp.sqlite
@@ -189,86 +188,26 @@ Documentación de despliegue:
 backend/README.md
 ```
 
-### Comportamiento del sync SQLite
+### Comportamiento del Sync
 
 | Evento | Acción |
 |--------|--------|
 | Guardar un gasto | Guarda local e intenta subir al servidor en segundo plano |
-| Abrir la app | Descarga cambios remotos desde SQLite |
+| Abrir la app | Muestra cache local primero y descarga cambios del servidor |
 | Subida | El backend aplica cambios en transacción y deduplica por `workspace_id + id` |
-| Sin internet | Guarda local, sube al reconectarse |
+| Sin internet | Guarda local, deja pendientes y sube al reconectarse |
+| Conflicto | Muestra diferencia entre cache local y servidor antes de sobrescribir |
 
-### Migración desde Supabase
+### Usuarios de la App
 
-El export completo usado para migrar está en:
+La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en `app_users`, sus bases en `app_workspaces` y permisos en `app_workspace_members`.
 
-```text
-backups/supabase-full-export-20260719-213406.json
-```
-
-Para regenerar SQLite:
-
-```bash
-python3 backend/scripts/migrate_supabase_export.py \
-  --export backups/supabase-full-export-20260719-213406.json \
-  --db backend/data/gastosapp.sqlite \
-  --replace \
-  --admin-password "TU_CONTRASENA_NUEVA"
-```
-
----
-
-## Sincronización con Supabase (modo anterior / fallback)
-
-La app usa tablas estructuradas en Supabase. No sube un JSON gigante como fuente
-principal de datos.
-
-### Comportamiento del sync
-
-| Evento | Acción |
-|--------|--------|
-| Guardar un gasto | Sube automáticamente en segundo plano |
-| Abrir la app | Descarga cambios remotos desde tablas |
-| Conflicto de versión | Conserva el cambio local más reciente por timestamp |
-| Sin internet | Guarda local, sube al reconectarse |
-
-### Supabase estructurado
-
-La app ya no depende de un único JSON gigante para Supabase. El archivo
-`supabase-schema.sql` crea tablas `gs_*` para gastos, catálogos, ahorros,
-movimientos, recurrentes, deudas y ajustes.
-
-1. Ejecuta `supabase-schema.sql` una vez en el SQL Editor de Supabase.
-2. Crea o confirma el usuario principal Victor en Authentication.
-3. Confirma que `supabase-app-users-workspaces.sql` tenga el correo de Victor: `vedu.gutierrez@gmail.com`.
-4. Ejecuta `supabase-app-users-workspaces.sql` para asignar los datos existentes a la base personal de Victor y activar RLS por base.
-5. Entra a la app con correo y contraseña. Supabase queda siempre activo; ya no hay switch en Ajustes.
-
-Con las tablas creadas, la app usa Supabase estructurado como sync principal.
-Cada fila guarda `workspace_id`, las políticas RLS solo permiten ver/modificar
-bases donde el usuario sea miembro y el respaldo local queda separado por base
-en el navegador.
-
-### Usuarios de la app
-
-La app usa Supabase Auth solo como motor interno de sesión; no se crean keys por
-usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
-`app_workspaces`.
-
-- Crear usuario está en **Ajustes** y solo aparece para el admin
-  `vedu.gutierrez@gmail.com`; el login solo permite entrar.
-- Si Supabase Auth tiene el registro público activado, el admin puede dar de alta
-  usuarios desde la app. Al entrar por primera vez, se crea su perfil interno y
-  su base personal vacía.
-- Si quieres controlar quién puede usar la app, desactiva el registro público en
-  Supabase y crea los usuarios manualmente en **Authentication**, o agrega una
-  función admin segura. Luego el usuario entra desde la app con su correo y
-  contraseña.
-- Para compartir la base de Victor con otro usuario, agrega una fila en
-  `app_workspace_members` con rol `viewer`, `editor` o `admin`.
+- Crear usuario está en **Ajustes** y solo aparece para el admin `vedu.gutierrez@gmail.com`.
+- Cada usuario puede tener su base personal separada.
+- El admin puede seleccionar cualquier base desde Configuración.
+- Para compartir una base, agrega membresía con rol `viewer`, `editor` o `admin`.
 
 ### Cuentas y cortes predeterminados
-
 | Cuenta | Día de corte |
 |--------|:------------:|
 | Banamex | 3 |
@@ -298,9 +237,8 @@ usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
 
 ## Backup
 
-- **Backup JSON:** Ajustes → Herramientas de datos → Backup JSON — descarga los datos de la base activa
-- **Restaurar:** Ajustes → Herramientas de datos → Restaurar JSON — carga con confirmación sobre la base activa
-- **Excel:** Ajustes → Herramientas de datos → Exportar Excel — exporta la base activa a Excel
+- **DB SQLite:** Ajustes → Herramientas de datos → Descargar DB SQLite — descarga la base completa desde el servidor
+- **Excel:** Ajustes → Herramientas de datos → Exportar Excel — genera un reporte de consulta
 
 ---
 
@@ -308,7 +246,7 @@ usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
 
 - URL del Worker se guarda en `localStorage` — no en el código
 - La API key de Anthropic solo vive en variables secretas de Cloudflare Workers
-- No compartas tu repo `GastosApp` si tiene datos sensibles
+- No compartas archivos `.sqlite` si tienen datos sensibles
 
 ---
 
@@ -316,7 +254,6 @@ usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
 
 - HTML + CSS + JS puro (sin frameworks)
 - FastAPI + SQLite para sync estructurado
-- Supabase REST API como origen migrado / fallback temporal
 - PDF.js para extracción de texto
 - SheetJS para Excel
 - Cloudflare Workers + Anthropic API para conciliación con IA

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sqlite3
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from .storage import (
     ALL_EXPORT_TABLES,
@@ -178,6 +182,26 @@ def admin_create_user(payload: dict[str, Any], current=Depends(current_user), co
             (workspace_id, user_id, "admin", now, now),
         )
     return {"ok": True, "user": auth_user_payload(get_user(conn, user_id))}
+
+
+@app.get("/api/admin/sqlite-backup")
+def admin_sqlite_backup(current=Depends(current_user), conn=Depends(db)):
+    if not is_admin(current):
+        raise HTTPException(status_code=403, detail="Solo admin")
+    backup_dir = Path(tempfile.mkdtemp(prefix="gastosapp-backup-"))
+    stamp = utc_now().replace(":", "-").replace(".", "-")
+    backup_path = backup_dir / f"gastosapp-{stamp}.sqlite"
+    dest = sqlite3.connect(backup_path)
+    try:
+        conn.backup(dest)
+    finally:
+        dest.close()
+    return FileResponse(
+        backup_path,
+        media_type="application/vnd.sqlite3",
+        filename=backup_path.name,
+        background=BackgroundTask(lambda: shutil.rmtree(backup_dir, ignore_errors=True)),
+    )
 
 
 def get_workspace_or_403(conn, current, workspace_id: str, write: bool = False):

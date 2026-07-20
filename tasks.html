@@ -358,18 +358,16 @@ let calYear = new Date().getFullYear(), calMonth = new Date().getMonth();
 let calSelected = null;
 
 const COLORES = ['#6c63ff','#ff5e7a','#22d3a5','#ff9f43','#a78bfa','#06b6d4','#f472b6','#ffd166'];
-const SUPABASE_URL = 'https://iskzbiozycpvnkkverfg.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
-
+const DEFAULT_SQLITE_API = 'http://45.76.0.95:8010/api';
 function sqliteApiBase() {
   const configured = (localStorage.getItem('sqliteApiBase') || '').trim();
   if (configured) return configured.replace(/\/+$/, '');
   if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
-  return '';
+  return DEFAULT_SQLITE_API;
 }
 
 function usingSqliteApi() {
-  return !!sqliteApiBase() && localStorage.getItem('syncProvider') !== 'supabase';
+  return !!sqliteApiBase();
 }
 
 // ── Init ─────────────────────────────────────────────────────
@@ -389,62 +387,53 @@ async function init() {
 
 function today() { return new Date().toISOString().slice(0,10); }
 
-function getSupabaseAuth() {
-  try { return JSON.parse(localStorage.getItem('supabaseAuth') || 'null'); }
+function getServerAuth() {
+  try { return JSON.parse(localStorage.getItem('serverAuth') || 'null'); }
   catch(e) { return null; }
 }
 
-function setSupabaseAuth(auth) {
-  if (!auth) localStorage.removeItem('supabaseAuth');
-  else localStorage.setItem('supabaseAuth', JSON.stringify(auth));
+function setServerAuth(auth) {
+  if (!auth) localStorage.removeItem('serverAuth');
+  else localStorage.setItem('serverAuth', JSON.stringify(auth));
 }
 
 async function taskAuthFetch(path, body) {
-  if (usingSqliteApi()) {
-    const headers = { 'Content-Type': 'application/json' };
-    let endpoint = '/auth/login';
-    if (path.includes('refresh_token')) {
-      endpoint = '/auth/refresh';
-      headers.Authorization = 'Bearer ' + (getSupabaseAuth()?.access_token || '');
-    }
-    const res = await fetch(`${sqliteApiBase()}${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body || {})
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
-    localStorage.setItem('syncProvider', 'sqlite');
-    return data;
+  if (!usingSqliteApi()) throw new Error('Servidor SQLite no configurado');
+  const headers = { 'Content-Type': 'application/json' };
+  let endpoint = '/auth/login';
+  if (path.includes('refresh_token')) {
+    endpoint = '/auth/refresh';
+    headers.Authorization = 'Bearer ' + (getServerAuth()?.access_token || '');
   }
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+  const res = await fetch(`${sqliteApiBase()}${endpoint}`, {
     method: 'POST',
-    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    headers,
+    body: JSON.stringify(body || {})
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || `Auth HTTP ${res.status}`);
+  if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
+  localStorage.setItem('syncProvider', 'sqlite');
   return data;
 }
 
 async function refreshTaskSession() {
-  const auth = getSupabaseAuth();
+  const auth = getServerAuth();
   if (!auth?.refresh_token) return false;
   const expiresAt = Number(auth.expires_at || 0) * 1000;
   if (expiresAt && expiresAt - Date.now() > 60000) return true;
   try {
     const data = await taskAuthFetch('token?grant_type=refresh_token', { refresh_token: auth.refresh_token });
-    setSupabaseAuth({ ...auth, ...data });
+    setServerAuth({ ...auth, ...data });
     return true;
   } catch(e) {
     console.warn('Tasks session refresh:', e.message);
-    setSupabaseAuth(null);
+    setServerAuth(null);
     return false;
   }
 }
 
 function taskUserId() {
-  return getSupabaseAuth()?.user?.id || null;
+  return getServerAuth()?.user?.id || null;
 }
 
 function taskWorkspaceId() {
@@ -452,7 +441,7 @@ function taskWorkspaceId() {
 }
 
 function taskUsingAuth() {
-  return !!getSupabaseAuth()?.access_token && !!taskUserId() && !!taskWorkspaceId();
+  return !!getServerAuth()?.access_token && !!taskUserId() && !!taskWorkspaceId();
 }
 
 function taskKey(name) {
@@ -1047,23 +1036,18 @@ function checkNotificaciones() {
 }
 
 // ── Sync ─────────────────────────────────────────────────────
-function taskDeviceId() { return localStorage.getItem('supabaseDeviceId') || 'tasks_device'; }
+function taskDeviceId() { return localStorage.getItem('syncDeviceId') || 'tasks_device'; }
 function taskHeaders(extra = {}) {
-  const auth = getSupabaseAuth();
-  return { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + (auth?.access_token || SUPABASE_KEY), ...extra };
+  return extra;
 }
 async function taskFetch(path, opts = {}) {
-  if (usingSqliteApi()) {
-    const auth = getSupabaseAuth();
-    const headers = {
-      ...(opts.headers || {}),
-      'Authorization': 'Bearer ' + (auth?.access_token || '')
-    };
-    const res = await fetch(`${sqliteApiBase()}/rest/${path}`, { ...opts, headers });
-    if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
-    return res;
-  }
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers: taskHeaders(opts.headers || {}) });
+  if (!usingSqliteApi()) throw new Error('Servidor SQLite no configurado');
+  const auth = getServerAuth();
+  const headers = {
+    ...(opts.headers || {}),
+    'Authorization': 'Bearer ' + (auth?.access_token || '')
+  };
+  const res = await fetch(`${sqliteApiBase()}/rest/${path}`, { ...opts, headers });
   if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
   return res;
 }
@@ -1151,7 +1135,7 @@ async function syncUp() {
     localStorage.setItem(taskKey('mr_lastSync'), new Date().toISOString());
     actualizarSyncStatus('ok');
   } catch(e) {
-    console.warn('Supabase tasks sync:', e);
+    console.warn('Sync tareas servidor:', e);
     actualizarSyncStatus('error');
   } finally {
     _taskSyncLock = false;
@@ -1178,7 +1162,7 @@ async function syncDown(force = false) {
       saveLocal(); renderAll(); actualizarSyncStatus('ok'); return;
     }
   } catch(e) {
-    console.warn('Supabase tasks download:', e);
+    console.warn('Descarga tareas servidor:', e);
     actualizarSyncStatus('error');
   }
 }

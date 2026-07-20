@@ -1,31 +1,15 @@
 # GastosApp Backend SQLite
 
-Backend FastAPI para correr GastosApp fuera de GitHub/Supabase usando SQLite.
+Backend FastAPI para correr GastosApp en tu servidor usando SQLite.
 
 ## Archivos Importantes
 
 - DB local generada: `backend/data/gastosapp.sqlite`
-- Export fuente de Supabase: `backups/supabase-full-export-20260719-213406.json`
 - App FastAPI: `backend/app/main.py`
-- Migrador: `backend/scripts/migrate_supabase_export.py`
 - Cambiar contraseña: `backend/scripts/set_admin_password.py`
 - Service systemd ejemplo: `backend/gastosapp-api.service.example`
 
 `backend/data/*.sqlite` está en `.gitignore`, así que al hacer `git pull` en el servidor la DB no viaja por git. Hay que subirla aparte.
-
-## Crear SQLite Desde El Export
-
-Desde la raíz del proyecto:
-
-```bash
-python3 backend/scripts/migrate_supabase_export.py \
-  --export backups/supabase-full-export-20260719-213406.json \
-  --db backend/data/gastosapp.sqlite \
-  --replace \
-  --admin-password "TU_CONTRASENA_NUEVA"
-```
-
-Si no pasas `--admin-password`, el script genera una temporal y la muestra en consola.
 
 ## Cambiar Contraseña Admin
 
@@ -74,6 +58,14 @@ Sube la DB desde tu PC Windows, en otra terminal:
 
 ```powershell
 scp C:\Users\victo\OneDrive\Victor\Proyectos\GastosApp\backend\data\gastosapp.sqlite root@45.76.0.95:/opt/gastosapp/backend/data/gastosapp.sqlite
+```
+
+De vuelta en el servidor, da permiso de escritura al usuario del servicio:
+
+```bash
+sudo chown -R www-data:www-data /opt/gastosapp/backend/data
+sudo chmod 750 /opt/gastosapp/backend/data
+sudo chmod 640 /opt/gastosapp/backend/data/gastosapp.sqlite
 ```
 
 Prueba manual:

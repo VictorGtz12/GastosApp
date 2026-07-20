@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.56';
+const APP_VERSION = 'v2.58';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -132,41 +132,39 @@ function getWeek(d) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  SINCRONIZACIÓN — Supabase estructurado
+//  SINCRONIZACIÓN — SQLite remoto + cache offline
 // ════════════════════════════════════════════════════════════
 
 function isTravelMode() { return localStorage.getItem('modoViaje') === '1'; }
 function hasPendingSync() {
   const lm = new Date(localStorage.getItem('localModified') || 0).getTime();
   const ls = new Date(localStorage.getItem('lastSync') || 0).getTime();
-  const lsb = new Date(localStorage.getItem('lastSyncSupabase') || 0).getTime();
+  const lsb = new Date(localStorage.getItem('lastRemoteSync') || 0).getTime();
   return lm > Math.max(ls, lsb) + 3000 || getPendingSyncOps().length > 0;
 }
 
-// ── Supabase Sync ────────────────────────────────────────────
-const SUPABASE_URL  = 'https://iskzbiozycpvnkkverfg.supabase.co';
-const SUPABASE_KEY  = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
-const SUPABASE_STRUCTURED_SCHEMA = 1;
+const REMOTE_STRUCTURED_SCHEMA = 1;
+const DEFAULT_SQLITE_API = 'http://45.76.0.95:8010/api';
 
 function sqliteApiBase() {
   const configured = (localStorage.getItem('sqliteApiBase') || '').trim();
   if (configured) return configured.replace(/\/+$/, '');
   if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
-  return '';
+  return DEFAULT_SQLITE_API;
 }
 
 function usingSqliteApi() {
-  return !!sqliteApiBase() && localStorage.getItem('syncProvider') !== 'supabase';
+  return !!sqliteApiBase();
 }
 
 function syncRemoteLabel() {
-  return usingSqliteApi() ? 'Servidor SQLite' : 'Supabase';
+  return 'Servidor SQLite';
 }
 
 async function sqliteApiFetch(path, opts = {}) {
   const base = sqliteApiBase();
   if (!base) throw new Error('Servidor SQLite no configurado');
-  const auth = getSupabaseAuth();
+  const auth = getServerAuth();
   const headers = {
     ...(opts.headers || {}),
     'Authorization': `Bearer ${auth?.access_token || ''}`
@@ -176,27 +174,27 @@ async function sqliteApiFetch(path, opts = {}) {
   return res;
 }
 
-function getSupabaseDeviceId() {
-  let id = localStorage.getItem('supabaseDeviceId');
-  if (!id) { id = 'device_' + Math.random().toString(36).slice(2) + Date.now(); localStorage.setItem('supabaseDeviceId', id); }
+function getSyncDeviceId() {
+  let id = localStorage.getItem('syncDeviceId');
+  if (!id) { id = 'device_' + Math.random().toString(36).slice(2) + Date.now(); localStorage.setItem('syncDeviceId', id); }
   return id;
 }
 function makeLocalId(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function getSupabaseAuth() {
-  try { return JSON.parse(localStorage.getItem('supabaseAuth') || 'null'); }
+function getServerAuth() {
+  try { return JSON.parse(localStorage.getItem('serverAuth') || 'null'); }
   catch(e) { return null; }
 }
 
-function setSupabaseAuth(auth) {
-  if (!auth) localStorage.removeItem('supabaseAuth');
-  else localStorage.setItem('supabaseAuth', JSON.stringify(auth));
+function setServerAuth(auth) {
+  if (!auth) localStorage.removeItem('serverAuth');
+  else localStorage.setItem('serverAuth', JSON.stringify(auth));
 }
 
 function currentUser() {
-  return getSupabaseAuth()?.user || null;
+  return getServerAuth()?.user || null;
 }
 
 function currentUserId() {
@@ -284,12 +282,12 @@ function resetPersonalState() {
   reglasAutomaticas = JSON.parse(JSON.stringify(DEFAULT_APP_STATE.reglasAutomaticas));
 }
 
-function usingSupabaseAuth() {
-  return !!getSupabaseAuth()?.access_token && !!currentUserId();
+function usingServerAuth() {
+  return !!getServerAuth()?.access_token && !!currentUserId();
 }
 
-function usingSupabase() {
-  return usingSupabaseAuth();
+function usingRemoteSync() {
+  return usingServerAuth() && usingSqliteApi();
 }
 
 function userScopedTable(table) {
@@ -307,18 +305,18 @@ function userScopedTable(table) {
   ].includes(table);
 }
 
-async function refreshSupabaseSession() {
-  const auth = getSupabaseAuth();
+async function refreshServerSession() {
+  const auth = getServerAuth();
   if (!auth?.refresh_token) return false;
   const expiresAt = Number(auth.expires_at || 0) * 1000;
   if (expiresAt && expiresAt - Date.now() > 60000) return true;
   try {
-    const data = await supabaseAuthFetch('token?grant_type=refresh_token', { refresh_token: auth.refresh_token });
-    setSupabaseAuth({ ...auth, ...data });
+    const data = await serverAuthFetch('token?grant_type=refresh_token', { refresh_token: auth.refresh_token });
+    setServerAuth({ ...auth, ...data });
     return true;
   } catch(e) {
     console.warn('Refresh session error:', e.message);
-    setSupabaseAuth(null);
+    setServerAuth(null);
     return false;
   }
 }
@@ -346,7 +344,7 @@ function pendingSyncLabel(type) {
 function queueSyncOperation(type, details = {}) {
   if (syncBloqueado) return;
   const ops = getPendingSyncOps();
-  ops.push({ id: makeLocalId('op'), type, details, ts: new Date().toISOString(), deviceId: getSupabaseDeviceId() });
+  ops.push({ id: makeLocalId('op'), type, details, ts: new Date().toISOString(), deviceId: getSyncDeviceId() });
   setPendingSyncOps(ops);
 }
 
@@ -354,19 +352,14 @@ function clearPendingSyncOps() {
   localStorage.removeItem('pendingSyncOps');
 }
 
-// ── Supabase estructurado ────────────────────────────────────
+// ── Sync estructurado ────────────────────────────────────────
 // Las tablas gs_* son la fuente remota principal; localStorage queda como cache offline.
-let _structuredSupabaseAvailable = true;
+let _structuredRemoteAvailable = true;
 let appWorkspaces = [];
 let appUserProfile = null;
 
 function sbHeaders(extra = {}) {
-  const auth = getSupabaseAuth();
-  return {
-    'apikey': SUPABASE_KEY,
-    'Authorization': `Bearer ${auth?.access_token || SUPABASE_KEY}`,
-    ...extra
-  };
+  return extra;
 }
 
 function authUserName(displayName = '') {
@@ -374,43 +367,31 @@ function authUserName(displayName = '') {
   return displayName || user?.user_metadata?.display_name || user?.email || '';
 }
 
-async function supabaseAuthFetch(path, body) {
-  if (usingSqliteApi()) {
-    let endpoint = '/auth/login';
-    let payload = body || {};
-    const headers = { 'Content-Type': 'application/json' };
-    if (path.includes('refresh_token')) {
-      endpoint = '/auth/refresh';
-      headers.Authorization = `Bearer ${getSupabaseAuth()?.access_token || ''}`;
-    } else if (path === 'signup') {
-      endpoint = '/admin/users';
-      headers.Authorization = `Bearer ${getSupabaseAuth()?.access_token || ''}`;
-      payload = {
-        email: body?.email,
-        password: body?.password,
-        display_name: body?.data?.display_name || body?.email
-      };
-    }
-    const res = await fetch(`${sqliteApiBase()}${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
-    localStorage.setItem('syncProvider', 'sqlite');
-    return data;
+async function serverAuthFetch(path, body) {
+  if (!usingSqliteApi()) throw new Error('Servidor SQLite no configurado');
+  let endpoint = '/auth/login';
+  let payload = body || {};
+  const headers = { 'Content-Type': 'application/json' };
+  if (path.includes('refresh_token')) {
+    endpoint = '/auth/refresh';
+    headers.Authorization = `Bearer ${getServerAuth()?.access_token || ''}`;
+  } else if (path === 'signup') {
+    endpoint = '/admin/users';
+    headers.Authorization = `Bearer ${getServerAuth()?.access_token || ''}`;
+    payload = {
+      email: body?.email,
+      password: body?.password,
+      display_name: body?.data?.display_name || body?.email
+    };
   }
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+  const res = await fetch(`${sqliteApiBase()}${endpoint}`, {
     method: 'POST',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
+    headers,
+    body: JSON.stringify(payload)
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || `Auth HTTP ${res.status}`);
+  if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
+  localStorage.setItem('syncProvider', 'sqlite');
   return data;
 }
 
@@ -441,9 +422,9 @@ async function loginUsuario() {
     return;
   }
   try {
-    const data = await supabaseAuthFetch('token?grant_type=password', { email, password });
-    setSupabaseAuth(data);
-    localStorage.setItem('supabaseEnabled', '1');
+    const data = await serverAuthFetch('token?grant_type=password', { email, password });
+    setServerAuth(data);
+    localStorage.setItem('serverSyncEnabled', '1');
     closeModal('modal-auth');
     await afterAuthReady(true);
     showToast('Sesión iniciada ✓');
@@ -476,7 +457,7 @@ async function crearUsuarioAdmin() {
     return;
   }
   try {
-    await supabaseAuthFetch('signup', { email, password, data: { display_name: displayName || email } });
+    await serverAuthFetch('signup', { email, password, data: { display_name: displayName || email } });
     document.getElementById('admin-new-user-email').value = '';
     document.getElementById('admin-new-user-password').value = '';
     document.getElementById('admin-new-user-name').value = '';
@@ -490,8 +471,8 @@ async function crearUsuarioAdmin() {
 }
 
 function cerrarSesion() {
-  setSupabaseAuth(null);
-  ['lastSync', 'lastSyncSupabase', 'lastStructuredSyncSupabase', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
+  setServerAuth(null);
+  ['lastSync', 'lastRemoteSync', 'lastStructuredRemoteSync', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
   showToast('Sesión cerrada');
   setTimeout(() => location.reload(), 300);
 }
@@ -548,7 +529,7 @@ function isAppAdmin() {
 }
 
 async function cargarWorkspaces() {
-  if (!usingSupabaseAuth()) return [];
+  if (!usingServerAuth()) return [];
   if (isAppAdmin()) {
     const rows = await sbFetch('app_workspaces?select=id,name,is_personal,created_at&order=created_at.asc', {
       headers: { 'Accept': 'application/json' }
@@ -580,10 +561,10 @@ async function cambiarWorkspace(workspaceId) {
   if (!workspaceId || workspaceId === currentWorkspaceId()) return;
   guardarBackupMinimo('antes-cambiar-base');
   setCurrentWorkspaceId(workspaceId);
-  ['lastSync', 'lastSyncSupabase', 'lastStructuredSyncSupabase', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
+  ['lastSync', 'lastRemoteSync', 'lastStructuredRemoteSync', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
   resetPersonalState();
   loadFromLocal();
-  if (navigator.onLine) await downloadSupabase(true);
+  if (navigator.onLine) await downloadRemote(true);
   actualizarSelectCuentas();
   actualizarSelectMotivos();
   renderMenu();
@@ -593,7 +574,7 @@ async function cambiarWorkspace(workspaceId) {
 }
 
 function requireAuth() {
-  if (usingSupabaseAuth()) return true;
+  if (usingServerAuth()) return true;
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
   openModal('modal-auth');
@@ -602,24 +583,12 @@ function requireAuth() {
 }
 
 async function sbFetch(path, opts = {}) {
-  if (usingSqliteApi()) {
-    return sqliteApiFetch(`/rest/${path}`, opts);
-  }
-  const headers = sbHeaders(opts.headers || {});
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers });
-  if (res.status === 404 || res.status === 400) {
-    const txt = await res.text().catch(() => '');
-    if (/relation .* does not exist|Could not find the table|schema cache/i.test(txt)) {
-      _structuredSupabaseAvailable = false;
-    }
-    throw new Error(txt || `HTTP ${res.status}`);
-  }
-  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
-  return res;
+  if (!usingSqliteApi()) throw new Error('Servidor SQLite no configurado');
+  return sqliteApiFetch(`/rest/${path}`, opts);
 }
 
-function supabaseStructuredReady() {
-  return usingSupabase() && _structuredSupabaseAvailable;
+function structuredSyncReady() {
+  return usingServerAuth() && usingSqliteApi() && _structuredRemoteAvailable;
 }
 
 function structuredTouch(obj) {
@@ -633,7 +602,7 @@ function structuredRow(id, data, extra = {}) {
     id: String(id),
     data,
     updated_at: data.updatedAt || now,
-    updated_by_device: getSupabaseDeviceId(),
+    updated_by_device: getSyncDeviceId(),
     ...extra
   };
 }
@@ -660,19 +629,19 @@ function cleanMovimientoForStructured(mov, cuentaId) {
 }
 
 function getStructuredDeleted() {
-  try { return JSON.parse(localStorage.getItem(workspaceStorageKey('supabaseStructuredDeleted')) || '{}'); }
+  try { return JSON.parse(localStorage.getItem(workspaceStorageKey('structuredDeleted')) || '{}'); }
   catch(e) { return {}; }
 }
 
 function setStructuredDeleted(data) {
-  localStorage.setItem(workspaceStorageKey('supabaseStructuredDeleted'), JSON.stringify(data));
+  localStorage.setItem(workspaceStorageKey('structuredDeleted'), JSON.stringify(data));
 }
 
 function markStructuredDeleted(table, id) {
   if (!id) return;
   const deleted = getStructuredDeleted();
   if (!deleted[table]) deleted[table] = [];
-  const row = { id: String(id), deleted_at: new Date().toISOString(), updated_by_device: getSupabaseDeviceId() };
+  const row = { id: String(id), deleted_at: new Date().toISOString(), updated_by_device: getSyncDeviceId() };
   deleted[table] = [row, ...deleted[table].filter(x => x.id !== row.id)].slice(0, 500);
   setStructuredDeleted(deleted);
 }
@@ -686,25 +655,25 @@ function clearStructuredDeleted(table, ids) {
 }
 
 function getStructuredDirty() {
-  try { return JSON.parse(localStorage.getItem(workspaceStorageKey('supabaseStructuredDirty')) || '{}'); }
+  try { return JSON.parse(localStorage.getItem(workspaceStorageKey('structuredDirty')) || '{}'); }
   catch(e) { return {}; }
 }
 
 function markStructuredDirty(key) {
   const dirty = getStructuredDirty();
   dirty[key] = true;
-  localStorage.setItem(workspaceStorageKey('supabaseStructuredDirty'), JSON.stringify(dirty));
+  localStorage.setItem(workspaceStorageKey('structuredDirty'), JSON.stringify(dirty));
 }
 
 function clearStructuredDirty(keys) {
   const dirty = getStructuredDirty();
   keys.forEach(k => delete dirty[k]);
-  localStorage.setItem(workspaceStorageKey('supabaseStructuredDirty'), JSON.stringify(dirty));
+  localStorage.setItem(workspaceStorageKey('structuredDirty'), JSON.stringify(dirty));
 }
 
 function structuredLastSyncMs() {
   return Math.max(
-    new Date(localStorage.getItem('lastSyncSupabase') || 0).getTime(),
+    new Date(localStorage.getItem('lastRemoteSync') || 0).getTime(),
     new Date(localStorage.getItem('lastSync') || 0).getTime()
   );
 }
@@ -778,7 +747,7 @@ function buildStructuredPayload() {
     recurrentes: snap.recurrentes.map(r => structuredRow(r.id, r, { deleted_at: null })),
     deudas: snap.deudas.map(d => structuredRow(d.id, d, { deleted_at: null })),
     settings: structuredRow('main', {
-      schema: SUPABASE_STRUCTURED_SCHEMA,
+      schema: REMOTE_STRUCTURED_SCHEMA,
       savedAt: snap.savedAt,
       nextId: Math.max(Number(snap.nextId) || 1, maxGastoId + 1),
       nextAhorroId: snap.nextAhorroId,
@@ -938,7 +907,7 @@ function dedupeRowsForUpsert(rows, conflict, table = '') {
     byKey.set(key, rowUpdatedMs(row) >= rowUpdatedMs(existing) ? row : existing);
   });
   if (duplicates) {
-    console.warn(`[Sync Supabase] ${table}: ${duplicates} fila(s) duplicada(s) en el lote; se conservó la más reciente antes de subir.`);
+    console.warn(`[Sync servidor] ${table}: ${duplicates} fila(s) duplicada(s) en el lote; se conservó la más reciente antes de subir.`);
   }
   return [...byKey.values()];
 }
@@ -954,7 +923,7 @@ async function sbSoftDelete(table, rows) {
       body: JSON.stringify({
         deleted_at: row.deleted_at,
         updated_at: row.deleted_at,
-        updated_by_device: row.updated_by_device || getSupabaseDeviceId()
+        updated_by_device: row.updated_by_device || getSyncDeviceId()
       })
     });
     done.push(row.id);
@@ -967,7 +936,7 @@ async function remoteStructuredSettings() {
     const rows = await sbSelect('gs_app_settings', 'select=data,updated_at&id=eq.main&limit=1');
     return rows[0] || null;
   } catch(e) {
-    console.warn('Supabase settings guard error:', e.message);
+    console.warn('Error revisando estado remoto:', e.message);
     return null;
   }
 }
@@ -982,25 +951,25 @@ function localPayloadLooksOlder(localSettings, remoteSettings) {
     Number(remote.nextDeudaId || 0) > Number(local.nextDeudaId || 0);
 }
 
-let _supabaseUploadLock = false;
-let _supabaseUploadQueued = false;
+let _remoteUploadLock = false;
+let _remoteUploadQueued = false;
 
-async function uploadSupabaseStructured(opts = {}) {
-  if (!supabaseStructuredReady()) return false;
-  if (_supabaseUploadLock) {
-    _supabaseUploadQueued = true;
+async function uploadStructuredSync(opts = {}) {
+  if (!structuredSyncReady()) return false;
+  if (_remoteUploadLock) {
+    _remoteUploadQueued = true;
     return true;
   }
-  _supabaseUploadLock = true;
+  _remoteUploadLock = true;
   mostrarEstadoSync(false, 'subiendo');
   let payload = buildStructuredPayload();
   const deleted = getStructuredDeleted();
   try {
     const remoteSettings = await remoteStructuredSettings();
     if (remoteSettings && localPayloadLooksOlder(payload.settings, remoteSettings)) {
-      console.warn('[Sync Supabase] Cache local vieja: se descarga remoto antes de subir.');
+      console.warn('[Sync servidor] Cache local vieja: se descarga remoto antes de subir.');
       setTimeout(async () => {
-        const ok = await downloadSupabase(true);
+        const ok = await downloadRemote(true);
         if (ok) {
           actualizarSelectCuentas();
           actualizarSelectMotivos();
@@ -1014,15 +983,15 @@ async function uploadSupabaseStructured(opts = {}) {
     if (!opts.full) {
       payload = filterIncrementalPayload(payload);
       if (!payload) {
-        console.warn('[Sync Supabase] Sin marca de sync previa: se descarga remoto antes de subir.');
-        setTimeout(() => downloadSupabase(true), 50);
+        console.warn('[Sync servidor] Sin marca de sync previa: se descarga remoto antes de subir.');
+        setTimeout(() => downloadRemote(true), 50);
         return false;
       }
     }
     payload = normalizeStructuredPayloadForSync(payload);
     const validationErrors = validateStructuredPayload(payload, { full: !!opts.full });
     if (validationErrors.length) {
-      console.warn('[Sync Supabase] Subida bloqueada por validación:', validationErrors);
+      console.warn('[Sync servidor] Subida bloqueada por validación:', validationErrors);
       localStorage.setItem('lastSyncError', validationErrors.slice(0, 5).join(' · '));
       mostrarEstadoSync(false, 'error');
       showToast('Sync bloqueado: datos inválidos. Revisa consola.');
@@ -1068,25 +1037,25 @@ async function uploadSupabaseStructured(opts = {}) {
     clearStructuredDirty(['cuentas', 'catalogos', 'cuentasAhorro', 'recurrentes', 'deudas']);
 
     const ts = new Date().toISOString();
-    localStorage.setItem('lastSyncSupabase', ts);
-    localStorage.setItem('lastStructuredSyncSupabase', ts);
+    localStorage.setItem('lastRemoteSync', ts);
+    localStorage.setItem('lastStructuredRemoteSync', ts);
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
     localStorage.removeItem('lastSyncError');
     localStorage.removeItem('syncConflictPending');
     clearPendingSyncOps();
-    registrarEntradaHistorialSync('subida', 'supabase');
+    registrarEntradaHistorialSync('subida', 'servidor');
     return true;
   } catch(e) {
-    console.warn('Supabase structured upload error:', e.message);
-    localStorage.setItem('lastSyncError', e.message || 'Error desconocido al subir a Supabase');
+    console.warn('Error subiendo al servidor:', e.message);
+    localStorage.setItem('lastSyncError', e.message || 'Error desconocido al subir a Servidor');
     mostrarEstadoSync(false, 'error');
     return false;
   } finally {
-    _supabaseUploadLock = false;
-    if (_supabaseUploadQueued) {
-      _supabaseUploadQueued = false;
-      setTimeout(() => uploadSupabaseStructured().then(ok => {
+    _remoteUploadLock = false;
+    if (_remoteUploadQueued) {
+      _remoteUploadQueued = false;
+      setTimeout(() => uploadStructuredSync().then(ok => {
         if (ok) mostrarEstadoSync(true);
       }), 50);
     }
@@ -1103,8 +1072,8 @@ async function sbSelect(table, query = 'select=*') {
   return await res.json();
 }
 
-async function downloadSupabaseStructured(force = false) {
-  if (!supabaseStructuredReady()) return false;
+async function downloadStructuredSync(force = false) {
+  if (!structuredSyncReady()) return false;
   mostrarEstadoSync(false, 'descargando');
   try {
     let gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows;
@@ -1140,9 +1109,9 @@ async function downloadSupabaseStructured(force = false) {
       ...gRows, ...cRows, ...catRows, ...caRows, ...movRows, ...recRows, ...deudaRows, ...settingsRows
     ].reduce((max, r) => Math.max(max, new Date(r.updated_at || r.data?.updatedAt || 0).getTime()), 0);
     const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
-    const yaSync = !!localStorage.getItem('lastStructuredSyncSupabase');
+    const yaSync = !!localStorage.getItem('lastStructuredRemoteSync');
     if (!force && yaSync && localModified > remoteLatest + 5000) {
-      console.warn('[Sync Supabase estructurado] Local mas nuevo, no se descarga remoto viejo.');
+      console.warn('[Sync servidor estructurado] Local mas nuevo, no se descarga remoto viejo.');
       showSyncConflict({
         local: summarizeSnapshotForSync(),
         remote: summarizeRemoteRows(gRows, caRows, movRows, settingsRows),
@@ -1208,29 +1177,29 @@ async function downloadSupabaseStructured(force = false) {
     saveLocal();
     syncBloqueado = false;
     const ts = new Date(remoteLatest || Date.now()).toISOString();
-    localStorage.setItem('lastSyncSupabase', ts);
-    localStorage.setItem('lastStructuredSyncSupabase', ts);
+    localStorage.setItem('lastRemoteSync', ts);
+    localStorage.setItem('lastStructuredRemoteSync', ts);
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
     localStorage.removeItem('syncConflictPending');
-    registrarEntradaHistorialSync('descarga', 'supabase');
+    registrarEntradaHistorialSync('descarga', 'servidor');
     return true;
   } catch(e) {
-    console.warn('Supabase structured download error:', e.message);
+    console.warn('Error descargando del servidor:', e.message);
     return false;
   }
 }
 
-async function uploadSupabase() {
-  if (!usingSupabase()) return false;
-  return await uploadSupabaseStructured();
+async function uploadRemote() {
+  if (!usingRemoteSync()) return false;
+  return await uploadStructuredSync();
 }
 
-async function downloadSupabase(force = false) {
-  if (!usingSupabase()) return false;
-  const structured = await downloadSupabaseStructured(force);
+async function downloadRemote(force = false) {
+  if (!usingRemoteSync()) return false;
+  const structured = await downloadStructuredSync(force);
   if (structured === 'skip') {
-    console.warn('[Sync Supabase] Descarga omitida por cache local mas reciente; no se sube automaticamente.');
+    console.warn('[Sync servidor] Descarga omitida por cache local mas reciente; no se sube automaticamente.');
     return false;
   }
   return structured === true;
@@ -1274,7 +1243,7 @@ async function resolverSyncConflict(accion) {
   localStorage.removeItem('syncConflictPending');
   if (accion === 'download') {
     syncBloqueado = true;
-    const ok = await downloadSupabaseStructured(true);
+    const ok = await downloadStructuredSync(true);
     syncBloqueado = false;
     if (ok) {
       actualizarSelectCuentas();
@@ -1289,18 +1258,18 @@ async function resolverSyncConflict(accion) {
   if (accion === 'upload') {
     guardarBackupMinimo('antes-subir-conflicto');
     queueSyncOperation('snapshot', { reason: 'resolver-conflicto-subir-local' });
-    const ok = await uploadSupabaseStructured({ full: true });
+    const ok = await uploadStructuredSync({ full: true });
     showToast(ok ? `Cache local subido a ${syncRemoteLabel()} ✓` : 'No se pudo subir cache local');
   }
 }
 
-let _supabaseDownloadLock = false;
+let _remoteDownloadLock = false;
 
-async function pullSupabaseIfIdle(render = false) {
-  if (!usingSupabase() || isTravelMode() || !navigator.onLine || _supabaseDownloadLock || hasPendingSync()) return false;
-  _supabaseDownloadLock = true;
+async function pullRemoteIfIdle(render = false) {
+  if (!usingRemoteSync() || isTravelMode() || !navigator.onLine || _remoteDownloadLock || hasPendingSync()) return false;
+  _remoteDownloadLock = true;
   try {
-    const ok = await downloadSupabase();
+    const ok = await downloadRemote();
     if (ok && render) {
       actualizarSelectCuentas();
       actualizarSelectMotivos();
@@ -1310,7 +1279,7 @@ async function pullSupabaseIfIdle(render = false) {
     }
     return ok;
   } finally {
-    _supabaseDownloadLock = false;
+    _remoteDownloadLock = false;
   }
 }
 
@@ -1398,7 +1367,7 @@ function applySnapshot(snap, opts = {}) {
 }
 
 // ── Historial de Sync ───────────────────────────────────────
-function registrarEntradaHistorialSync(tipo, fuente = 'supabase') {
+function registrarEntradaHistorialSync(tipo, fuente = 'servidor') {
   try {
     const hist = JSON.parse(localStorage.getItem('syncHistorial') || '[]');
     const snap = buildSnapshot();
@@ -1456,7 +1425,7 @@ function syncQueueItems() {
   const items = [];
   const lastSync = Math.max(
     new Date(localStorage.getItem('lastSync') || 0).getTime(),
-    new Date(localStorage.getItem('lastSyncSupabase') || 0).getTime()
+    new Date(localStorage.getItem('lastRemoteSync') || 0).getTime()
   );
   getPendingSyncOps().forEach(op => {
     items.push({
@@ -1496,7 +1465,7 @@ function verColaSync() {
   const items = syncQueueItems();
   const error = localStorage.getItem('lastSyncError') || '';
   const localModified = localStorage.getItem('localModified') || '';
-  const lastSync = localStorage.getItem('lastSyncSupabase') || localStorage.getItem('lastSync') || '';
+  const lastSync = localStorage.getItem('lastRemoteSync') || localStorage.getItem('lastSync') || '';
   const statusCards = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
@@ -1537,14 +1506,14 @@ async function refreshData() {
     return;
   }
 
-  // Supabase sync (download primero, luego upload)
-  if (usingSupabase()) {
-    const down = await downloadSupabase();
+  // Servidor sync (download primero, luego upload)
+  if (usingRemoteSync()) {
+    const down = await downloadRemote();
     if (!localStorage.getItem('syncConflictPending')) {
-      if (down || hasPendingSync()) await uploadSupabase();
+      if (down || hasPendingSync()) await uploadRemote();
     }
   }
-  if (usingSupabase()) localStorage.setItem('localModified', localStorage.getItem('lastSyncSupabase') || new Date().toISOString());
+  if (usingRemoteSync()) localStorage.setItem('localModified', localStorage.getItem('lastRemoteSync') || new Date().toISOString());
   loadFromLocal();
   actualizarSelectCuentas(); actualizarSelectMotivos();
   showTab(tabActualGlobal);
@@ -1554,12 +1523,12 @@ async function refreshData() {
 
 async function afterAuthReady(forceDownload = false) {
   if (!requireAuth()) return false;
-  localStorage.setItem('supabaseEnabled', '1');
+  localStorage.setItem('serverSyncEnabled', '1');
   await ensureUserProfile();
   await cargarWorkspaces();
   resetPersonalState();
   if (navigator.onLine) {
-    await downloadSupabase(forceDownload);
+    await downloadRemote(forceDownload);
   }
   actualizarSelectCuentas();
   actualizarSelectMotivos();
@@ -1668,7 +1637,7 @@ async function verVersionHistorial() {
     const fecha = new Date(v.savedAt);
     const hora  = fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
     const dia   = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
-    const ico   = v._fuente === 'supabase' ? 'Supabase' : 'Local';
+    const ico   = v._fuente === 'servidor' ? 'Servidor' : 'Local';
     return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
@@ -1692,7 +1661,7 @@ function restaurarVersionCache(idx) {
   if (ok && ok !== 'skip') {
     saveLocal(); closeModal('modal-version-historial'); showTab(tabActualGlobal || 'menu');
     showToast('Version restaurada');
-    setTimeout(() => { uploadSupabase(); }, 1500);
+    setTimeout(() => { uploadRemote(); }, 1500);
   }
 }
 
@@ -1710,7 +1679,7 @@ function restaurarVersion(idx) {
     closeModal('modal-version-historial');
     showTab(tabActualGlobal || 'menu');
     showToast('Version restaurada');
-    setTimeout(() => { uploadSupabase(); }, 1500);
+    setTimeout(() => { uploadRemote(); }, 1500);
   }
 }
 
@@ -1896,25 +1865,25 @@ function actualizarEstadoRed() {
 }
 window.addEventListener('online',  () => { actualizarEstadoRed(); if (!isTravelMode() && typeof syncUp === 'function') syncUp(); });
 window.addEventListener('offline', () => actualizarEstadoRed());
-window.addEventListener('focus', () => { pullSupabaseIfIdle(true); });
+window.addEventListener('focus', () => { pullRemoteIfIdle(true); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') pullSupabaseIfIdle(true);
+  if (document.visibilityState === 'visible') pullRemoteIfIdle(true);
 });
 
 let syncBloqueado = false;
 
 function iniciarAutoSync() {
-  if (!usingSupabase() || isTravelMode()) return;
+  if (!usingRemoteSync() || isTravelMode()) return;
   // Respaldo: reintenta subidas pendientes y trae cambios de otros dispositivos.
   setInterval(async () => {
     if (syncBloqueado || isTravelMode() || !navigator.onLine) return;
     const lm = new Date(localStorage.getItem('localModified')||0).getTime();
     const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
     if (lm > ls + 3000) {
-      const up = await uploadSupabase();
+      const up = await uploadRemote();
       if (up) mostrarEstadoSync(true);
     } else {
-      await pullSupabaseIfIdle(true);
+      await pullRemoteIfIdle(true);
     }
   }, 15 * 1000);
 }
@@ -1951,10 +1920,10 @@ function saveLocal() {
       window._autoSyncTimer = setTimeout(async () => {
         if (isTravelMode() || !navigator.onLine) return;
         // Dispositivo nuevo: no subir hasta que se descargue primero
-        if (!localStorage.getItem('lastSync') && !localStorage.getItem('lastSyncSupabase') && usingSupabase()) return;
+        if (!localStorage.getItem('lastSync') && !localStorage.getItem('lastRemoteSync') && usingRemoteSync()) return;
         // No subir si no hay cambios reales desde el último sync
         if (!hasPendingSync()) { mostrarEstadoSync(true); return; }
-        const up = usingSupabase() ? await uploadSupabase() : true;
+        const up = usingRemoteSync() ? await uploadRemote() : true;
         if (up) {
           mostrarEstadoSync(true);
           const b = document.getElementById('banner-pendientes');
@@ -3790,8 +3759,8 @@ async function hacerCorte() {
     clearTimeout(window._autoSyncTimer);
     renderMenu();
     renderGastos();
-    if (usingSupabase() && !isTravelMode() && navigator.onLine) {
-      const ok = await uploadSupabaseStructured({ full: true });
+    if (usingRemoteSync() && !isTravelMode() && navigator.onLine) {
+      const ok = await uploadStructuredSync({ full: true });
       if (ok) mostrarEstadoSync(true);
       else mostrarEstadoSync(false);
       if (ok) {
@@ -3952,79 +3921,42 @@ function confirmarAumentarPresupuesto() {
 
 
 // ════════════════════════════════════════════════════════════
-//  BACKUP — Exportar / Importar / Migrar desde Sheets
+//  BACKUP — SQLite completo y exportes de consulta
 // ════════════════════════════════════════════════════════════
 
-// Exportar todo como archivo JSON de backup
-function exportarBackup() {
-  const data = {
-    version: 2, savedAt: new Date().toISOString(), fecha: today(),
-    gastos, historico, nextId, nextAhorroId, nextMovId,
-    cuentasAhorro, excepciones,
-    catalogoCuentas, catalogoMotivos, catalogoComentarios,
-    presupuesto: PRESUPUESTO,
-    recurrentes, nextRecId, deudas, nextDeudaId
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `gastos_backup_${today()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Backup descargado ✓');
+async function descargarBackupSqlite() {
+  if (!requireAuth()) return;
+  if (!isAppAdmin()) {
+    showToast('Solo el admin puede descargar la DB completa');
+    return;
+  }
+  if (!usingSqliteApi()) {
+    showToast('Configura el servidor SQLite primero');
+    return;
+  }
+  try {
+    mostrarEstadoSync(false, 'descargando');
+    const res = await sqliteApiFetch('/admin/sqlite-backup');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `gastosapp-${stamp}.sqlite`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    mostrarEstadoSync(true);
+    showToast('DB SQLite descargada ✓');
+  } catch(e) {
+    console.warn('Backup SQLite error:', e.message);
+    mostrarEstadoSync(false, 'error');
+    showToast('No se pudo descargar la DB');
+  }
 }
 
-// Importar backup JSON
-function importarBackup() {
-  const input = document.createElement('input');
-  input.type   = 'file';
-  input.accept = '.json';
-  input.onchange = async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      if (!data.gastos && !data.historico) throw new Error('Formato inválido');
-      // Guardar datos para confirmar en modal
-      window._backupPendiente = data;
-      // Mostrar modal de confirmación en vez de confirm()
-      const info = `${data.gastos?.length||0} gastos, ${data.historico?.length||0} historial, ${data.cuentasAhorro?.length||0} ahorros`;
-      document.getElementById('backup-confirm-info').textContent = info;
-      openModal('modal-backup-confirm');
-    } catch(e) { showToast('Error al leer el archivo: ' + e.message); }
-  };
-  input.click();
-}
-
-function confirmarRestaurarBackup() {
-  const data = window._backupPendiente;
-  if (!data) return;
-  if (data.gastos)              gastos              = data.gastos.map(normGasto);
-  if (data.historico)           historico           = data.historico.map(normGasto);
-  if (data.nextId)              nextId              = data.nextId;
-  if (data.nextAhorroId)        nextAhorroId        = data.nextAhorroId;
-  if (data.excepciones)         excepciones         = data.excepciones       || [];
-  if (data.catalogoCuentas)     catalogoCuentas     = data.catalogoCuentas;
-  if (data.catalogoMotivos)     catalogoMotivos     = data.catalogoMotivos;
-  if (data.catalogoComentarios) catalogoComentarios = data.catalogoComentarios.map(c => typeof c === 'string' ? c : (c.nombre || c.Nombre || '')).filter(Boolean);
-  if (data.cuentasAhorro)       cuentasAhorro       = data.cuentasAhorro.map(normAhorro);
-  if (data.recurrentes)         recurrentes         = data.recurrentes       || [];
-  if (data.nextRecId)           nextRecId           = data.nextRecId         || 1;
-  if (data.deudas)              deudas              = data.deudas            || [];
-  if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId       || 1;
-  if (data.presupuesto)         PRESUPUESTO         = data.presupuesto;
-  saveLocal();
-  actualizarSelectCuentas(); actualizarSelectMotivos();
-  closeModal('modal-backup-confirm');
-  window._backupPendiente = null;
-  showTab('menu');
-  renderMenu();
-  showToast('Backup restaurado ✓');
-}
-
-// Exportar backup a Excel (además del JSON)
+// Exportar reporte a Excel
 function exportarBackupExcel() {
   if (typeof XLSX === 'undefined') { showToast('Cargando...'); return; }
   const wb  = XLSX.utils.book_new();
@@ -4122,14 +4054,14 @@ async function abrirAjustes() {
   const apiEl = document.getElementById('ajuste-sqlite-api');
   if (apiEl) apiEl.value = localStorage.getItem('sqliteApiBase') || '';
   const modoViaje = document.getElementById('ajuste-modo-viaje');
-  const deviceIdEl = document.getElementById('supabase-device-id');
+  const deviceIdEl = document.getElementById('sync-device-id');
   const userEl = document.getElementById('ajuste-usuario-actual');
   const roleEl = document.getElementById('ajuste-usuario-rol');
   const workspaceEl = document.getElementById('ajuste-workspace');
   const workspaceField = document.getElementById('ajuste-workspace-field');
   const adminUsersField = document.getElementById('ajuste-admin-users-field');
   if (modoViaje) modoViaje.checked = isTravelMode();
-  if (deviceIdEl) deviceIdEl.textContent = getSupabaseDeviceId();
+  if (deviceIdEl) deviceIdEl.textContent = getSyncDeviceId();
   if (userEl) userEl.textContent = currentUser()?.email || 'Sin sesión';
   if (roleEl) roleEl.textContent = `Rol: ${isAppAdmin() ? 'Admin' : 'Usuario'}`;
   if (workspaceField) workspaceField.style.display = isAppAdmin() ? 'block' : 'none';
@@ -4164,12 +4096,12 @@ async function guardarAjustes() {
 
   const travelEl = document.getElementById('ajuste-modo-viaje');
   const workspaceEl = document.getElementById('ajuste-workspace');
-  localStorage.setItem('supabaseEnabled','1');
+  localStorage.setItem('serverSyncEnabled','1');
   ['git'+'hubToken', 'git'+'hubDisabled', 'git'+'hubSha'].forEach(k => localStorage.removeItem(k));
   if (travelEl) travelEl.checked ? localStorage.setItem('modoViaje','1') : localStorage.removeItem('modoViaje');
 
   // Dispositivo nuevo O sin datos: forzar descarga remota
-  const esNuevo = (!localStorage.getItem('lastSync') && !localStorage.getItem('lastSyncSupabase')) || gastos.length === 0;
+  const esNuevo = (!localStorage.getItem('lastSync') && !localStorage.getItem('lastRemoteSync')) || gastos.length === 0;
   closeModal('modal-ajustes');
 
   if (workspaceEl?.value && workspaceEl.value !== currentWorkspaceId()) {
@@ -4184,7 +4116,7 @@ async function guardarAjustes() {
     renderMenu();
     mostrarEstadoSync(false);
     showToast('Modo viaje activo: sync automatico pausado');
-  } else if (esNuevo && usingSupabase()) {
+  } else if (esNuevo && usingRemoteSync()) {
     // Dispositivo nuevo: descargar PRIMERO, luego guardar local
     syncBloqueado = true;
     clearTimeout(window._autoSyncTimer);
@@ -4192,7 +4124,7 @@ async function guardarAjustes() {
 
     let ok = false;
     // force=true: ignorar timestamps, bajar el mas reciente sin importar device_id
-    ok = await downloadSupabase(true);
+    ok = await downloadRemote(true);
 
     syncBloqueado = false;
     // saveLocal con sync bloqueado para no disparar upload
@@ -4207,7 +4139,7 @@ async function guardarAjustes() {
     syncBloqueado = true;
     saveLocal();
     syncBloqueado = false;
-    if (usingSupabase() && navigator.onLine) await uploadSupabase();
+    if (usingRemoteSync() && navigator.onLine) await uploadRemote();
     renderMenu();
     showToast('Ajustes guardados ✓');
   }
@@ -4702,7 +4634,7 @@ function onAhorroTouchEnd(e, id) {
 
 // ── Indicador de sync pendiente ───────────────────────────────
 function gastoPendienteSync(g) {
-  if (!usingSupabase() || !g.updatedAt) return false;
+  if (!usingRemoteSync() || !g.updatedAt) return false;
   const lastSync = new Date(localStorage.getItem('lastSync')||0).getTime();
   return new Date(g.updatedAt).getTime() > lastSync;
 }
@@ -6429,7 +6361,7 @@ function aplicarVisibilidadAhorros() {
 
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
-  await refreshSupabaseSession();
+  await refreshServerSession();
   try { loadFromLocal(); } catch(e) { console.error('Error cargando datos:', e); }
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
@@ -6443,7 +6375,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Inicializar IndexedDB (no crítico, en segundo plano)
   try { if (window.DB) DB.migrar(); } catch(e) {}
 
-  if (!usingSupabaseAuth()) {
+  if (!usingServerAuth()) {
     mostrarEstadoSync(false, 'error');
     openModal('modal-auth');
     return;
@@ -6461,14 +6393,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   iniciarAutoSync();
   if (isTravelMode()) {
     mostrarEstadoSync(false);
-  } else if (usingSupabase() && navigator.onLine) {
+  } else if (usingRemoteSync() && navigator.onLine) {
     const repairKey = workspaceStorageKey('syncRepairVersion');
     const needsSyncRepair = localStorage.getItem(repairKey) !== SYNC_REPAIR_VERSION;
     if (needsSyncRepair) {
-      localStorage.removeItem(workspaceStorageKey('supabaseStructuredDeleted'));
-      localStorage.removeItem(workspaceStorageKey('supabaseStructuredDirty'));
+      localStorage.removeItem(workspaceStorageKey('structuredDeleted'));
+      localStorage.removeItem(workspaceStorageKey('structuredDirty'));
     }
-    downloadSupabase(needsSyncRepair).then(async ok => {
+    downloadRemote(needsSyncRepair).then(async ok => {
       if (ok && needsSyncRepair) localStorage.setItem(repairKey, SYNC_REPAIR_VERSION);
       // Re-renderizar siempre con los datos más frescos
       actualizarSelectCuentas();
@@ -6480,7 +6412,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       const lm = new Date(localStorage.getItem('localModified')||0).getTime();
       const ls = new Date(localStorage.getItem('lastSync')||0).getTime();
       if (lm > 0 && ls > 0 && lm > ls + 3000) {
-        const up = await uploadSupabase();
+        const up = await uploadRemote();
         if (up) {
           const ts = new Date().toISOString();
           localStorage.setItem('lastSync', ts);
