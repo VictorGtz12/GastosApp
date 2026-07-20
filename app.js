@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.60';
+const APP_VERSION = 'v2.61';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -1665,6 +1665,18 @@ function limpiarHistorialSync() {
 
 function saveData(opts = {}) { saveLocal(); }
 
+function refrescarVistasDespuesDeCambio(tab = tabActualGlobal) {
+  renderMenu();
+  if (tab === 'gastos') renderGastos();
+  else if (tab === 'externos') renderExternos();
+  else if (tab === 'cortes') renderCortes();
+  else if (tab === 'ahorros') renderAhorros();
+  else if (tab === 'dashboard') renderDashboard();
+  else if (tab === 'historico') renderHistorico();
+  else if (tab === 'recurrentes') renderRecurrentes();
+  else if (tab === 'conciliacion') renderConciliacion();
+}
+
 async function refreshData() {
   if (!requireAuth()) return;
   await ensureUserProfile();
@@ -2092,6 +2104,7 @@ function saveLocal() {
         return;
       }
       clearTimeout(window._autoSyncTimer);
+      if (usingRemoteSync()) mostrarEstadoSync(false, 'subiendo');
       window._autoSyncTimer = setTimeout(async () => {
         if (isTravelMode() || !navigator.onLine) return;
         // Dispositivo nuevo: no subir hasta que se descargue primero
@@ -2115,7 +2128,7 @@ function saveLocal() {
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'flex';
         }
-      }, 50); // casi inmediato, sin bloquear el render del guardado
+      }, 0); // inmediato, sin bloquear el render del guardado
     }
   } catch(e) {
     console.warn('saveLocal error:', e);
@@ -3636,6 +3649,7 @@ async function guardarGasto() {
     resetForm(); editingId=null;
     saveLocal();
     showTab('historico');
+    refrescarVistasDespuesDeCambio('historico');
     showToast('Gasto del historial actualizado ✓');
     return;
   }
@@ -3682,6 +3696,7 @@ async function guardarGasto() {
   window._desdeConciliador = null;
   resetForm(); editingId=null;
   showTab(_volverConcil ? 'conciliacion' : 'gastos');
+  refrescarVistasDespuesDeCambio(_volverConcil ? 'conciliacion' : 'gastos');
   showToast('Gasto guardado ✓');
 }
 
@@ -3712,6 +3727,7 @@ function _confirmarGuardarGastoConRevertAhorro() {
   resetForm();
   editingId = null;
   showTab(pending._volverConcil ? 'conciliacion' : 'gastos');
+  refrescarVistasDespuesDeCambio(pending._volverConcil ? 'conciliacion' : 'gastos');
   showToast('Gasto guardado ✓');
 }
 
