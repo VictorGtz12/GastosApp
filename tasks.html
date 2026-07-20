@@ -361,6 +361,17 @@ const COLORES = ['#6c63ff','#ff5e7a','#22d3a5','#ff9f43','#a78bfa','#06b6d4','#f
 const SUPABASE_URL = 'https://iskzbiozycpvnkkverfg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
 
+function sqliteApiBase() {
+  const configured = (localStorage.getItem('sqliteApiBase') || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
+  return '';
+}
+
+function usingSqliteApi() {
+  return !!sqliteApiBase() && localStorage.getItem('syncProvider') !== 'supabase';
+}
+
 // ── Init ─────────────────────────────────────────────────────
 async function init() {
   await refreshTaskSession();
@@ -389,6 +400,23 @@ function setSupabaseAuth(auth) {
 }
 
 async function taskAuthFetch(path, body) {
+  if (usingSqliteApi()) {
+    const headers = { 'Content-Type': 'application/json' };
+    let endpoint = '/auth/login';
+    if (path.includes('refresh_token')) {
+      endpoint = '/auth/refresh';
+      headers.Authorization = 'Bearer ' + (getSupabaseAuth()?.access_token || '');
+    }
+    const res = await fetch(`${sqliteApiBase()}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
+    localStorage.setItem('syncProvider', 'sqlite');
+    return data;
+  }
   const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
@@ -1025,6 +1053,16 @@ function taskHeaders(extra = {}) {
   return { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + (auth?.access_token || SUPABASE_KEY), ...extra };
 }
 async function taskFetch(path, opts = {}) {
+  if (usingSqliteApi()) {
+    const auth = getSupabaseAuth();
+    const headers = {
+      ...(opts.headers || {}),
+      'Authorization': 'Bearer ' + (auth?.access_token || '')
+    };
+    const res = await fetch(`${sqliteApiBase()}/rest/${path}`, { ...opts, headers });
+    if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+    return res;
+  }
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers: taskHeaders(opts.headers || {}) });
   if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
   return res;
@@ -1041,9 +1079,21 @@ function markTaskDeleted(kind, id) {
   deleted[kind] = [row, ...deleted[kind].filter(x => x.id !== row.id)].slice(0, 300);
   setTaskDeleted(deleted);
 }
+function taskRowUpdatedMs(row) {
+  return new Date(row?.updated_at || row?.data?.updatedAt || 0).getTime() || 0;
+}
+function dedupeTaskRows(rows) {
+  const byKey = new Map();
+  (rows || []).forEach(row => {
+    const key = `${row.workspace_id || taskWorkspaceId()}::${row.id}`;
+    const existing = byKey.get(key);
+    if (!existing || taskRowUpdatedMs(row) >= taskRowUpdatedMs(existing)) byKey.set(key, row);
+  });
+  return [...byKey.values()];
+}
 async function taskUpsert(table, rows) {
   if (!rows.length) return;
-  const scopedRows = rows.map(r => ({ ...r, workspace_id: r.workspace_id || taskWorkspaceId() }));
+  const scopedRows = dedupeTaskRows(rows.map(r => ({ ...r, workspace_id: r.workspace_id || taskWorkspaceId() })));
   await taskFetch(`${table}?on_conflict=workspace_id,id`, {
     method:'POST',
     headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},
@@ -1052,7 +1102,7 @@ async function taskUpsert(table, rows) {
 }
 async function taskSoftDelete(table, rows) {
   const done = [];
-  for (const row of rows || []) {
+  for (const row of dedupeTaskRows((rows || []).map(r => ({ ...r, workspace_id: taskWorkspaceId() })))) {
     await taskFetch(`${table}?workspace_id=eq.${encodeURIComponent(taskWorkspaceId())}&id=eq.${encodeURIComponent(row.id)}`, {
       method:'PATCH',
       headers:{'Content-Type':'application/json','Prefer':'return=minimal'},

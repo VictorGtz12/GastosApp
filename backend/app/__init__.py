@@ -1,0 +1,1 @@
+"""GastosApp FastAPI backend."""

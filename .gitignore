@@ -1,2 +1,7 @@
 datos.json
 backups/*.json
+backend/data/*.sqlite
+backend/data/*.sqlite-*
+backend/.venv/
+__pycache__/
+*.pyc

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.54';
+const APP_VERSION = 'v2.56';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -147,6 +147,34 @@ function hasPendingSync() {
 const SUPABASE_URL  = 'https://iskzbiozycpvnkkverfg.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_VXLcIr88JZDRMn7-k7XJUw_y4k9nceQ';
 const SUPABASE_STRUCTURED_SCHEMA = 1;
+
+function sqliteApiBase() {
+  const configured = (localStorage.getItem('sqliteApiBase') || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
+  return '';
+}
+
+function usingSqliteApi() {
+  return !!sqliteApiBase() && localStorage.getItem('syncProvider') !== 'supabase';
+}
+
+function syncRemoteLabel() {
+  return usingSqliteApi() ? 'Servidor SQLite' : 'Supabase';
+}
+
+async function sqliteApiFetch(path, opts = {}) {
+  const base = sqliteApiBase();
+  if (!base) throw new Error('Servidor SQLite no configurado');
+  const auth = getSupabaseAuth();
+  const headers = {
+    ...(opts.headers || {}),
+    'Authorization': `Bearer ${auth?.access_token || ''}`
+  };
+  const res = await fetch(`${base}${path}`, { ...opts, headers });
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+  return res;
+}
 
 function getSupabaseDeviceId() {
   let id = localStorage.getItem('supabaseDeviceId');
@@ -347,6 +375,32 @@ function authUserName(displayName = '') {
 }
 
 async function supabaseAuthFetch(path, body) {
+  if (usingSqliteApi()) {
+    let endpoint = '/auth/login';
+    let payload = body || {};
+    const headers = { 'Content-Type': 'application/json' };
+    if (path.includes('refresh_token')) {
+      endpoint = '/auth/refresh';
+      headers.Authorization = `Bearer ${getSupabaseAuth()?.access_token || ''}`;
+    } else if (path === 'signup') {
+      endpoint = '/admin/users';
+      headers.Authorization = `Bearer ${getSupabaseAuth()?.access_token || ''}`;
+      payload = {
+        email: body?.email,
+        password: body?.password,
+        display_name: body?.data?.display_name || body?.email
+      };
+    }
+    const res = await fetch(`${sqliteApiBase()}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
+    localStorage.setItem('syncProvider', 'sqlite');
+    return data;
+  }
   const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
     method: 'POST',
     headers: {
@@ -548,6 +602,9 @@ function requireAuth() {
 }
 
 async function sbFetch(path, opts = {}) {
+  if (usingSqliteApi()) {
+    return sqliteApiFetch(`/rest/${path}`, opts);
+  }
   const headers = sbHeaders(opts.headers || {});
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...opts, headers });
   if (res.status === 404 || res.status === 400) {
@@ -972,17 +1029,6 @@ async function uploadSupabaseStructured(opts = {}) {
       return false;
     }
 
-    await Promise.all([
-      sbUpsert('gs_gastos', payload.gastos),
-      sbUpsert('gs_cuentas', payload.cuentas),
-      sbUpsert('gs_catalogos', payload.catalogos),
-      sbUpsert('gs_cuentas_ahorro', payload.cuentasAhorro),
-      sbUpsert('gs_movimientos_ahorro', payload.movimientosAhorro),
-      sbUpsert('gs_recurrentes', payload.recurrentes),
-      sbUpsert('gs_deudas', payload.deudas),
-      sbUpsert('gs_app_settings', [payload.settings])
-    ]);
-
     const deleteMap = {
       gastos: 'gs_gastos',
       cuentasAhorro: 'gs_cuentas_ahorro',
@@ -992,10 +1038,30 @@ async function uploadSupabaseStructured(opts = {}) {
       cuentas: 'gs_cuentas',
       catalogos: 'gs_catalogos'
     };
-    const deleteResults = await Promise.all(Object.entries(deleteMap).map(async ([key, table]) => ({
-      key,
-      done: await sbSoftDelete(table, deleted[key] || [])
-    })));
+    let deleteResults = [];
+    if (usingSqliteApi()) {
+      await sqliteApiFetch('/sync/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: currentWorkspaceId(), payload, deleted })
+      });
+      deleteResults = Object.keys(deleteMap).map(key => ({ key, done: (deleted[key] || []).map(r => r.id) }));
+    } else {
+      await Promise.all([
+        sbUpsert('gs_gastos', payload.gastos),
+        sbUpsert('gs_cuentas', payload.cuentas),
+        sbUpsert('gs_catalogos', payload.catalogos),
+        sbUpsert('gs_cuentas_ahorro', payload.cuentasAhorro),
+        sbUpsert('gs_movimientos_ahorro', payload.movimientosAhorro),
+        sbUpsert('gs_recurrentes', payload.recurrentes),
+        sbUpsert('gs_deudas', payload.deudas),
+        sbUpsert('gs_app_settings', [payload.settings])
+      ]);
+      deleteResults = await Promise.all(Object.entries(deleteMap).map(async ([key, table]) => ({
+        key,
+        done: await sbSoftDelete(table, deleted[key] || [])
+      })));
+    }
     deleteResults.forEach(({ key, done }) => {
       if (done.length) clearStructuredDeleted(key, done);
     });
@@ -1041,16 +1107,31 @@ async function downloadSupabaseStructured(force = false) {
   if (!supabaseStructuredReady()) return false;
   mostrarEstadoSync(false, 'descargando');
   try {
-    const [gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows] = await Promise.all([
-      sbSelect('gs_gastos', 'select=id,estado,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_cuentas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_catalogos', 'select=id,tipo,valor,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_cuentas_ahorro', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_movimientos_ahorro', 'select=id,cuenta_id,mov_id,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_recurrentes', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_deudas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-      sbSelect('gs_app_settings', 'select=id,data,updated_at&id=eq.main&limit=1')
-    ]);
+    let gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows;
+    if (usingSqliteApi()) {
+      const res = await sqliteApiFetch(`/sync/download?workspace_id=${encodeURIComponent(currentWorkspaceId())}`);
+      const remote = await res.json();
+      const tables = remote.tables || {};
+      gRows = tables.gs_gastos || [];
+      cRows = tables.gs_cuentas || [];
+      catRows = tables.gs_catalogos || [];
+      caRows = tables.gs_cuentas_ahorro || [];
+      movRows = tables.gs_movimientos_ahorro || [];
+      recRows = tables.gs_recurrentes || [];
+      deudaRows = tables.gs_deudas || [];
+      settingsRows = tables.gs_app_settings || [];
+    } else {
+      [gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows] = await Promise.all([
+        sbSelect('gs_gastos', 'select=id,estado,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_cuentas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_catalogos', 'select=id,tipo,valor,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_cuentas_ahorro', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_movimientos_ahorro', 'select=id,cuenta_id,mov_id,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_recurrentes', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_deudas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
+        sbSelect('gs_app_settings', 'select=id,data,updated_at&id=eq.main&limit=1')
+      ]);
+    }
 
     const hasRemote = gRows.length || cRows.length || caRows.length || settingsRows.length;
     if (!hasRemote) return false;
@@ -1165,7 +1246,7 @@ function showSyncConflict(info) {
   const remoteTime = info.remoteLatest ? new Date(info.remoteLatest).toLocaleString('es-MX') : '—';
   body.innerHTML = `
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">
-      El cache de este dispositivo parece más reciente que Supabase. Revisa diferencias antes de decidir.
+      El cache de este dispositivo parece más reciente que ${syncRemoteLabel()}. Revisa diferencias antes de decidir.
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
@@ -1173,7 +1254,7 @@ function showSyncConflict(info) {
         <div style="font-size:12px;color:var(--text2)">${localTime}</div>
       </div>
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
-        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Supabase</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">${syncRemoteLabel()}</div>
         <div style="font-size:12px;color:var(--text2)">${remoteTime}</div>
       </div>
     </div>
@@ -1201,7 +1282,7 @@ async function resolverSyncConflict(accion) {
       renderMenu();
       showTab(tabActualGlobal);
       mostrarEstadoSync(true);
-      showToast('Datos descargados desde Supabase ✓');
+      showToast(`Datos descargados desde ${syncRemoteLabel()} ✓`);
     }
     return;
   }
@@ -1209,7 +1290,7 @@ async function resolverSyncConflict(accion) {
     guardarBackupMinimo('antes-subir-conflicto');
     queueSyncOperation('snapshot', { reason: 'resolver-conflicto-subir-local' });
     const ok = await uploadSupabaseStructured({ full: true });
-    showToast(ok ? 'Cache local subido a Supabase ✓' : 'No se pudo subir cache local');
+    showToast(ok ? `Cache local subido a ${syncRemoteLabel()} ✓` : 'No se pudo subir cache local');
   }
 }
 
@@ -1343,7 +1424,7 @@ function verHistorialSync() {
       const dia   = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
       const icono = h.tipo === 'subida' ? '⬆️' : '⬇️';
       const color = h.tipo === 'subida' ? 'var(--accent2)' : 'var(--green)';
-      const fuenteLabel = 'Supabase';
+      const fuenteLabel = syncRemoteLabel();
       const accion = h.tipo === 'subida' ? 'Subida' : 'Descarga';
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:10px">
@@ -1390,7 +1471,7 @@ function syncQueueItems() {
   });
   const deleted = getStructuredDeleted();
   Object.entries(deleted).forEach(([key, rows]) => {
-    if ((rows || []).length) items.push({ title: `Eliminaciones: ${pendingSyncLabel(key)}`, sub: `${rows.length} registro(s) por borrar en Supabase`, detail: rows.map(r => r.id).slice(0, 8).join(', ') });
+    if ((rows || []).length) items.push({ title: `Eliminaciones: ${pendingSyncLabel(key)}`, sub: `${rows.length} registro(s) por borrar en ${syncRemoteLabel()}`, detail: rows.map(r => r.id).slice(0, 8).join(', ') });
   });
   gastos.concat(historico).filter(g => g.updatedAt && new Date(g.updatedAt).getTime() > lastSync + 1000).slice(0, 30).forEach(g => {
     items.push({
@@ -3717,7 +3798,7 @@ async function hacerCorte() {
         const remoteRows = await sbSelect('gs_gastos', 'select=id,estado,deleted_at&estado=neq.historico&deleted_at=is.null&limit=1');
         if (remoteRows.length) {
           mostrarEstadoSync(false, 'error');
-          showToast('Corte local hecho, pero Supabase aún tiene activos');
+          showToast(`Corte local hecho, pero ${syncRemoteLabel()} aún tiene activos`);
           return;
         }
       }
@@ -4038,6 +4119,8 @@ async function abrirAjustes() {
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
+  const apiEl = document.getElementById('ajuste-sqlite-api');
+  if (apiEl) apiEl.value = localStorage.getItem('sqliteApiBase') || '';
   const modoViaje = document.getElementById('ajuste-modo-viaje');
   const deviceIdEl = document.getElementById('supabase-device-id');
   const userEl = document.getElementById('ajuste-usuario-actual');
@@ -4068,6 +4151,16 @@ async function guardarAjustes() {
   // Guardar config directamente en localStorage sin disparar autoSync
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) { const v = wu.value.trim(); v ? localStorage.setItem('workerUrl', v) : localStorage.removeItem('workerUrl'); }
+  const apiEl = document.getElementById('ajuste-sqlite-api');
+  if (apiEl) {
+    const apiUrl = apiEl.value.trim().replace(/\/+$/, '');
+    if (apiUrl) {
+      localStorage.setItem('sqliteApiBase', apiUrl);
+      localStorage.setItem('syncProvider', 'sqlite');
+    } else {
+      localStorage.removeItem('sqliteApiBase');
+    }
+  }
 
   const travelEl = document.getElementById('ajuste-modo-viaje');
   const workspaceEl = document.getElementById('ajuste-workspace');

@@ -14,7 +14,7 @@ App web para control de gastos con tarjetas de crédito, ahorros y servicios rec
 - Gastos externos (por cobrar / cobrados)
 - Historial y resumen mensual
 - Búsqueda global
-- Sincronización estructurada con Supabase (multi-dispositivo)
+- Sincronización estructurada con FastAPI + SQLite (multi-dispositivo)
 - Modo oscuro / claro / Revolut
 - Exportar a Excel y backup JSON
 - Conciliación bancaria con estado de cuenta PDF o imagen
@@ -167,7 +167,58 @@ Publica la carpeta en cualquier hosting estático compatible con HTML, CSS y JS.
 
 ---
 
-## Sincronización con Supabase
+## Sincronización con SQLite / FastAPI
+
+La app ya puede correr fuera de GitHub/Supabase usando un backend FastAPI con
+SQLite. El backend se sirve en otro puerto para convivir con otros proyectos en
+el mismo servidor, por ejemplo:
+
+```text
+http://45.76.0.95:8010
+```
+
+La base SQLite no se sube a git. El archivo queda en:
+
+```text
+backend/data/gastosapp.sqlite
+```
+
+Documentación de despliegue:
+
+```text
+backend/README.md
+```
+
+### Comportamiento del sync SQLite
+
+| Evento | Acción |
+|--------|--------|
+| Guardar un gasto | Guarda local e intenta subir al servidor en segundo plano |
+| Abrir la app | Descarga cambios remotos desde SQLite |
+| Subida | El backend aplica cambios en transacción y deduplica por `workspace_id + id` |
+| Sin internet | Guarda local, sube al reconectarse |
+
+### Migración desde Supabase
+
+El export completo usado para migrar está en:
+
+```text
+backups/supabase-full-export-20260719-213406.json
+```
+
+Para regenerar SQLite:
+
+```bash
+python3 backend/scripts/migrate_supabase_export.py \
+  --export backups/supabase-full-export-20260719-213406.json \
+  --db backend/data/gastosapp.sqlite \
+  --replace \
+  --admin-password "TU_CONTRASENA_NUEVA"
+```
+
+---
+
+## Sincronización con Supabase (modo anterior / fallback)
 
 La app usa tablas estructuradas en Supabase. No sube un JSON gigante como fuente
 principal de datos.
@@ -264,7 +315,8 @@ usuario. Cada usuario tiene su perfil en `app_users` y una base personal en
 ## Tecnologías
 
 - HTML + CSS + JS puro (sin frameworks)
-- Supabase REST API para sync estructurado
+- FastAPI + SQLite para sync estructurado
+- Supabase REST API como origen migrado / fallback temporal
 - PDF.js para extracción de texto
 - SheetJS para Excel
 - Cloudflare Workers + Anthropic API para conciliación con IA
