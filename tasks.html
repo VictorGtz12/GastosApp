@@ -361,8 +361,6 @@ let taskSyncBlocked = false;
 const COLORES = ['#6c63ff','#ff5e7a','#22d3a5','#ff9f43','#a78bfa','#06b6d4','#f472b6','#ffd166'];
 const DEFAULT_SQLITE_API = 'http://45.76.0.95:8010/api';
 function sqliteApiBase() {
-  const configured = (localStorage.getItem('sqliteApiBase') || '').trim();
-  if (configured) return configured.replace(/\/+$/, '');
   if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
   return DEFAULT_SQLITE_API;
 }

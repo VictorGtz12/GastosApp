@@ -295,7 +295,7 @@
       <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Cerrar sesión
     </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.59</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.60</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -662,7 +662,8 @@
     <div class="modal-actions">
       <button class="mbtn sec" onclick="closeModal('modal-sync-conflict')">Decidir luego</button>
       <button class="mbtn" onclick="resolverSyncConflict('download')">Usar servidor</button>
-      <button class="mbtn danger" onclick="resolverSyncConflict('upload')">Subir este dispositivo</button>
+      <button class="mbtn" onclick="resolverSyncConflict('merge')">Conservar ambos</button>
+      <button class="mbtn danger" onclick="resolverSyncConflict('upload')">Usar este dispositivo</button>
     </div>
   </div>
 </div>
@@ -831,11 +832,6 @@
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Opcional — permite conciliar PDFs automáticamente con IA</div>
     </div>
     <div class="field">
-      <label>Servidor SQLite API</label>
-      <input type="url" id="ajuste-sqlite-api" placeholder="http://45.76.0.95:8010/api" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Opcional si la app abre desde el mismo puerto 8010. Al guardarlo, la sync usará SQLite.</div>
-    </div>
-    <div class="field">
       <label>Usuario</label>
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:10px 12px">
         <div id="ajuste-usuario-actual" style="font-size:13px;color:var(--text);font-weight:600">Sin sesión</div>
@@ -976,7 +972,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="db.js?v=1"></script>
-<script src="app.js?v=20260720b"></script>
+<script src="app.js?v=20260720c"></script>
 <script async src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script async src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <!-- MODAL: Historial de versiones -->

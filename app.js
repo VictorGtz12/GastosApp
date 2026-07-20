@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.59';
+const APP_VERSION = 'v2.60';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -147,8 +147,6 @@ const REMOTE_STRUCTURED_SCHEMA = 1;
 const DEFAULT_SQLITE_API = 'http://45.76.0.95:8010/api';
 
 function sqliteApiBase() {
-  const configured = (localStorage.getItem('sqliteApiBase') || '').trim();
-  if (configured) return configured.replace(/\/+$/, '');
   if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
   return DEFAULT_SQLITE_API;
 }
@@ -758,12 +756,70 @@ function buildStructuredPayload() {
   };
 }
 
+function syncComparable(value) {
+  const normalize = v => {
+    if (Array.isArray(v)) return v.map(normalize);
+    if (v && typeof v === 'object') {
+      return Object.keys(v).sort().reduce((acc, key) => {
+        if (key.startsWith('_')) return acc;
+        acc[key] = normalize(v[key]);
+        return acc;
+      }, {});
+    }
+    return v;
+  };
+  return JSON.stringify(normalize(value || {}));
+}
+
+function syncItem(id, label, data, updatedAt = '') {
+  return { id: String(id ?? ''), label: String(label || id || 'Sin ID'), data: data || {}, updatedAt: updatedAt || data?.updatedAt || '' };
+}
+
+function gastoSyncLabel(g, estado = '') {
+  return `#${g?.id ?? '?'} · ${g?.fecha || 'sin fecha'} · ${g?.cuenta || 'sin cuenta'} · ${g?.motivo || 'sin motivo'} · ${fmt(Number(g?.cantidad || 0))}${estado ? ` · ${estado}` : ''}`;
+}
+
+function ahorroSyncLabel(c) {
+  return `${c?.nombre || 'Ahorro'} · ${fmt(saldoCuenta(c || {}))} · ${(c?.movimientos || []).length} mov.`;
+}
+
+function movimientoSyncLabel(m, cuenta = '') {
+  return `${cuenta || m?.cuentaId || 'Ahorro'} · ${m?.fecha || 'sin fecha'} · ${m?.tipo || 'mov'} · ${fmt(Number(m?.cantidad || 0))} · ${m?.nota || ''}`;
+}
+
+function compareSyncItems(localItems = [], remoteItems = []) {
+  const localMap = new Map(localItems.map(item => [String(item.id), item]));
+  const remoteMap = new Map(remoteItems.map(item => [String(item.id), item]));
+  const localOnly = [];
+  const remoteOnly = [];
+  const different = [];
+  localMap.forEach((local, id) => {
+    const remote = remoteMap.get(id);
+    if (!remote) localOnly.push(local);
+    else if (syncComparable(local.data) !== syncComparable(remote.data)) different.push({ id, local, remote });
+  });
+  remoteMap.forEach((remote, id) => {
+    if (!localMap.has(id)) remoteOnly.push(remote);
+  });
+  return { localOnly, remoteOnly, different };
+}
+
 function summarizeSnapshotForSync(snap = buildSnapshot()) {
   const savings = (snap.cuentasAhorro || []).map(c => ({
     id: c.id,
     nombre: c.nombre,
     movimientos: (c.movimientos || []).length,
     saldo: Number(saldoCuenta(c).toFixed(2))
+  }));
+  const gastosItems = [
+    ...(snap.gastos || []).map(g => syncItem(g.id, gastoSyncLabel(g, 'activo'), g, g.updatedAt)),
+    ...(snap.historico || []).map(g => syncItem(g.id, gastoSyncLabel(g, 'histórico'), g, g.updatedAt))
+  ];
+  const ahorroItems = (snap.cuentasAhorro || []).map(c => syncItem(c.id, ahorroSyncLabel(c), c, c.updatedAt));
+  const movItems = [];
+  (snap.cuentasAhorro || []).forEach(c => (c.movimientos || []).forEach((m, idx) => {
+    const id = structuredMovimientoRowId(c.id, m, idx);
+    movItems.push(syncItem(id, movimientoSyncLabel(m, c.nombre), { ...m, cuentaId: c.id }, m.updatedAt));
   }));
   return {
     gastosActivos: (snap.gastos || []).length,
@@ -773,11 +829,18 @@ function summarizeSnapshotForSync(snap = buildSnapshot()) {
     movimientosAhorro: savings.reduce((s, c) => s + c.movimientos, 0),
     saldoAhorro: Number(savings.reduce((s, c) => s + c.saldo, 0).toFixed(2)),
     nextId: snap.nextId,
-    nextMovId: snap.nextMovId
+    nextMovId: snap.nextMovId,
+    details: {
+      gastos: gastosItems,
+      ahorros: ahorroItems,
+      movimientosAhorro: movItems,
+      recurrentes: (snap.recurrentes || []).map(r => syncItem(r.id, `${r.nombre || 'Recurrente'} · ${r.cuenta || 'sin cuenta'} · ${fmt(Number(r.cantidad || 0))}`, r, r.updatedAt)),
+      deudas: (snap.deudas || []).map(d => syncItem(d.id, `${d.nombre || 'Deuda'} · ${d.cuenta || 'sin cuenta'} · ${fmt(Number(d.total || d.cantidad || 0))}`, d, d.updatedAt))
+    }
   };
 }
 
-function summarizeRemoteRows(gRows, caRows, movRows, settingsRows) {
+function summarizeRemoteRows(gRows, caRows, movRows, settingsRows, recRows = [], deudaRows = []) {
   const activeGastos = gRows.filter(r => !r.deleted_at && r.estado !== 'historico');
   const histGastos = gRows.filter(r => !r.deleted_at && r.estado === 'historico');
   const activeMovs = movRows.filter(r => !r.deleted_at);
@@ -787,6 +850,7 @@ function summarizeRemoteRows(gRows, caRows, movRows, settingsRows) {
     return sum + ((m.tipo === 'abono' || m.tipo === 'traspaso-in') ? amount : -amount);
   }, 0);
   const settings = settingsRows[0]?.data || {};
+  const ahorroNames = new Map(caRows.filter(r => !r.deleted_at).map(r => [String(r.id), r.data?.nombre || r.id]));
   return {
     gastosActivos: activeGastos.length,
     historico: histGastos.length,
@@ -795,7 +859,14 @@ function summarizeRemoteRows(gRows, caRows, movRows, settingsRows) {
     movimientosAhorro: activeMovs.length,
     saldoAhorro: Number(saldoAhorro.toFixed(2)),
     nextId: settings.nextId || 0,
-    nextMovId: settings.nextMovId || 0
+    nextMovId: settings.nextMovId || 0,
+    details: {
+      gastos: gRows.filter(r => !r.deleted_at).map(r => syncItem(r.id, gastoSyncLabel(r.data || {}, r.estado === 'historico' ? 'histórico' : 'activo'), { ...(r.data || {}), _estado: r.estado }, r.updated_at)),
+      ahorros: caRows.filter(r => !r.deleted_at).map(r => syncItem(r.id, `${r.data?.nombre || 'Ahorro'} · ${(r.data?.movimientos || []).length || 0} mov.`, r.data || {}, r.updated_at)),
+      movimientosAhorro: movRows.filter(r => !r.deleted_at).map(r => syncItem(r.id, movimientoSyncLabel(r.data || {}, ahorroNames.get(String(r.cuenta_id))), r.data || {}, r.updated_at)),
+      recurrentes: recRows.filter(r => !r.deleted_at).map(r => syncItem(r.id, `${r.data?.nombre || 'Recurrente'} · ${r.data?.cuenta || 'sin cuenta'} · ${fmt(Number(r.data?.cantidad || 0))}`, r.data || {}, r.updated_at)),
+      deudas: deudaRows.filter(r => !r.deleted_at).map(r => syncItem(r.id, `${r.data?.nombre || 'Deuda'} · ${r.data?.cuenta || 'sin cuenta'} · ${fmt(Number(r.data?.total || r.data?.cantidad || 0))}`, r.data || {}, r.updated_at))
+    }
   };
 }
 
@@ -813,6 +884,53 @@ function diffSyncSummaries(local, remote) {
   return Object.keys(labels)
     .filter(k => String(local[k]) !== String(remote[k]))
     .map(k => ({ key: k, label: labels[k], local: local[k], remote: remote[k] }));
+}
+
+function renderConflictSection(title, localItems = [], remoteItems = []) {
+  const diff = compareSyncItems(localItems, remoteItems);
+  const renderList = (label, items, color) => items.slice(0, 8).map(item => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;color:${color};font-weight:700;text-transform:uppercase">${label}</div>
+      <div style="font-size:12px;color:var(--text);line-height:1.35">${escapeHtml(item.label)}</div>
+      ${item.updatedAt ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${new Date(item.updatedAt).toLocaleString('es-MX')}</div>` : ''}
+    </div>`).join('');
+  const differentHtml = diff.different.slice(0, 6).map(pair => `
+    <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;color:var(--orange);font-weight:700;text-transform:uppercase">Diferente en ambos</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px">
+        <div>
+          <div style="font-size:10px;color:var(--text3)">Este dispositivo</div>
+          <div style="font-size:12px;color:var(--text)">${escapeHtml(pair.local.label)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3)">Servidor</div>
+          <div style="font-size:12px;color:var(--text)">${escapeHtml(pair.remote.label)}</div>
+        </div>
+      </div>
+    </div>`).join('');
+  const total = diff.localOnly.length + diff.remoteOnly.length + diff.different.length;
+  if (!total) return '';
+  return `
+    <div style="margin-top:12px;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:10px">
+      <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px">${title}</div>
+      ${renderList('Solo en este dispositivo', diff.localOnly, 'var(--orange)')}
+      ${renderList('Solo en servidor', diff.remoteOnly, 'var(--green)')}
+      ${differentHtml}
+      ${total > 8 ? `<div style="font-size:10px;color:var(--text3);margin-top:6px">Mostrando los primeros registros; hay ${total} diferencia(s) en esta sección.</div>` : ''}
+    </div>`;
+}
+
+function renderConflictDetails(local, remote) {
+  const localDetails = local.details || {};
+  const remoteDetails = remote.details || {};
+  const sections = [
+    ['Gastos', 'gastos'],
+    ['Cuentas de ahorro', 'ahorros'],
+    ['Movimientos de ahorro', 'movimientosAhorro'],
+    ['Servicios recurrentes', 'recurrentes'],
+    ['Deudas', 'deudas']
+  ].map(([label, key]) => renderConflictSection(label, localDetails[key] || [], remoteDetails[key] || [])).filter(Boolean);
+  return sections.length ? sections.join('') : '<div class="empty">No hay diferencias detalladas visibles; revisa los totales antes de decidir.</div>';
 }
 
 function validateStructuredPayload(payload, opts = {}) {
@@ -1043,7 +1161,7 @@ async function downloadStructuredSync(force = false) {
       console.warn('[Sync servidor estructurado] Local mas nuevo, no se descarga remoto viejo.');
       showSyncConflict({
         local: summarizeSnapshotForSync(),
-        remote: summarizeRemoteRows(gRows, caRows, movRows, settingsRows),
+        remote: summarizeRemoteRows(gRows, caRows, movRows, settingsRows, recRows, deudaRows),
         localModified,
         remoteLatest
       });
@@ -1144,7 +1262,7 @@ function showSyncConflict(info) {
   const remoteTime = info.remoteLatest ? new Date(info.remoteLatest).toLocaleString('es-MX') : '—';
   body.innerHTML = `
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">
-      El cache de este dispositivo parece más reciente que ${syncRemoteLabel()}. Revisa diferencias antes de decidir.
+      El cache de este dispositivo parece más reciente que ${syncRemoteLabel()}. Revisa qué existe en cada lugar antes de decidir.
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px">
@@ -1156,12 +1274,19 @@ function showSyncConflict(info) {
         <div style="font-size:12px;color:var(--text2)">${remoteTime}</div>
       </div>
     </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Resumen</div>
     ${diffs.length ? diffs.map(d => `
       <div style="display:grid;grid-template-columns:1.2fr .9fr .9fr;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
         <div style="font-size:12px;color:var(--text)">${d.label}</div>
         <div style="font-size:12px;color:var(--orange);text-align:right">${d.local}</div>
         <div style="font-size:12px;color:var(--green);text-align:right">${d.remote}</div>
       </div>`).join('') : '<div class="empty">No hay diferencias de conteo visibles.</div>'}
+    ${renderConflictDetails(info.local, info.remote)}
+    <div style="font-size:11px;color:var(--text3);line-height:1.45;margin-top:12px">
+      <strong>Usar servidor</strong> reemplaza este dispositivo con lo que hay en línea.
+      <strong>Usar este dispositivo</strong> sube tu cache local y pisa el servidor.
+      <strong>Conservar ambos</strong> baja servidor y agrega lo local que no exista allá.
+    </div>
   `;
   openModal('modal-sync-conflict');
   mostrarEstadoSync(false, 'conflict');
@@ -1184,12 +1309,128 @@ async function resolverSyncConflict(accion) {
     }
     return;
   }
+  if (accion === 'merge') {
+    const localSnap = buildSnapshot();
+    syncBloqueado = true;
+    const okDown = await downloadStructuredSync(true);
+    syncBloqueado = false;
+    if (!okDown) {
+      showToast('No se pudo bajar servidor para combinar');
+      return;
+    }
+    mergeLocalSnapshotIntoCurrent(localSnap);
+    guardarBackupMinimo('despues-combinar-conflicto');
+    saveLocal();
+    const okUp = await uploadStructuredSync({ full: true });
+    actualizarSelectCuentas();
+    actualizarSelectMotivos();
+    renderMenu();
+    showTab(tabActualGlobal);
+    mostrarEstadoSync(!!okUp, okUp ? null : 'error');
+    showToast(okUp ? 'Se conservaron ambos y se sincronizó ✓' : 'Combinado local, falta subir');
+    return;
+  }
   if (accion === 'upload') {
     guardarBackupMinimo('antes-subir-conflicto');
     queueSyncOperation('snapshot', { reason: 'resolver-conflicto-subir-local' });
     const ok = await uploadStructuredSync({ full: true });
     showToast(ok ? `Cache local subido a ${syncRemoteLabel()} ✓` : 'No se pudo subir cache local');
   }
+}
+
+function cloneData(value) {
+  return JSON.parse(JSON.stringify(value || null));
+}
+
+function hasSameData(a, b) {
+  return syncComparable(a) === syncComparable(b);
+}
+
+function mergeGastosList(target, source) {
+  const byId = new Map(target.map(g => [String(g.id), g]));
+  source.forEach(item => {
+    const local = normGasto(cloneData(item));
+    const existing = byId.get(String(local.id));
+    if (!existing) {
+      target.push(local);
+      byId.set(String(local.id), local);
+      return;
+    }
+    if (!hasSameData(existing, local)) {
+      local.id = nextId++;
+      local.updatedAt = new Date().toISOString();
+      target.push(local);
+      byId.set(String(local.id), local);
+    }
+  });
+}
+
+function mergeSimpleById(target, source, nextSetter) {
+  const byId = new Map(target.map(x => [String(x.id), x]));
+  source.forEach(item => {
+    const copy = cloneData(item);
+    const existing = byId.get(String(copy.id));
+    if (!existing) {
+      target.push(copy);
+      byId.set(String(copy.id), copy);
+      return;
+    }
+    if (!hasSameData(existing, copy)) {
+      copy.id = nextSetter();
+      copy.updatedAt = new Date().toISOString();
+      target.push(copy);
+      byId.set(String(copy.id), copy);
+    }
+  });
+}
+
+function mergeAhorros(localAhorros = []) {
+  const byId = new Map(cuentasAhorro.map(c => [String(c.id), c]));
+  localAhorros.forEach(localCuentaRaw => {
+    const localCuenta = normAhorro(cloneData(localCuentaRaw));
+    const remoteCuenta = byId.get(String(localCuenta.id));
+    if (!remoteCuenta) {
+      cuentasAhorro.push(localCuenta);
+      byId.set(String(localCuenta.id), localCuenta);
+      return;
+    }
+    const movKey = (m, idx) => String(m._syncId || m.uid || m.movId || idx);
+    const remoteMovs = new Map((remoteCuenta.movimientos || []).map((m, idx) => [movKey(m, idx), m]));
+    (localCuenta.movimientos || []).forEach((mov, idx) => {
+      const key = movKey(mov, idx);
+      const existing = remoteMovs.get(key);
+      if (!existing) {
+        remoteCuenta.movimientos.push(cloneData(mov));
+        return;
+      }
+      if (!hasSameData(existing, mov)) {
+        const copy = cloneData(mov);
+        copy.movId = nextMovId++;
+        copy.uid = makeLocalId('mov');
+        copy.updatedAt = new Date().toISOString();
+        remoteCuenta.movimientos.push(copy);
+      }
+    });
+    remoteCuenta.updatedAt = new Date().toISOString();
+  });
+}
+
+function mergeLocalSnapshotIntoCurrent(localSnap) {
+  mergeGastosList(gastos, localSnap.gastos || []);
+  mergeGastosList(historico, localSnap.historico || []);
+  mergeAhorros(localSnap.cuentasAhorro || []);
+  mergeSimpleById(recurrentes, localSnap.recurrentes || [], () => nextRecId++);
+  mergeSimpleById(deudas, localSnap.deudas || [], () => nextDeudaId++);
+  catalogoCuentas = [...catalogoCuentas, ...(localSnap.catalogoCuentas || [])]
+    .filter((c, i, arr) => arr.findIndex(x => String(x.nombre || '').toLowerCase() === String(c.nombre || '').toLowerCase()) === i);
+  catalogoMotivos = [...new Set([...catalogoMotivos, ...(localSnap.catalogoMotivos || [])])];
+  catalogoComentarios = [...new Set([...catalogoComentarios, ...(localSnap.catalogoComentarios || [])])];
+  catalogoTags = [...new Set([...catalogoTags, ...(localSnap.catalogoTags || [])])];
+  nextId = Math.max(nextId, Number(localSnap.nextId || 1));
+  nextMovId = Math.max(nextMovId, Number(localSnap.nextMovId || 1));
+  nextAhorroId = Math.max(nextAhorroId, Number(localSnap.nextAhorroId || 1));
+  nextRecId = Math.max(nextRecId, Number(localSnap.nextRecId || 1));
+  nextDeudaId = Math.max(nextDeudaId, Number(localSnap.nextDeudaId || 1));
 }
 
 let _remoteDownloadLock = false;
@@ -3480,11 +3721,13 @@ function resetForm() {
   const rp = document.getElementById('f-reembolso-persona'); if (rp) rp.value = '';
   const rf = document.getElementById('f-reembolso-fecha'); if (rf) rf.value = '';
   const rn = document.getElementById('f-reembolso-nota'); if (rn) rn.value = '';
-  document.getElementById('f-cuenta').selectedIndex = 0;
-  document.getElementById('f-motivo').selectedIndex  = 0;
+  const cuentaEl = document.getElementById('f-cuenta');
+  const motivoEl = document.getElementById('f-motivo');
+  if (cuentaEl) cuentaEl.value = getCuentas().includes('Banamex') ? 'Banamex' : (getCuentas()[0] || '');
+  if (motivoEl) motivoEl.value = catalogoMotivos.includes('Comida') ? 'Comida' : (catalogoMotivos[0] || '');
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = today();
   setAb(false); setAbonoTarjeta(false); setIg(false); setExt('no'); setDescAhorro(false);
-  document.getElementById('abono-tarjeta-wrap').style.display = 'none';
+  toggleAbonoTarjetaVisibility();
 }
 function cancelForm() {
   editingId=null; resetForm();
@@ -3985,8 +4228,6 @@ async function abrirAjustes() {
   document.getElementById('ajuste-presupuesto').value = PRESUPUESTO;
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) wu.value = localStorage.getItem('workerUrl') || '';
-  const apiEl = document.getElementById('ajuste-sqlite-api');
-  if (apiEl) apiEl.value = localStorage.getItem('sqliteApiBase') || '';
   const modoViaje = document.getElementById('ajuste-modo-viaje');
   const deviceIdEl = document.getElementById('sync-device-id');
   const userEl = document.getElementById('ajuste-usuario-actual');
@@ -4017,17 +4258,6 @@ async function guardarAjustes() {
   // Guardar config directamente en localStorage sin disparar autoSync
   const wu = document.getElementById('ajuste-worker-url');
   if (wu) { const v = wu.value.trim(); v ? localStorage.setItem('workerUrl', v) : localStorage.removeItem('workerUrl'); }
-  const apiEl = document.getElementById('ajuste-sqlite-api');
-  if (apiEl) {
-    const apiUrl = apiEl.value.trim().replace(/\/+$/, '');
-    if (apiUrl) {
-      localStorage.setItem('sqliteApiBase', apiUrl);
-      localStorage.setItem('syncProvider', 'sqlite');
-    } else {
-      localStorage.removeItem('sqliteApiBase');
-    }
-  }
-
   const travelEl = document.getElementById('ajuste-modo-viaje');
   const workspaceEl = document.getElementById('ajuste-workspace');
   localStorage.setItem('serverSyncEnabled','1');
@@ -5915,8 +6145,10 @@ async function eliminarCuenta_cat(i) {
 function actualizarSelectCuentas() {
   const sel = document.getElementById('f-cuenta');
   if (!sel) return;
-  const cur = sel.value;
+  const cur = sel.value || 'Banamex';
   sel.innerHTML = getCuentas().map(n => `<option${n===cur?' selected':''}>${n}</option>`).join('');
+  if (!sel.value && getCuentas().includes('Banamex')) sel.value = 'Banamex';
+  toggleAbonoTarjetaVisibility();
 }
 
 // ── Catálogo de Motivos ───────────────────────────────────────
@@ -5978,8 +6210,9 @@ async function eliminarMotivo(i) {
 function actualizarSelectMotivos() {
   const sel = document.getElementById('f-motivo');
   if (!sel) return;
-  const cur = sel.value;
+  const cur = sel.value || 'Comida';
   sel.innerHTML = catalogoMotivos.map(m => `<option${m===cur?' selected':''}>${m}</option>`).join('');
+  if (!sel.value && catalogoMotivos.includes('Comida')) sel.value = 'Comida';
 }
 
 function normalizarCatalogoComentarios() {
