@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.58';
-const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260720a', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'gastos-v2.59';
+const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260720b', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -14,11 +14,13 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  if (url.pathname.startsWith('/api/')) return;
 
   e.respondWith(
     caches.match(e.request).then(cached => {
       const fetchAndCache = () => fetch(e.request).then(response => {
-        if (response && response.ok && new URL(e.request.url).origin === self.location.origin) {
+        if (response && response.ok && url.origin === self.location.origin) {
           const copy = response.clone();
           caches.open(CACHE).then(cache => cache.put(e.request, copy));
         }

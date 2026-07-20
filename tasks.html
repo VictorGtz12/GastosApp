@@ -356,6 +356,7 @@ let _tipo = 'tarea', _prio = 'alta', _rep = 'ninguna';
 let _subtareasEdit = [];
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth();
 let calSelected = null;
+let taskSyncBlocked = false;
 
 const COLORES = ['#6c63ff','#ff5e7a','#22d3a5','#ff9f43','#a78bfa','#06b6d4','#f472b6','#ffd166'];
 const DEFAULT_SQLITE_API = 'http://45.76.0.95:8010/api';
@@ -459,7 +460,7 @@ function loadLocal() {
 function saveLocal() {
   localStorage.setItem(taskKey('mr_tasks'), JSON.stringify(tasks));
   localStorage.setItem(taskKey('mr_projs'), JSON.stringify(proyectos));
-  scheduleSync();
+  if (!taskSyncBlocked) scheduleSync();
 }
 
 // ── Tabs ─────────────────────────────────────────────────────
@@ -1107,6 +1108,7 @@ function clearTaskDeleted(kind, ids) {
 let _syncTimer;
 function scheduleSync() {
   actualizarSyncStatus('pending');
+  if (!navigator.onLine) return;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(syncUp, 250);
 }
@@ -1114,7 +1116,7 @@ function scheduleSync() {
 let _taskSyncLock = false;
 let _taskSyncQueued = false;
 async function syncUp() {
-  if (!taskUsingAuth()) return;
+  if (!taskUsingAuth() || !navigator.onLine) return;
   if (_taskSyncLock) { _taskSyncQueued = true; return; }
   _taskSyncLock = true;
   actualizarSyncStatus('syncing');
@@ -1147,7 +1149,7 @@ async function syncUp() {
 }
 
 async function syncDown(force = false) {
-  if (!taskUsingAuth()) return;
+  if (!taskUsingAuth() || !navigator.onLine) return;
   try {
     actualizarSyncStatus('syncing');
     const workspaceFilter = `workspace_id=eq.${encodeURIComponent(taskWorkspaceId())}`;
@@ -1159,13 +1161,23 @@ async function syncDown(force = false) {
       tasks = taskRows.filter(r => !r.deleted_at).map(r => r.data);
       proyectos = projectRows.filter(r => !r.deleted_at).map(r => r.data);
       localStorage.setItem(taskKey('mr_lastSync'), new Date().toISOString());
-      saveLocal(); renderAll(); actualizarSyncStatus('ok'); return;
+      taskSyncBlocked = true;
+      saveLocal();
+      taskSyncBlocked = false;
+      renderAll(); actualizarSyncStatus('ok'); return;
     }
   } catch(e) {
     console.warn('Descarga tareas servidor:', e);
     actualizarSyncStatus('error');
   }
 }
+
+window.addEventListener('online', async () => {
+  if (!taskUsingAuth()) return;
+  await syncUp();
+  await syncDown();
+});
+window.addEventListener('offline', () => actualizarSyncStatus('pending'));
 
 function actualizarSyncStatus(estado) {
   const el = document.getElementById('mr-sync-status');

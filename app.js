@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.58';
+const APP_VERSION = 'v2.59';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -357,10 +357,6 @@ function clearPendingSyncOps() {
 let _structuredRemoteAvailable = true;
 let appWorkspaces = [];
 let appUserProfile = null;
-
-function sbHeaders(extra = {}) {
-  return extra;
-}
 
 function authUserName(displayName = '') {
   const user = currentUser();
@@ -866,23 +862,6 @@ function validateStructuredPayload(payload, opts = {}) {
   return errors;
 }
 
-async function sbUpsert(table, rows, onConflict = 'id') {
-  if (!rows.length) return true;
-  const scopedRows = userScopedTable(table) ? rows.map(r => ({ ...r, workspace_id: r.workspace_id || currentWorkspaceId() })) : rows;
-  const conflict = userScopedTable(table) ? 'workspace_id,id' : onConflict;
-  const safeRows = dedupeRowsForUpsert(scopedRows, conflict, table);
-  if (!safeRows.length) return true;
-  await sbFetch(`${table}?on_conflict=${conflict}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Prefer': 'resolution=merge-duplicates,return=minimal'
-    },
-    body: JSON.stringify(safeRows)
-  });
-  return true;
-}
-
 function rowUpdatedMs(row) {
   return new Date(row?.updated_at || row?.data?.updatedAt || 0).getTime() || 0;
 }
@@ -910,25 +889,6 @@ function dedupeRowsForUpsert(rows, conflict, table = '') {
     console.warn(`[Sync servidor] ${table}: ${duplicates} fila(s) duplicada(s) en el lote; se conservó la más reciente antes de subir.`);
   }
   return [...byKey.values()];
-}
-
-async function sbSoftDelete(table, rows) {
-  const done = [];
-  const safeRows = dedupeRowsForUpsert(rows || [], 'id', `delete.${table}`);
-  for (const row of safeRows) {
-    const workspaceFilter = userScopedTable(table) ? `workspace_id=eq.${encodeURIComponent(currentWorkspaceId())}&` : '';
-    await sbFetch(`${table}?${workspaceFilter}id=eq.${encodeURIComponent(row.id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-      body: JSON.stringify({
-        deleted_at: row.deleted_at,
-        updated_at: row.deleted_at,
-        updated_by_device: row.updated_by_device || getSyncDeviceId()
-      })
-    });
-    done.push(row.id);
-  }
-  return done;
 }
 
 async function remoteStructuredSettings() {
@@ -1007,30 +967,12 @@ async function uploadStructuredSync(opts = {}) {
       cuentas: 'gs_cuentas',
       catalogos: 'gs_catalogos'
     };
-    let deleteResults = [];
-    if (usingSqliteApi()) {
-      await sqliteApiFetch('/sync/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace_id: currentWorkspaceId(), payload, deleted })
-      });
-      deleteResults = Object.keys(deleteMap).map(key => ({ key, done: (deleted[key] || []).map(r => r.id) }));
-    } else {
-      await Promise.all([
-        sbUpsert('gs_gastos', payload.gastos),
-        sbUpsert('gs_cuentas', payload.cuentas),
-        sbUpsert('gs_catalogos', payload.catalogos),
-        sbUpsert('gs_cuentas_ahorro', payload.cuentasAhorro),
-        sbUpsert('gs_movimientos_ahorro', payload.movimientosAhorro),
-        sbUpsert('gs_recurrentes', payload.recurrentes),
-        sbUpsert('gs_deudas', payload.deudas),
-        sbUpsert('gs_app_settings', [payload.settings])
-      ]);
-      deleteResults = await Promise.all(Object.entries(deleteMap).map(async ([key, table]) => ({
-        key,
-        done: await sbSoftDelete(table, deleted[key] || [])
-      })));
-    }
+    await sqliteApiFetch('/sync/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace_id: currentWorkspaceId(), payload, deleted })
+    });
+    const deleteResults = Object.keys(deleteMap).map(key => ({ key, done: (deleted[key] || []).map(r => r.id) }));
     deleteResults.forEach(({ key, done }) => {
       if (done.length) clearStructuredDeleted(key, done);
     });
@@ -1077,30 +1019,17 @@ async function downloadStructuredSync(force = false) {
   mostrarEstadoSync(false, 'descargando');
   try {
     let gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows;
-    if (usingSqliteApi()) {
-      const res = await sqliteApiFetch(`/sync/download?workspace_id=${encodeURIComponent(currentWorkspaceId())}`);
-      const remote = await res.json();
-      const tables = remote.tables || {};
-      gRows = tables.gs_gastos || [];
-      cRows = tables.gs_cuentas || [];
-      catRows = tables.gs_catalogos || [];
-      caRows = tables.gs_cuentas_ahorro || [];
-      movRows = tables.gs_movimientos_ahorro || [];
-      recRows = tables.gs_recurrentes || [];
-      deudaRows = tables.gs_deudas || [];
-      settingsRows = tables.gs_app_settings || [];
-    } else {
-      [gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows] = await Promise.all([
-        sbSelect('gs_gastos', 'select=id,estado,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_cuentas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_catalogos', 'select=id,tipo,valor,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_cuentas_ahorro', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_movimientos_ahorro', 'select=id,cuenta_id,mov_id,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_recurrentes', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_deudas', 'select=id,data,updated_at,deleted_at&order=updated_at.asc'),
-        sbSelect('gs_app_settings', 'select=id,data,updated_at&id=eq.main&limit=1')
-      ]);
-    }
+    const res = await sqliteApiFetch(`/sync/download?workspace_id=${encodeURIComponent(currentWorkspaceId())}`);
+    const remote = await res.json();
+    const tables = remote.tables || {};
+    gRows = tables.gs_gastos || [];
+    cRows = tables.gs_cuentas || [];
+    catRows = tables.gs_catalogos || [];
+    caRows = tables.gs_cuentas_ahorro || [];
+    movRows = tables.gs_movimientos_ahorro || [];
+    recRows = tables.gs_recurrentes || [];
+    deudaRows = tables.gs_deudas || [];
+    settingsRows = tables.gs_app_settings || [];
 
     const hasRemote = gRows.length || cRows.length || caRows.length || settingsRows.length;
     if (!hasRemote) return false;
@@ -1863,7 +1792,12 @@ function actualizarEstadoRed() {
     mostrarEstadoSync(true);
   }
 }
-window.addEventListener('online',  () => { actualizarEstadoRed(); if (!isTravelMode() && typeof syncUp === 'function') syncUp(); });
+window.addEventListener('online',  async () => {
+  actualizarEstadoRed();
+  if (isTravelMode() || !usingRemoteSync()) return;
+  if (hasPendingSync()) await uploadRemote();
+  await pullRemoteIfIdle(true);
+});
 window.addEventListener('offline', () => actualizarEstadoRed());
 window.addEventListener('focus', () => { pullRemoteIfIdle(true); });
 document.addEventListener('visibilitychange', () => {
