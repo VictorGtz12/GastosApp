@@ -61,7 +61,7 @@ def json_loads(value: Any) -> Any:
 def connect(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("pragma foreign_keys = on")
     conn.execute("pragma journal_mode = wal")
