@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.65';
+const APP_VERSION = 'v2.67';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -2547,15 +2547,14 @@ function renderGastos() {
     }
   }
 
-  const esGastoPendienteTarjeta = (g) =>
+  const esGastoPendienteAbonable = (g) =>
     !g.abonado &&
     !g.ignorar &&
     g.externo === 'no' &&
-    !g.abonoTarjeta &&
-    !!getCortesConfig()[g.cuenta];
+    !g.abonoTarjeta;
 
   let list = gastos.filter(g => {
-    if (activeFilter === 'pendiente') return esGastoPendienteTarjeta(g);
+    if (activeFilter === 'pendiente') return esGastoPendienteAbonable(g);
     if (activeFilter === 'abonado')   return g.abonado;
     if (activeFilter === 'ignorar')   return g.ignorar;
     if (activeFilter === 'externo')   return g.externo !== 'no';
@@ -2627,8 +2626,7 @@ function renderResumenSinAbonarPorCuenta(list) {
     !g.abonado &&
     !g.ignorar &&
     g.externo === 'no' &&
-    !g.abonoTarjeta &&
-    !!getCortesConfig()[g.cuenta]
+    !g.abonoTarjeta
   );
   if (!pendientes.length) return '';
   const porCuenta = new Map();
