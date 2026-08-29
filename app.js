@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.61';
+const APP_VERSION = 'v2.63';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -2581,8 +2581,9 @@ function renderGastos() {
   }
   list = list.sort((a,b) => (Number(b.id)||0) - (Number(a.id)||0) || String(b.fecha).localeCompare(String(a.fecha)));
   const el = document.getElementById('gastos-list');
-  if (!list.length) { el.innerHTML = '<div class="empty">Sin gastos registrados</div>'; return; }
-  el.innerHTML = list.map(g => {
+  const resumenSinAbonar = activeFilter === 'pendiente' ? renderResumenSinAbonarPorCuenta(list) : '';
+  if (!list.length) { el.innerHTML = resumenSinAbonar || '<div class="empty">Sin gastos registrados</div>'; return; }
+  el.innerHTML = resumenSinAbonar + list.map(g => {
     const iE = g.externo === 'externo', iP = g.externo === 'pagado';
     const historicoBloqueaMasivo = modoMasivo && g._esHistorico;
     const seleccionado = modoMasivo && !g._esHistorico && seleccionMasiva.has(g.id);
@@ -2612,6 +2613,45 @@ function renderGastos() {
       </div>
     </div>`;
   }).join('');
+}
+
+function renderResumenSinAbonarPorCuenta(list) {
+  const pendientes = (list || []).filter(g =>
+    !g.abonado &&
+    !g.ignorar &&
+    g.externo === 'no' &&
+    !g.abonoTarjeta &&
+    !!getCortesConfig()[g.cuenta]
+  );
+  if (!pendientes.length) return '';
+  const porCuenta = new Map();
+  pendientes.forEach(g => {
+    const cuenta = g.cuenta || 'Sin cuenta';
+    porCuenta.set(cuenta, (porCuenta.get(cuenta) || 0) + Number(g.cantidad || 0));
+  });
+  const rows = [...porCuenta.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([cuenta, total]) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <span class="dot" style="background:${getCuentaColor(cuenta) || '#888'}"></span>
+          <span style="font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cuenta}</span>
+        </div>
+        <span style="font-size:13px;color:var(--orange);font-weight:800">${fmt(total)}</span>
+      </div>`)
+    .join('');
+  const totalGeneral = pendientes.reduce((s, g) => s + Number(g.cantidad || 0), 0);
+  return `
+    <div style="background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.32);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:var(--orange);font-weight:800;text-transform:uppercase;letter-spacing:.4px">Falta por abonar</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${pendientes.length} gasto${pendientes.length === 1 ? '' : 's'} pendiente${pendientes.length === 1 ? '' : 's'} en tarjeta</div>
+        </div>
+        <div style="font-size:17px;color:var(--text);font-weight:800;white-space:nowrap">${fmt(totalGeneral)}</div>
+      </div>
+      ${rows}
+    </div>`;
 }
 
 function setFilter(f) {
