@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.63';
+const APP_VERSION = 'v2.65';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -2547,8 +2547,15 @@ function renderGastos() {
     }
   }
 
+  const esGastoPendienteTarjeta = (g) =>
+    !g.abonado &&
+    !g.ignorar &&
+    g.externo === 'no' &&
+    !g.abonoTarjeta &&
+    !!getCortesConfig()[g.cuenta];
+
   let list = gastos.filter(g => {
-    if (activeFilter === 'pendiente') return !g.abonado;
+    if (activeFilter === 'pendiente') return esGastoPendienteTarjeta(g);
     if (activeFilter === 'abonado')   return g.abonado;
     if (activeFilter === 'ignorar')   return g.ignorar;
     if (activeFilter === 'externo')   return g.externo !== 'no';
@@ -2560,7 +2567,7 @@ function renderGastos() {
     (g.comentarios||'').toLowerCase().includes(q) ||
     String(g.cantidad).includes(q)
   );
-  if (activeFilter === 'pendiente' || activeFilter === 'hist-pendiente') {
+  if (activeFilter === 'hist-pendiente') {
     const histMatches = histPendientes.filter(g => !q ||
       g.motivo.toLowerCase().includes(q) ||
       g.cuenta.toLowerCase().includes(q) ||
