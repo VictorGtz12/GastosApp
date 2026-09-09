@@ -179,6 +179,8 @@ const DEFAULT_SQLITE_API = 'http://45.76.0.95:8010/api';
 
 function sqliteApiBase() {
   if (location.protocol.startsWith('http') && location.port === '8010') return `${location.origin}/api`;
+  if (location.protocol === 'https:' && location.hostname === 'gastos.seci.app') return `${location.origin}/api`;
+  if (location.protocol === 'http:' && location.hostname === '45.76.0.95' && location.port === '8010') return `${location.origin}/api`;
   return DEFAULT_SQLITE_API;
 }
 
@@ -457,7 +459,9 @@ function mostrarAuthError(message) {
 
 function friendlyAuthError(error) {
   const msg = String(error?.message || '').toLowerCase();
+  if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('load failed')) return 'No se pudo conectar con el servidor. Si abriste la app en HTTPS, usa el dominio HTTPS del backend o revisa el proxy.';
   if (msg.includes('invalid login') || msg.includes('invalid credentials')) return 'Correo o contraseña incorrectos.';
+  if (msg.includes('correo o contraseña')) return 'Correo o contraseña incorrectos.';
   if (msg.includes('email not confirmed')) return 'Confirma tu correo antes de iniciar sesión.';
   if (msg.includes('signup') || msg.includes('not allowed') || msg.includes('disabled')) return 'El registro está cerrado. Pide a Victor que cree el usuario.';
   if (msg.includes('password')) return 'La contraseña no cumple los requisitos o es incorrecta.';
@@ -1867,11 +1871,16 @@ async function refreshData() {
 async function afterAuthReady(forceDownload = false) {
   if (!requireAuth()) return false;
   localStorage.setItem('serverSyncEnabled', '1');
-  await ensureUserProfile();
-  await cargarWorkspaces();
-  resetPersonalState();
-  if (navigator.onLine) {
-    await downloadRemote(forceDownload);
+  try {
+    await ensureUserProfile();
+    await cargarWorkspaces();
+    resetPersonalState();
+    if (navigator.onLine) {
+      await downloadRemote(forceDownload);
+    }
+  } catch(e) {
+    console.warn('Post-login sync error:', e.message);
+    showToast('Sesión iniciada, pero no se pudo sincronizar');
   }
   actualizarSelectCuentas();
   actualizarSelectMotivos();
