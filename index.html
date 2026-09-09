@@ -79,6 +79,7 @@
     .refresh-btn{background:rgba(108,99,255,.2);border:1px solid rgba(108,99,255,.3);color:var(--accent2);border-radius:20px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:500;display:flex;align-items:center;gap:4px}
     /* Tabs */
     .tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border2);position:sticky;top:calc(50px + env(safe-area-inset-top));z-index:40;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;white-space:nowrap}.tabs::-webkit-scrollbar{display:none}
+    body.pantry-mode .tabs, body.pantry-mode .fab{display:none}
     .tabs::-webkit-scrollbar{display:none}
     .tab{flex:1 0 auto;min-width:52px;padding:8px 2px;text-align:center;font-size:10px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:2px;transition:color .2s}
     .tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
@@ -1041,7 +1042,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="db.js?v=1"></script>
-<script src="app.js?v=20260909c"></script>
+<script src="app.js?v=20260909d"></script>
 <script src="despensa.js?v=20260909a"></script>
 <script async src="https://unpkg.com/@zxing/browser@latest"></script>
 <script async src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>

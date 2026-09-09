@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.72';
+const APP_VERSION = 'v2.73';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -2431,6 +2431,7 @@ let tabActualGlobal = 'menu';
 
 function showTab(tab) {
   tabActualGlobal = tab; // siempre actualizar el tab global
+  document.body.classList.toggle('pantry-mode', tab === 'despensa');
   TABS.forEach(t => {
     document.getElementById('content-' + t).classList.toggle('active', t === tab);
     const tabEl = document.getElementById('tab-' + t);
