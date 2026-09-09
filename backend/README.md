@@ -117,6 +117,18 @@ Recordatorios usa el endpoint compatible:
 - `/api/rest/gs_tasks`
 - `/api/rest/gs_task_projects`
 
+Despensa usa las mismas rutas de sync con tablas `gs_pantry_*`:
+
+- `gs_pantry_products`
+- `gs_pantry_product_barcodes`
+- `gs_pantry_categories`
+- `gs_pantry_locations`
+- `gs_pantry_lots`
+- `gs_pantry_movements`
+- `gs_pantry_movement_lines`
+- `gs_pantry_expiration_profiles`
+- `gs_pantry_ocr_corrections`
+
 La app detecta automáticamente SQLite si se abre desde el puerto `8010`. Si la sirves desde otro lugar, en Ajustes pon:
 
 ```text

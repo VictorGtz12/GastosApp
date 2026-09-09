@@ -35,6 +35,56 @@ class SQLiteStorageTests(unittest.TestCase):
                 self.assertTrue(report["ok"], report)
                 self.assertEqual(report["counts"]["gs_gastos"], 0)
                 self.assertEqual(report["counts"]["gs_movimientos_ahorro"], 0)
+                self.assertEqual(report["counts"]["gs_pantry_products"], 0)
+                self.assertEqual(report["counts"]["gs_pantry_lots"], 0)
+                self.assertEqual(report["counts"]["gs_pantry_movements"], 0)
+            finally:
+                conn.close()
+
+    def test_pantry_tables_accept_structured_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(Path(tmp) / "gastosapp.sqlite")
+            try:
+                init_db(conn)
+                workspace_id = seed_workspace(conn)
+                now = utc_now()
+                upsert_data_row(
+                    conn,
+                    "gs_pantry_product_barcodes",
+                    {
+                        "workspace_id": workspace_id,
+                        "id": "barcode-1",
+                        "product_id": "product-1",
+                        "barcode": "7501000000001",
+                        "data": {"product_id": "product-1", "barcode": "7501000000001", "principal": True},
+                        "updated_at": now,
+                    },
+                )
+                upsert_data_row(
+                    conn,
+                    "gs_pantry_lots",
+                    {
+                        "workspace_id": workspace_id,
+                        "id": "lot-1",
+                        "product_id": "product-1",
+                        "location_id": "loc-1",
+                        "expiration_date": "2026-09-18",
+                        "data": {"product_id": "product-1", "quantity": 2, "expiration_date": "2026-09-18"},
+                        "updated_at": now,
+                    },
+                )
+                row = conn.execute(
+                    "select product_id, barcode from gs_pantry_product_barcodes where workspace_id=? and id=?",
+                    (workspace_id, "barcode-1"),
+                ).fetchone()
+                lot = conn.execute(
+                    "select product_id, location_id, expiration_date from gs_pantry_lots where workspace_id=? and id=?",
+                    (workspace_id, "lot-1"),
+                ).fetchone()
+                self.assertEqual(row["product_id"], "product-1")
+                self.assertEqual(row["barcode"], "7501000000001")
+                self.assertEqual(lot["location_id"], "loc-1")
+                self.assertEqual(lot["expiration_date"], "2026-09-18")
             finally:
                 conn.close()
 

@@ -240,6 +240,15 @@ def sync_upload(payload: dict[str, Any], current=Depends(current_user), conn=Dep
         "movimientosAhorro": "gs_movimientos_ahorro",
         "recurrentes": "gs_recurrentes",
         "deudas": "gs_deudas",
+        "pantryProducts": "gs_pantry_products",
+        "pantryBarcodes": "gs_pantry_product_barcodes",
+        "pantryCategories": "gs_pantry_categories",
+        "pantryLocations": "gs_pantry_locations",
+        "pantryLots": "gs_pantry_lots",
+        "pantryMovements": "gs_pantry_movements",
+        "pantryMovementLines": "gs_pantry_movement_lines",
+        "pantryExpirationProfiles": "gs_pantry_expiration_profiles",
+        "pantryOcrCorrections": "gs_pantry_ocr_corrections",
     }
     counts: dict[str, int] = {}
     with conn:

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.69';
+const APP_VERSION = 'v2.70';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -64,6 +64,15 @@ const DEFAULT_APP_STATE = JSON.parse(JSON.stringify({
   reglasAutomaticas
 }));
 
+const PANTRY_DEFAULT_CATEGORIES = [
+  'Bebidas','Enlatados','Paquetes','Lácteos','Carnes','Congelados',
+  'Pan','Frutas y verduras','Condimentos','Botanas','Limpieza','Otros'
+];
+
+const PANTRY_DEFAULT_LOCATIONS = [
+  'Alacena','Refrigerador','Congelador','Cocina','Garage','Otro'
+];
+
 // Helpers que reemplazan las constantes estáticas anteriores
 function getCuentas()      { return catalogoCuentas.map(c => c.nombre); }
 function getCuentaObj(n)   { return catalogoCuentas.find(c => c.nombre === n) || {}; }
@@ -109,6 +118,28 @@ let nextRecId = 1;
 let deudas = [];
 let nextDeudaId = 1;
 let nextMovId = 1;
+
+let pantryProducts = [];
+let pantryBarcodes = [];
+let pantryCategories = PANTRY_DEFAULT_CATEGORIES.map((nombre, i) => ({
+  id: `cat_${i + 1}`,
+  nombre,
+  activo: true,
+  createdAt: null,
+  updatedAt: null
+}));
+let pantryLocations = PANTRY_DEFAULT_LOCATIONS.map((nombre, i) => ({
+  id: `loc_${i + 1}`,
+  nombre,
+  activo: true,
+  createdAt: null,
+  updatedAt: null
+}));
+let pantryLots = [];
+let pantryMovements = [];
+let pantryMovementLines = [];
+let pantryExpirationProfiles = [];
+let pantryOcrCorrections = [];
 
 // ── Utilidades ────────────────────────────────────────────────
 const fmt = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -278,6 +309,15 @@ function resetPersonalState() {
   catalogoComentarios = [...DEFAULT_APP_STATE.catalogoComentarios];
   catalogoTags = [...DEFAULT_APP_STATE.catalogoTags];
   reglasAutomaticas = JSON.parse(JSON.stringify(DEFAULT_APP_STATE.reglasAutomaticas));
+  pantryProducts = [];
+  pantryBarcodes = [];
+  pantryCategories = PANTRY_DEFAULT_CATEGORIES.map((nombre, i) => ({ id: `cat_${i + 1}`, nombre, activo: true, createdAt: null, updatedAt: null }));
+  pantryLocations = PANTRY_DEFAULT_LOCATIONS.map((nombre, i) => ({ id: `loc_${i + 1}`, nombre, activo: true, createdAt: null, updatedAt: null }));
+  pantryLots = [];
+  pantryMovements = [];
+  pantryMovementLines = [];
+  pantryExpirationProfiles = [];
+  pantryOcrCorrections = [];
 }
 
 function usingServerAuth() {
@@ -299,7 +339,16 @@ function userScopedTable(table) {
     'gs_deudas',
     'gs_app_settings',
     'gs_tasks',
-    'gs_task_projects'
+    'gs_task_projects',
+    'gs_pantry_products',
+    'gs_pantry_product_barcodes',
+    'gs_pantry_categories',
+    'gs_pantry_locations',
+    'gs_pantry_lots',
+    'gs_pantry_movements',
+    'gs_pantry_movement_lines',
+    'gs_pantry_expiration_profiles',
+    'gs_pantry_ocr_corrections'
   ].includes(table);
 }
 
@@ -335,7 +384,17 @@ function pendingSyncLabel(type) {
     restore: 'Restauracion',
     import: 'Importacion',
     recurrentes: 'Recurrentes',
-    gastos: 'Gastos'
+    gastos: 'Gastos',
+    pantry: 'Despensa',
+    pantryProducts: 'Productos despensa',
+    pantryBarcodes: 'Códigos despensa',
+    pantryCategories: 'Categorías despensa',
+    pantryLocations: 'Ubicaciones despensa',
+    pantryLots: 'Lotes despensa',
+    pantryMovements: 'Movimientos despensa',
+    pantryMovementLines: 'Detalle movimientos despensa',
+    pantryExpirationProfiles: 'Perfiles caducidad',
+    pantryOcrCorrections: 'Correcciones OCR'
   })[type] || type || 'Cambio';
 }
 
@@ -693,6 +752,15 @@ function filterIncrementalPayload(payload) {
     movimientosAhorro: payload.movimientosAhorro.filter(changed),
     recurrentes: dirty.recurrentes ? payload.recurrentes : [],
     deudas: dirty.deudas ? payload.deudas : [],
+    pantryProducts: dirty.pantryProducts ? payload.pantryProducts : [],
+    pantryBarcodes: dirty.pantryBarcodes ? payload.pantryBarcodes : [],
+    pantryCategories: dirty.pantryCategories ? payload.pantryCategories : [],
+    pantryLocations: dirty.pantryLocations ? payload.pantryLocations : [],
+    pantryLots: payload.pantryLots.filter(changed),
+    pantryMovements: payload.pantryMovements.filter(changed),
+    pantryMovementLines: payload.pantryMovementLines.filter(changed),
+    pantryExpirationProfiles: dirty.pantryExpirationProfiles ? payload.pantryExpirationProfiles : [],
+    pantryOcrCorrections: payload.pantryOcrCorrections.filter(changed),
     settings: payload.settings
   };
 }
@@ -708,6 +776,15 @@ function normalizeStructuredPayloadForSync(payload) {
     movimientosAhorro: dedupeRowsForUpsert(payload.movimientosAhorro || [], 'workspace_id,id', 'payload.gs_movimientos_ahorro'),
     recurrentes: dedupeRowsForUpsert(payload.recurrentes || [], 'workspace_id,id', 'payload.gs_recurrentes'),
     deudas: dedupeRowsForUpsert(payload.deudas || [], 'workspace_id,id', 'payload.gs_deudas'),
+    pantryProducts: dedupeRowsForUpsert(payload.pantryProducts || [], 'workspace_id,id', 'payload.gs_pantry_products'),
+    pantryBarcodes: dedupeRowsForUpsert(payload.pantryBarcodes || [], 'workspace_id,id', 'payload.gs_pantry_product_barcodes'),
+    pantryCategories: dedupeRowsForUpsert(payload.pantryCategories || [], 'workspace_id,id', 'payload.gs_pantry_categories'),
+    pantryLocations: dedupeRowsForUpsert(payload.pantryLocations || [], 'workspace_id,id', 'payload.gs_pantry_locations'),
+    pantryLots: dedupeRowsForUpsert(payload.pantryLots || [], 'workspace_id,id', 'payload.gs_pantry_lots'),
+    pantryMovements: dedupeRowsForUpsert(payload.pantryMovements || [], 'workspace_id,id', 'payload.gs_pantry_movements'),
+    pantryMovementLines: dedupeRowsForUpsert(payload.pantryMovementLines || [], 'workspace_id,id', 'payload.gs_pantry_movement_lines'),
+    pantryExpirationProfiles: dedupeRowsForUpsert(payload.pantryExpirationProfiles || [], 'workspace_id,id', 'payload.gs_pantry_expiration_profiles'),
+    pantryOcrCorrections: dedupeRowsForUpsert(payload.pantryOcrCorrections || [], 'workspace_id,id', 'payload.gs_pantry_ocr_corrections'),
     settings: payload.settings ? dedupeRowsForUpsert([payload.settings], 'workspace_id,id', 'payload.gs_app_settings')[0] : payload.settings
   };
 }
@@ -740,6 +817,25 @@ function buildStructuredPayload() {
     })),
     recurrentes: snap.recurrentes.map(r => structuredRow(r.id, r, { deleted_at: null })),
     deudas: snap.deudas.map(d => structuredRow(d.id, d, { deleted_at: null })),
+    pantryProducts: (snap.pantryProducts || []).map(p => structuredRow(p.id, p, { deleted_at: null })),
+    pantryBarcodes: (snap.pantryBarcodes || []).map(b => structuredRow(b.id, b, { product_id: String(b.product_id || ''), barcode: String(b.barcode || ''), deleted_at: null })),
+    pantryCategories: (snap.pantryCategories || []).map(c => structuredRow(c.id, c, { deleted_at: null })),
+    pantryLocations: (snap.pantryLocations || []).map(l => structuredRow(l.id, l, { deleted_at: null })),
+    pantryLots: (snap.pantryLots || []).map(l => structuredRow(l.id, l, {
+      product_id: String(l.product_id || ''),
+      location_id: String(l.location_id || ''),
+      expiration_date: l.expiration_date || null,
+      deleted_at: null
+    })),
+    pantryMovements: (snap.pantryMovements || []).map(m => structuredRow(m.id, m, { type: m.type || '', product_id: String(m.product_id || ''), deleted_at: null })),
+    pantryMovementLines: (snap.pantryMovementLines || []).map(line => structuredRow(line.id, line, {
+      movement_id: String(line.movement_id || ''),
+      lot_id: String(line.lot_id || ''),
+      product_id: String(line.product_id || ''),
+      deleted_at: null
+    })),
+    pantryExpirationProfiles: (snap.pantryExpirationProfiles || []).map(p => structuredRow(p.id, p, { product_id: String(p.product_id || ''), deleted_at: null })),
+    pantryOcrCorrections: (snap.pantryOcrCorrections || []).map(c => structuredRow(c.id, c, { product_id: String(c.product_id || ''), deleted_at: null })),
     settings: structuredRow('main', {
       schema: REMOTE_STRUCTURED_SCHEMA,
       savedAt: snap.savedAt,
@@ -751,6 +847,7 @@ function buildStructuredPayload() {
       presupuesto: snap.presupuesto,
       excepciones: snap.excepciones || [],
       ajustesPresupuesto: snap.ajustesPresupuesto || [],
+      pantryDefaultsVersion: 1,
       updatedAt: now
     }, {})
   };
@@ -950,6 +1047,15 @@ function validateStructuredPayload(payload, opts = {}) {
   assertUnique(payload.cuentasAhorro, 'Cuentas de ahorro');
   assertUnique(payload.recurrentes, 'Recurrentes');
   assertUnique(payload.deudas, 'Deudas');
+  assertUnique(payload.pantryProducts, 'Productos de despensa');
+  assertUnique(payload.pantryBarcodes, 'Códigos de despensa');
+  assertUnique(payload.pantryCategories, 'Categorías de despensa');
+  assertUnique(payload.pantryLocations, 'Ubicaciones de despensa');
+  assertUnique(payload.pantryLots, 'Lotes de despensa');
+  assertUnique(payload.pantryMovements, 'Movimientos de despensa');
+  assertUnique(payload.pantryMovementLines, 'Líneas de despensa');
+  assertUnique(payload.pantryExpirationProfiles, 'Perfiles OCR');
+  assertUnique(payload.pantryOcrCorrections, 'Correcciones OCR');
   (payload.gastos || []).forEach(row => {
     if (!row.id) errors.push('Hay un gasto sin ID.');
     if (!idsByEstado[row.id]) idsByEstado[row.id] = new Set();
@@ -1083,7 +1189,16 @@ async function uploadStructuredSync(opts = {}) {
       recurrentes: 'gs_recurrentes',
       deudas: 'gs_deudas',
       cuentas: 'gs_cuentas',
-      catalogos: 'gs_catalogos'
+      catalogos: 'gs_catalogos',
+      pantryProducts: 'gs_pantry_products',
+      pantryBarcodes: 'gs_pantry_product_barcodes',
+      pantryCategories: 'gs_pantry_categories',
+      pantryLocations: 'gs_pantry_locations',
+      pantryLots: 'gs_pantry_lots',
+      pantryMovements: 'gs_pantry_movements',
+      pantryMovementLines: 'gs_pantry_movement_lines',
+      pantryExpirationProfiles: 'gs_pantry_expiration_profiles',
+      pantryOcrCorrections: 'gs_pantry_ocr_corrections'
     };
     await sqliteApiFetch('/sync/upload', {
       method: 'POST',
@@ -1094,7 +1209,7 @@ async function uploadStructuredSync(opts = {}) {
     deleteResults.forEach(({ key, done }) => {
       if (done.length) clearStructuredDeleted(key, done);
     });
-    clearStructuredDirty(['cuentas', 'catalogos', 'cuentasAhorro', 'recurrentes', 'deudas']);
+    clearStructuredDirty(['cuentas', 'catalogos', 'cuentasAhorro', 'recurrentes', 'deudas', 'pantryProducts', 'pantryBarcodes', 'pantryCategories', 'pantryLocations', 'pantryLots', 'pantryMovements', 'pantryMovementLines', 'pantryExpirationProfiles', 'pantryOcrCorrections']);
 
     const ts = new Date().toISOString();
     localStorage.setItem('lastRemoteSync', ts);
@@ -1137,6 +1252,7 @@ async function downloadStructuredSync(force = false) {
   mostrarEstadoSync(false, 'descargando');
   try {
     let gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows;
+    let pantryProductRows, pantryBarcodeRows, pantryCategoryRows, pantryLocationRows, pantryLotRows, pantryMovementRows, pantryMovementLineRows, pantryProfileRows, pantryCorrectionRows;
     const res = await sqliteApiFetch(`/sync/download?workspace_id=${encodeURIComponent(currentWorkspaceId())}`);
     const remote = await res.json();
     const tables = remote.tables || {};
@@ -1148,12 +1264,24 @@ async function downloadStructuredSync(force = false) {
     recRows = tables.gs_recurrentes || [];
     deudaRows = tables.gs_deudas || [];
     settingsRows = tables.gs_app_settings || [];
+    pantryProductRows = tables.gs_pantry_products || [];
+    pantryBarcodeRows = tables.gs_pantry_product_barcodes || [];
+    pantryCategoryRows = tables.gs_pantry_categories || [];
+    pantryLocationRows = tables.gs_pantry_locations || [];
+    pantryLotRows = tables.gs_pantry_lots || [];
+    pantryMovementRows = tables.gs_pantry_movements || [];
+    pantryMovementLineRows = tables.gs_pantry_movement_lines || [];
+    pantryProfileRows = tables.gs_pantry_expiration_profiles || [];
+    pantryCorrectionRows = tables.gs_pantry_ocr_corrections || [];
 
-    const hasRemote = gRows.length || cRows.length || caRows.length || settingsRows.length;
+    const hasRemote = gRows.length || cRows.length || caRows.length || settingsRows.length ||
+      pantryProductRows.length || pantryLotRows.length || pantryMovementRows.length;
     if (!hasRemote) return false;
 
     const remoteLatest = [
-      ...gRows, ...cRows, ...catRows, ...caRows, ...movRows, ...recRows, ...deudaRows, ...settingsRows
+      ...gRows, ...cRows, ...catRows, ...caRows, ...movRows, ...recRows, ...deudaRows, ...settingsRows,
+      ...pantryProductRows, ...pantryBarcodeRows, ...pantryCategoryRows, ...pantryLocationRows, ...pantryLotRows,
+      ...pantryMovementRows, ...pantryMovementLineRows, ...pantryProfileRows, ...pantryCorrectionRows
     ].reduce((max, r) => Math.max(max, new Date(r.updated_at || r.data?.updatedAt || 0).getTime()), 0);
     const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
     const yaSync = !!localStorage.getItem('lastStructuredRemoteSync');
@@ -1209,6 +1337,16 @@ async function downloadStructuredSync(force = false) {
 
     recurrentes = activeRows(recRows);
     deudas = activeRows(deudaRows);
+    pantryProducts = activeRows(pantryProductRows);
+    pantryBarcodes = activeRows(pantryBarcodeRows);
+    pantryCategories = activeRows(pantryCategoryRows);
+    pantryLocations = activeRows(pantryLocationRows);
+    pantryLots = activeRows(pantryLotRows);
+    pantryMovements = activeRows(pantryMovementRows);
+    pantryMovementLines = activeRows(pantryMovementLineRows);
+    pantryExpirationProfiles = activeRows(pantryProfileRows);
+    pantryOcrCorrections = activeRows(pantryCorrectionRows);
+    if (typeof normalizePantryState === 'function') normalizePantryState();
 
     const settings = settingsRows[0]?.data || {};
     if (settings.nextId) nextId = settings.nextId;
@@ -1421,6 +1559,16 @@ function mergeLocalSnapshotIntoCurrent(localSnap) {
   mergeAhorros(localSnap.cuentasAhorro || []);
   mergeSimpleById(recurrentes, localSnap.recurrentes || [], () => nextRecId++);
   mergeSimpleById(deudas, localSnap.deudas || [], () => nextDeudaId++);
+  mergeSimpleById(pantryProducts, localSnap.pantryProducts || [], () => makeLocalId('prod'));
+  mergeSimpleById(pantryBarcodes, localSnap.pantryBarcodes || [], () => makeLocalId('bar'));
+  mergeSimpleById(pantryCategories, localSnap.pantryCategories || [], () => makeLocalId('pcat'));
+  mergeSimpleById(pantryLocations, localSnap.pantryLocations || [], () => makeLocalId('ploc'));
+  mergeSimpleById(pantryLots, localSnap.pantryLots || [], () => makeLocalId('lot'));
+  mergeSimpleById(pantryMovements, localSnap.pantryMovements || [], () => makeLocalId('pmov'));
+  mergeSimpleById(pantryMovementLines, localSnap.pantryMovementLines || [], () => makeLocalId('pline'));
+  mergeSimpleById(pantryExpirationProfiles, localSnap.pantryExpirationProfiles || [], () => makeLocalId('pprof'));
+  mergeSimpleById(pantryOcrCorrections, localSnap.pantryOcrCorrections || [], () => makeLocalId('ocr'));
+  if (typeof normalizePantryState === 'function') normalizePantryState();
   catalogoCuentas = [...catalogoCuentas, ...(localSnap.catalogoCuentas || [])]
     .filter((c, i, arr) => arr.findIndex(x => String(x.nombre || '').toLowerCase() === String(c.nombre || '').toLowerCase()) === i);
   catalogoMotivos = [...new Set([...catalogoMotivos, ...(localSnap.catalogoMotivos || [])])];
@@ -1459,6 +1607,8 @@ function buildSnapshot() {
     gastos, historico, nextId, cuentasAhorro, nextAhorroId,
     excepciones, catalogoCuentas, catalogoMotivos, catalogoComentarios, catalogoTags, reglasAutomaticas,
     recurrentes, nextRecId, deudas, nextDeudaId, nextMovId, presupuesto:PRESUPUESTO,
+    pantryProducts, pantryBarcodes, pantryCategories, pantryLocations, pantryLots,
+    pantryMovements, pantryMovementLines, pantryExpirationProfiles, pantryOcrCorrections,
     ajustesPresupuesto,
   };
 }
@@ -1532,6 +1682,16 @@ function applySnapshot(snap, opts = {}) {
   if (snap.nextDeudaId)         nextDeudaId         = snap.nextDeudaId;
   if (snap.nextMovId)           nextMovId           = snap.nextMovId || 1;
   if (snap.presupuesto)         PRESUPUESTO         = snap.presupuesto;
+  if (snap.pantryProducts)      pantryProducts      = snap.pantryProducts || [];
+  if (snap.pantryBarcodes)      pantryBarcodes      = snap.pantryBarcodes || [];
+  if (snap.pantryCategories)    pantryCategories    = snap.pantryCategories || pantryCategories;
+  if (snap.pantryLocations)     pantryLocations     = snap.pantryLocations || pantryLocations;
+  if (snap.pantryLots)          pantryLots          = snap.pantryLots || [];
+  if (snap.pantryMovements)     pantryMovements     = snap.pantryMovements || [];
+  if (snap.pantryMovementLines) pantryMovementLines = snap.pantryMovementLines || [];
+  if (snap.pantryExpirationProfiles) pantryExpirationProfiles = snap.pantryExpirationProfiles || [];
+  if (snap.pantryOcrCorrections) pantryOcrCorrections = snap.pantryOcrCorrections || [];
+  if (typeof normalizePantryState === 'function') normalizePantryState();
   if (snap.ajustesPresupuesto)  ajustesPresupuesto  = snap.ajustesPresupuesto;
   return true;
 }
@@ -1675,6 +1835,7 @@ function refrescarVistasDespuesDeCambio(tab = tabActualGlobal) {
   else if (tab === 'historico') renderHistorico();
   else if (tab === 'recurrentes') renderRecurrentes();
   else if (tab === 'conciliacion') renderConciliacion();
+  else if (tab === 'despensa' && typeof renderDespensa === 'function') renderDespensa();
 }
 
 async function refreshData() {
@@ -2091,6 +2252,8 @@ function saveLocal() {
       catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
       presupuesto: PRESUPUESTO,
       recurrentes, nextRecId, deudas, nextDeudaId, nextMovId,
+      pantryProducts, pantryBarcodes, pantryCategories, pantryLocations, pantryLots,
+      pantryMovements, pantryMovementLines, pantryExpirationProfiles, pantryOcrCorrections,
       ajustesPresupuesto,
     };
     localStorage.setItem(appDataStorageKey(), JSON.stringify(data));
@@ -2162,6 +2325,16 @@ function loadFromLocal() {
       if (data.deudas)              deudas              = data.deudas       || [];
     if (data.nextDeudaId)         nextDeudaId         = data.nextDeudaId;
     if (data.nextMovId)           nextMovId           = data.nextMovId || 1;
+    if (data.pantryProducts)      pantryProducts      = data.pantryProducts || [];
+    if (data.pantryBarcodes)      pantryBarcodes      = data.pantryBarcodes || [];
+    if (data.pantryCategories)    pantryCategories    = data.pantryCategories || pantryCategories;
+    if (data.pantryLocations)     pantryLocations     = data.pantryLocations || pantryLocations;
+    if (data.pantryLots)          pantryLots          = data.pantryLots || [];
+    if (data.pantryMovements)     pantryMovements     = data.pantryMovements || [];
+    if (data.pantryMovementLines) pantryMovementLines = data.pantryMovementLines || [];
+    if (data.pantryExpirationProfiles) pantryExpirationProfiles = data.pantryExpirationProfiles || [];
+    if (data.pantryOcrCorrections) pantryOcrCorrections = data.pantryOcrCorrections || [];
+    if (typeof normalizePantryState === 'function') normalizePantryState();
     if (data.ajustesPresupuesto)  ajustesPresupuesto  = data.ajustesPresupuesto;
     return;
     }
@@ -2233,7 +2406,7 @@ function normAhorro(c) {
 
 
 // ── Navegación ────────────────────────────────────────────────
-const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','dashboard','historico','catalogos','recurrentes','conciliacion'];
+const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','dashboard','historico','catalogos','recurrentes','conciliacion','despensa'];
 let tabActualGlobal = 'menu';
 
 function showTab(tab) {
@@ -2244,7 +2417,7 @@ function showTab(tab) {
     if (tabEl) tabEl.classList.toggle('active', t === tab);
   });
   // Marcar activo en drawer
-  ['historico','catalogos','recurrentes','conciliacion'].forEach(t => {
+  ['historico','catalogos','recurrentes','conciliacion','despensa'].forEach(t => {
     const el = document.getElementById('drawer-' + t);
     if (el) el.classList.toggle('active-item', t === tab);
   });
@@ -2254,7 +2427,8 @@ function showTab(tab) {
     externos:'Externos', cortes:'Cortes por Tarjeta',
     ahorros:'Mis Ahorros', dashboard:'Dashboard',
     historico:'Historial',
-    catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas', conciliacion:'Conciliación'
+    catalogos:'Catálogos', recurrentes:'Recurrentes y Deudas', conciliacion:'Conciliación',
+    despensa:'Despensa'
   };
   document.getElementById('topbar-title').textContent = titles[tab] || 'Gastos Semanales';
   if (tab === 'nuevo' && !editingId) {
@@ -2269,6 +2443,7 @@ function showTab(tab) {
   if (tab === 'recurrentes') renderRecurrentes();
   if (tab === 'dashboard') renderDashboard();
   if (tab === 'conciliacion') renderConciliacion();
+  if (tab === 'despensa' && typeof renderDespensa === 'function') renderDespensa();
 }
 
 // ── Dashboard ──────────────────────────────────────────────────

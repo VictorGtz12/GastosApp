@@ -18,6 +18,7 @@ App web para control de gastos con tarjetas de crédito, ahorros y servicios rec
 - Modo oscuro / claro / Revolut
 - Exportar a Excel y backup JSON
 - Conciliación bancaria con estado de cuenta PDF o imagen
+- Despensa: catálogo de productos separado de lotes, entradas, salidas FEFO, transferencias, desechos, ajustes, códigos de barras y OCR de caducidad
 
 ---
 
@@ -31,6 +32,7 @@ Usa este mapa para indicar exactamente qué vista y función quieres modificar. 
 |---------|----------|
 | `index.html` | Estructura HTML, estilos CSS (inline), todos los modales |
 | `app.js` | Toda la lógica JS (~5 500 líneas) |
+| `despensa.js` | Módulo Despensa: productos, lotes, movimientos, escáner y OCR |
 | `cloudflare-worker.js` | Proxy para IA (conciliación con imagen) |
 
 ### Tabs / Vistas principales
@@ -49,6 +51,7 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 | Catálogos | `content-catalogos` | `renderCatalogos()` | Cuentas y motivos personalizados |
 | Recurrentes | `content-recurrentes` | `renderRecurrentes()` | Servicios fijos y deudas |
 | Conciliación | `content-conciliacion` | `renderConciliacion()` | Comparar estado de cuenta con gastos registrados |
+| Despensa | `content-despensa` | `renderDespensa()` | Inventario de productos por lotes |
 
 ### Modales principales
 
@@ -247,6 +250,7 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 - URL del Worker se guarda en `localStorage` — no en el código
 - La API key de Anthropic solo vive en variables secretas de Cloudflare Workers
 - No compartas archivos `.sqlite` si tienen datos sensibles
+- Cámara y escáner de Despensa requieren HTTPS en iPhone/PWA; en HTTP se debe usar captura manual
 
 ---
 
@@ -257,6 +261,8 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 - PDF.js para extracción de texto
 - SheetJS para Excel
 - Cloudflare Workers + Anthropic API para conciliación con IA
+- ZXing / BarcodeDetector para códigos de barras cuando el navegador lo permite
+- Tesseract.js para OCR local de fechas de caducidad
 - Web App Manifest + Service Worker (PWA)
 
 ---

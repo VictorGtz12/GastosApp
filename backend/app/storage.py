@@ -30,6 +30,15 @@ DATA_TABLES: dict[str, tuple[str, ...]] = {
     "gs_app_settings": ("workspace_id", "id", "data", "updated_at", "updated_by_device", "deleted_at"),
     "gs_tasks": ("workspace_id", "id", "data", "updated_at", "updated_by_device", "deleted_at"),
     "gs_task_projects": ("workspace_id", "id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_products": ("workspace_id", "id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_product_barcodes": ("workspace_id", "id", "product_id", "barcode", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_categories": ("workspace_id", "id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_locations": ("workspace_id", "id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_lots": ("workspace_id", "id", "product_id", "location_id", "expiration_date", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_movements": ("workspace_id", "id", "type", "product_id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_movement_lines": ("workspace_id", "id", "movement_id", "lot_id", "product_id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_expiration_profiles": ("workspace_id", "id", "product_id", "data", "updated_at", "updated_by_device", "deleted_at"),
+    "gs_pantry_ocr_corrections": ("workspace_id", "id", "product_id", "data", "updated_at", "updated_by_device", "deleted_at"),
 }
 
 SNAPSHOT_TABLES = ("snapshots", "task_snapshots", "version_snapshots")
@@ -139,6 +148,16 @@ def init_db(conn: sqlite3.Connection) -> None:
         )
         conn.execute(f"create index if not exists idx_{table}_updated_at on {table}(workspace_id, updated_at)")
         conn.execute(f"create index if not exists idx_{table}_deleted_at on {table}(workspace_id, deleted_at)")
+        if "barcode" in columns:
+            conn.execute(f"create unique index if not exists idx_{table}_barcode_unique on {table}(workspace_id, barcode) where deleted_at is null and barcode is not null")
+        if "product_id" in columns:
+            conn.execute(f"create index if not exists idx_{table}_product_id on {table}(workspace_id, product_id)")
+        if "location_id" in columns:
+            conn.execute(f"create index if not exists idx_{table}_location_id on {table}(workspace_id, location_id)")
+        if "expiration_date" in columns:
+            conn.execute(f"create index if not exists idx_{table}_expiration_date on {table}(workspace_id, expiration_date)")
+        if "movement_id" in columns:
+            conn.execute(f"create index if not exists idx_{table}_movement_id on {table}(workspace_id, movement_id)")
 
     for table in SNAPSHOT_TABLES:
         conn.execute(
