@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.71';
+const APP_VERSION = 'v2.72';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -387,6 +387,7 @@ function pendingSyncLabel(type) {
     import: 'Importacion',
     recurrentes: 'Recurrentes',
     gastos: 'Gastos',
+    ahorros: 'Ahorros',
     pantry: 'Despensa',
     pantryProducts: 'Productos despensa',
     pantryBarcodes: 'Códigos despensa',
@@ -409,6 +410,15 @@ function queueSyncOperation(type, details = {}) {
 
 function clearPendingSyncOps() {
   localStorage.removeItem('pendingSyncOps');
+}
+
+function markRecentUpload(ts = new Date().toISOString()) {
+  localStorage.setItem('lastSuccessfulUploadAt', ts);
+}
+
+function recentUploadGraceActive() {
+  const lastUpload = new Date(localStorage.getItem('lastSuccessfulUploadAt') || 0).getTime();
+  return lastUpload && Date.now() - lastUpload < 30000;
 }
 
 // ── Sync estructurado ────────────────────────────────────────
@@ -1220,6 +1230,7 @@ async function uploadStructuredSync(opts = {}) {
     localStorage.setItem('lastStructuredRemoteSync', ts);
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
+    markRecentUpload(ts);
     localStorage.removeItem('lastSyncError');
     localStorage.removeItem('syncConflictPending');
     clearPendingSyncOps();
@@ -1289,7 +1300,7 @@ async function downloadStructuredSync(force = false) {
     ].reduce((max, r) => Math.max(max, new Date(r.updated_at || r.data?.updatedAt || 0).getTime()), 0);
     const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
     const yaSync = !!localStorage.getItem('lastStructuredRemoteSync');
-    if (!force && yaSync && localModified > remoteLatest + 5000) {
+    if (!force && yaSync && localModified > remoteLatest + 5000 && !recentUploadGraceActive() && getPendingSyncOps().length > 0) {
       console.warn('[Sync servidor estructurado] Local mas nuevo, no se descarga remoto viejo.');
       showSyncConflict({
         local: summarizeSnapshotForSync(),
@@ -2268,7 +2279,7 @@ function saveLocal() {
     localStorage.setItem(appDataStorageKey(), JSON.stringify(data));
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
-    if (!syncBloqueado) queueSyncOperation('snapshot', { tab: tabActualGlobal || 'menu' });
+    if (!syncBloqueado) queueSyncOperation(tabActualGlobal === 'ahorros' ? 'ahorros' : tabActualGlobal === 'recurrentes' ? 'recurrentes' : tabActualGlobal === 'deudas' ? 'deudas' : tabActualGlobal === 'despensa' ? 'pantry' : 'gastos', { tab: tabActualGlobal || 'menu' });
     // Sincronizar automáticamente en segundo plano
     if (!syncBloqueado) {
       if (isTravelMode() || !navigator.onLine) {
