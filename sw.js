@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.70';
-const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260909a', './despensa.js?v=20260909a', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'gastos-v2.71';
+const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260909b', './despensa.js?v=20260909a', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -16,18 +16,26 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.pathname.startsWith('/api/')) return;
+  const isSameOrigin = url.origin === self.location.origin;
+  const isFreshAsset = isSameOrigin && (
+    e.request.mode === 'navigate' ||
+    ['script', 'style', 'worker'].includes(e.request.destination) ||
+    url.pathname.endsWith('.html') ||
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.css')
+  );
 
   e.respondWith(
     caches.match(e.request).then(cached => {
       const fetchAndCache = () => fetch(e.request).then(response => {
-        if (response && response.ok && url.origin === self.location.origin) {
+        if (response && response.ok && isSameOrigin) {
           const copy = response.clone();
           caches.open(CACHE).then(cache => cache.put(e.request, copy));
         }
         return response;
       });
 
-      if (e.request.mode === 'navigate') {
+      if (isFreshAsset) {
         return fetchAndCache().catch(() => cached || caches.match('./index.html'));
       }
 

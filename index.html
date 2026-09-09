@@ -4,7 +4,15 @@
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(err => {
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
+        navigator.serviceWorker.register('./sw.js').then(reg => {
+          reg.update().catch(() => {});
+        }).catch(err => {
           console.warn('No se pudo registrar el service worker:', err);
         });
       });
@@ -321,7 +329,7 @@
       <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Cerrar sesión
     </div>
 
-    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">v2.70</span></div>
+    <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text3,#666);opacity:0.6;letter-spacing:0.5px"><span id="drawer-version-label">cargando versión...</span></div>
   </div>
 
   <!-- Banner recordatorio actualizar -->
@@ -1033,7 +1041,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="db.js?v=1"></script>
-<script src="app.js?v=20260909a"></script>
+<script src="app.js?v=20260909b"></script>
 <script src="despensa.js?v=20260909a"></script>
 <script async src="https://unpkg.com/@zxing/browser@latest"></script>
 <script async src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
