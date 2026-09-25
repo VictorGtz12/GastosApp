@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.73';
+const APP_VERSION = 'v2.74';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -2902,8 +2902,8 @@ function renderExternos() {
           ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${g.reembolsoNota}</div>` : ''}
         </div>` : ''}
       ${!iP
-        ? `<button class="btn-marcar-pagado" onclick="marcarExterno(${g.id},'pagado')">✅ Marcar como cobrado</button>`
-        : `<button class="btn-marcar-pend" onclick="marcarExterno(${g.id},'externo')">↩ Marcar como pendiente</button>`}
+        ? `<button class="btn-marcar-pagado" data-id="${escapeHtml(g.id)}" onclick="marcarExterno(this.dataset.id,'pagado')">✅ Marcar como cobrado</button>`
+        : `<button class="btn-marcar-pend" data-id="${escapeHtml(g.id)}" onclick="marcarExterno(this.dataset.id,'externo')">↩ Marcar como pendiente</button>`}
     </div>`;
   }).join('');
 }
@@ -2914,12 +2914,19 @@ function setExtFilter(f) {
   renderExternos();
 }
 
-async function marcarExterno(id, estado) {
-  let g = gastos.find(x=>x.id===id) || historico.find(x=>x.id===id);
-  if (g) g.externo = estado;
+function marcarExterno(id, estado) {
+  const g = gastos.find(x => String(x.id) === String(id)) || historico.find(x => String(x.id) === String(id));
+  if (!g || !['pagado', 'externo'].includes(estado)) {
+    showToast('No se encontró el gasto externo');
+    return false;
+  }
+  if (g.externo === estado) return true;
+  g.externo = estado;
+  g.updatedAt = new Date().toISOString();
   saveLocal();
   showToast(estado==='pagado'?'Marcado como cobrado ✓':'Marcado como pendiente');
-  renderExternos(); renderMenu();
+  refrescarVistasDespuesDeCambio();
+  return true;
 }
 
 // ── Excepciones de corte ──────────────────────────────────────
@@ -4013,8 +4020,8 @@ function openDetail(id) {
       ${!g.ignorar && iP?'<span class="badge ext-paid">✅ Externo cobrado</span>':''}
       ${!iE && !iP?`<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>`:''}
     </div>
-    ${!esHistorico&&iE?`<button class="btn-marcar-pagado" onclick="marcarExterno(${g.id},'pagado');closeModal('modal-detail');renderGastos()">✅ Marcar como cobrado</button>`:''}
-    ${!esHistorico&&iP?`<button class="btn-marcar-pend" onclick="marcarExterno(${g.id},'externo');closeModal('modal-detail');renderGastos()">↩ Marcar como pendiente</button>`:''}
+    ${!esHistorico&&iE?`<button class="btn-marcar-pagado" data-id="${escapeHtml(g.id)}" onclick="if(marcarExterno(this.dataset.id,'pagado'))closeModal('modal-detail')">✅ Marcar como cobrado</button>`:''}
+    ${!esHistorico&&iP?`<button class="btn-marcar-pend" data-id="${escapeHtml(g.id)}" onclick="if(marcarExterno(this.dataset.id,'externo'))closeModal('modal-detail')">↩ Marcar como pendiente</button>`:''}
     <div class="modal-actions" style="margin-top:${iE||iP?'10px':'0'}">
       <button class="mbtn sec" onclick="closeModal('modal-detail')">Cerrar</button>
       ${!esHistorico?`<button class="mbtn danger" onclick="eliminar(${g.id})">Eliminar</button>`:''}
