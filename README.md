@@ -1,4 +1,4 @@
-# Gastos Semanales v2.76
+# Gastos Semanales v2.78
 
 App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
@@ -33,6 +33,8 @@ Usa este mapa para indicar exactamente qué vista y función quieres modificar. 
 | `index.html` | Estructura HTML, estilos CSS (inline), todos los modales |
 | `app.js` | Estado, gastos, cuentas, sincronización y cálculos |
 | `mobile-ui.js` | Navegación móvil, borradores, filtros, actividad e interacciones |
+| `movement-filters.js` | Rangos locales de fechas, filtros combinados y totales de Movimientos |
+| `task-sync.js` | Caché atómico de recordatorios por usuario/base y sincronización por revisión |
 | `mobile.css` | Diseño para iPhone, áreas seguras y controles táctiles |
 | `theme.js` | Paleta compartida por Gastos y Recordatorios |
 | `despensa.js` | Módulo Despensa: productos, lotes, movimientos, escáner y OCR |
@@ -94,10 +96,40 @@ Las pruebas usan datos ficticios y bloquean las peticiones a servicios externos.
 ```sh
 npm install
 npx playwright install webkit chromium
+npm run test:filters
 npm run test:mobile
 ```
 
 El script levanta un servidor temporal en `127.0.0.1`, prueba WebKit en tamaños de iPhone de 320 a 430 px, verifica borradores, filtros, ediciones, ahorro, abonos y guardado sin conexión, y guarda capturas en `test-results/`. La reapertura de la PWA sin conexión se comprueba en Chromium; WebKit en Windows presenta limitaciones para simular esa navegación. Las pruebas emulan el navegador; cámara, OCR y notificaciones deben revisarse en un iPhone físico.
+
+### Revisión de flujos en v2.78
+
+- Captura: al vaciar el formulario se elimina el borrador anterior. Editar gastos con cuentas o categorías retiradas conserva sus valores. Los abonos mantienen su operación y quedan fuera del presupuesto; sus opciones irrelevantes se ocultan. Los importes se validan hasta centavos.
+- Guardado: ahorros, traspasos, catálogos, deudas, servicios, despensa y cierre semanal revierten los cambios en memoria y las marcas pendientes si falla el guardado local. Los formularios conservan sus datos para reintentar. Un error de navegación posterior a un guardado no revierte el movimiento ya persistido.
+- Ahorros y catálogos: renombrar conserva referencias, reglas y borradores. Se rechazan nombres duplicados y valores negativos. Un retiro enlazado se edita desde su gasto; las ediciones de historial se resuelven por identificador estable. El saldo se calcula en centavos.
+- Tarjetas y conciliación: los cortes de fin de mes respetan febrero y años bisiestos. Las excepciones guardan su fecha original y admiten cambios entre meses. Una extracción tardía se descarta si cambian base, cuenta, período o movimientos. Las marcas de conciliación se conservan en este dispositivo por usuario/base. Registrar un cargo del banco completa el formulario inmediatamente y retira una sola fila pendiente al guardar.
+- Despensa: los ajustes exigen una cantidad explícita, actualizan la cantidad al elegir otro lote y permiten corregir lotes con saldo cero. Cerrar escáner u OCR libera la cámara y descarta permisos o resultados que lleguen tarde.
+- Ajustes: guardar después de cerrar una semana no provoca una descarga forzada sobre el historial. Un error de almacenamiento restaura el presupuesto y libera el bloqueo de sincronización.
+- Recordatorios: el caché aparece antes de renovar la sesión. La primera sincronización combina capturas locales con datos remotos; las revisiones posteriores y las eliminaciones pendientes se conservan durante las peticiones. Las respuestas de otra base no se aplican. El servidor admite paginación por `offset`.
+- Repeticiones: las series antiguas siguen generando ocurrencias actuales, completar una no completa las siguientes y los días 29–31 se ajustan al último día del mes. Calendario y filtros de completadas se actualizan al marcar una ocurrencia.
+
+Los avisos de Recordatorios usan temporizadores mientras la app está abierta. Editar, completar o eliminar cancela el aviso anterior; los plazos largos no desbordan el temporizador. La interfaz indica esta limitación: **no se garantiza entrega con la app cerrada**. La entrega en segundo plano requeriría un programador de notificaciones push en el servidor.
+
+`tests/flows.cjs` y `tests/reminders.cjs` forman parte de `npm run test:mobile`. Usan cuentas y archivos ficticios, simulan cuotas de almacenamiento y respuestas tardías, y no acceden a servicios de producción. La revisión visual cubre WebKit de 320 a 430 px y los tres temas. Cámara, lectura real de códigos, OCR y permisos/entrega de notificaciones necesitan validación en un iPhone físico; las pruebas locales comprueban su ciclo de apertura/cierre con simulaciones.
+
+### Filtros de Movimientos en v2.77
+
+**Semana actual** incluye las fechas de lunes a domingo de la semana local del dispositivo. El rango aparece debajo del selector y se actualiza al volver a la app después de un cambio de día, incluso sin conexión. Se consulta tanto gastos abiertos como archivados por su fecha; el cierre manual de una semana no cambia ese rango. **Semanas anteriores** termina el domingo anterior y **Todas las fechas** elimina únicamente la restricción temporal.
+
+Período, estado, cuenta, categoría, tipo, presupuesto y búsqueda se combinan por intersección. Solo hay tres estados: Todos los estados, Sin abonar y Abonados. Los abonos a tarjeta son operaciones distintas y se consultan con Tipo; los estados de abono se aplican a gastos. Un gasto fuera del presupuesto o por cobrar conserva su propio estado de abono. La búsqueda admite tildes, varias palabras e importes con formato monetario y siempre respeta el período.
+
+Las cuentas y categorías se muestran sin opciones repetidas e incluyen valores que solo existen en movimientos antiguos. Cada identificador aparece una vez; si existe en gastos abiertos y en el historial, se utiliza la copia abierta, igual que al abrir su detalle. Los totales suman las compras visibles, incluidas las excluidas del presupuesto, y muestran los abonos por separado.
+
+El aviso de pendientes anteriores usa la cuenta, categoría, tipo, presupuesto y búsqueda actuales. **Ver anteriores** cambia el período a Semanas anteriores y el estado a Sin abonar. Los pendientes antiguos nunca se agregan silenciosamente a la semana actual.
+
+La selección masiva solo incluye gastos abiertos visibles. Cambiar filtros elimina las selecciones ocultas; cambiar de cuenta recalcula el período de corte. Los abonos no pueden convertirse en pendientes ni asignarse a débito. Si falla el guardado local, se revierte el cambio y se conserva la selección para reintentar.
+
+`npm run test:filters` verifica 1,215 combinaciones, límites de semana, mes y año, días bisiestos, zonas horarias y duplicados. `tests/movement-ui.cjs`, incluido en `npm run test:mobile`, comprueba los filtros y la edición masiva en WebKit para iPhone. El módulo también se incluye en el caché de la PWA y en los archivos públicos permitidos por el servidor.
 
 ### Correcciones verificadas en v2.76
 
@@ -310,4 +342,4 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 
 ---
 
-*Versión 2.76*
+*Versión 2.78*

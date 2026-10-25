@@ -128,9 +128,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hoy-stat-val{font-size:20px;font-weight:700}
 .hoy-stat-lbl{font-size:10px;color:var(--text3);margin-top:2px}
 </style>
-<link rel="stylesheet" href="mobile.css?v=20261025b">
+<link rel="stylesheet" href="mobile.css?v=20261025d">
 <meta name="theme-color" content="#101116">
-<script src="theme.js?v=20261025b"></script>
+<script src="theme.js?v=20261025d"></script>
 </head>
 <body class="reminders-page">
 <div class="app">
@@ -140,10 +140,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       Gastos
     </a>
     <div class="topbar-title">Recordatorios</div>
-    <span id="mr-sync-status" onclick="syncDown(true).then(()=>renderAll())" style="font-size:10px;padding:3px 8px;border-radius:10px;cursor:pointer;font-weight:600;transition:all .3s"></span>
-    <button class="topbar-btn" onclick="solicitarNotificaciones()">🔔</button>
+    <button type="button" aria-label="Sincronizar recordatorios" id="mr-sync-status" onclick="sincronizarTareas()" style="font-size:10px;padding:3px 8px;border-radius:10px;cursor:pointer;font-weight:600;transition:all .3s;border:0"></button>
+    <button class="topbar-btn" onclick="solicitarNotificaciones()" aria-label="Activar avisos de recordatorios">🔔</button>
   </div>
-  <div class="tabs">
+  <p id="task-notice" class="inline-error" role="status" hidden></p>
+<div class="tabs">
     <div class="tab active" id="tab-hoy" onclick="showTab('hoy')">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Hoy
     </div>
@@ -374,17 +375,14 @@ function usingSqliteApi() {
 
 // ── Init ─────────────────────────────────────────────────────
 async function init() {
+  const cached=taskUsingAuth();
+  if(cached){loadLocal();document.getElementById('f-fecha').value=today();renderAll();actualizarSyncStatus(taskHasPending()?'pending':'ok');}
   await refreshTaskSession();
-  if (!taskUsingAuth()) {
-    location.href = 'index.html';
-    return;
-  }
-  loadLocal();
-  document.getElementById('f-fecha').value = today();
-  renderAll();
+  if(!taskUsingAuth()){location.href='index.html';return;}
+  if(!cached || !taskScopeActive(taskLoadedScope)){loadLocal();document.getElementById('f-fecha').value=today();renderAll();}
   checkNotificaciones();
-  actualizarSyncStatus(localStorage.getItem(taskKey('mr_lastSync')) ? 'ok' : 'pending');
-  syncDown();
+  actualizarSyncStatus(taskHasPending()?'pending':taskSyncState?.lastSync?'ok':'pending');
+  await syncDown();if(taskHasPending())scheduleSync();
 }
 
 function today() { const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -418,18 +416,19 @@ async function taskAuthFetch(path, body) {
   return data;
 }
 
-async function refreshTaskSession() {
+async function refreshTaskSession(force=false) {
   const auth = getServerAuth();
   if (!auth?.refresh_token || !navigator.onLine) return false;
   const expiresAt = Number(auth.expires_at || 0) * 1000;
-  if (expiresAt && expiresAt - Date.now() > 60000) return true;
+  if (!force && expiresAt && expiresAt - Date.now() > 60000) return true;
   try {
     const data = await taskAuthFetch('token?grant_type=refresh_token', { refresh_token: auth.refresh_token });
+    if(getServerAuth()?.access_token!==auth.access_token)return false;
     setServerAuth({ ...auth, ...data });
     return true;
   } catch(e) {
     console.warn('Tasks session refresh:', e.message);
-    if (e.status === 401 || e.status === 403) setServerAuth(null);
+    if ((e.status === 401 || e.status === 403) && getServerAuth()?.access_token===auth.access_token) setServerAuth(null);
     return false;
   }
 }
@@ -446,23 +445,11 @@ function taskUsingAuth() {
   return !!getServerAuth()?.access_token && !!taskUserId() && !!taskWorkspaceId();
 }
 
-function taskKey(name) {
-  const wid = taskWorkspaceId();
-  return wid ? `${name}:${wid}` : name;
-}
 
-function loadLocal() {
-  try {
-    tasks     = JSON.parse(localStorage.getItem(taskKey('mr_tasks')) || '[]');
-    proyectos = JSON.parse(localStorage.getItem(taskKey('mr_projs')) || '[]');
-  } catch(e) {}
-}
 
-function saveLocal() {
-  localStorage.setItem(taskKey('mr_tasks'), JSON.stringify(tasks));
-  localStorage.setItem(taskKey('mr_projs'), JSON.stringify(proyectos));
-  if (!taskSyncBlocked) scheduleSync();
-}
+
+
+
 
 // ── Tabs ─────────────────────────────────────────────────────
 function showTab(tab) {
@@ -483,34 +470,32 @@ function renderAll() {
   renderTodas();
   renderProyectos();
   renderNotas();
+  if(document.getElementById('content-calendario').classList.contains('active'))renderCalendario();
+  if(document.getElementById('content-stats').classList.contains('active'))renderStats();
 }
 
 // ── Repetición: generar instancias ───────────────────────────
+function taskDateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function expandirRepeticion(t) {
-  // Retorna las tareas "visibles" incluyendo la base y las repetidas próximas
-  if (!t.repeticion || t.repeticion === 'ninguna') return [t];
-  const resultado = [t];
-  if (!t.fecha) return resultado;
-  const base = new Date(t.fecha + 'T12:00:00');
-  for (let i = 1; i <= 30; i++) {
-    const d = new Date(base);
-    if (t.repeticion === 'diaria') d.setDate(d.getDate() + i);
-    else if (t.repeticion === 'semanal') d.setDate(d.getDate() + i * 7);
-    else if (t.repeticion === 'mensual') d.setMonth(d.getMonth() + i);
-    const fechaStr = d.toISOString().slice(0,10);
-    if (fechaStr > addDays(today(), 60)) break;
-    // No mostrar instancias ya completadas
-    if (t.completadasFechas?.includes(fechaStr)) continue;
-    resultado.push({ ...t, id: t.id + '_' + fechaStr, fecha: fechaStr, _instancia: true, _baseId: t.id });
+  if(!['diaria','semanal','mensual'].includes(t.repeticion)||!t.fecha)return [t];
+  const base=new Date(t.fecha+'T12:00:00'),now=new Date(today()+'T12:00:00');
+  if(!Number.isFinite(base.getTime()))return [t];
+  const dayNumber=d=>Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000;
+  const elapsed=dayNumber(now)-dayNumber(base);
+  const first=t.repeticion==='mensual'?(now.getFullYear()-base.getFullYear())*12+now.getMonth()-base.getMonth():Math.floor(elapsed/(t.repeticion==='semanal'?7:1));
+  const result=[t],end=addDays(today(),60);
+  for(let index=Math.max(1,first);index<Math.max(1,first)+100;index++){
+    const d=new Date(base);
+    if(t.repeticion==='mensual'){
+      d.setDate(1);d.setMonth(base.getMonth()+index);d.setDate(Math.min(base.getDate(),new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));
+    }else d.setDate(base.getDate()+index*(t.repeticion==='semanal'?7:1));
+    const key=taskDateKey(d);if(key>end)break;
+    const done=!!t.completadasFechas?.includes(key);
+    result.push({...t,id:t.id+'_'+key,fecha:key,completada:done,completadaAt:done?key:null,_instancia:true,_baseId:t.id});
   }
-  return resultado;
+  return result;
 }
-
-function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T12:00:00');
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0,10);
-}
+function addDays(dateStr,n){const d=new Date(dateStr+'T12:00:00');d.setDate(d.getDate()+n);return taskDateKey(d);}
 
 function getAllTasks() {
   return tasks.flatMap(t => t.tipo !== 'nota' ? expandirRepeticion(t) : [t]);
@@ -522,7 +507,7 @@ function renderHoy() {
   const all = getAllTasks().filter(t => t.tipo !== 'nota' && !t.completada);
   const vencidas = all.filter(t => t.fecha && t.fecha < hoy);
   const deHoy    = all.filter(t => t.fecha === hoy);
-  const proximas = all.filter(t => t.fecha > hoy).slice(0, 5);
+  const proximas = all.filter(t => t.fecha > hoy).sort((a,b)=>a.fecha.localeCompare(b.fecha)).slice(0,5);
   const hechasHoy = getAllTasks().filter(t => t.completada && t.completadaAt?.slice(0,10) === hoy);
 
   document.getElementById('hoy-stats').innerHTML = `
@@ -622,6 +607,7 @@ function renderTodas() {
 }
 
 // ── PROYECTOS ────────────────────────────────────────────────
+function taskEsc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function renderProyectos() {
   let html = `<button onclick="abrirNuevoProyecto()" style="width:100%;padding:12px;border-radius:14px;border:2px dashed var(--border2);background:transparent;color:var(--text2);font-size:13px;cursor:pointer;margin-bottom:10px">+ Nuevo proyecto</button>`;
   html += proyectos.map(p => {
@@ -629,9 +615,9 @@ function renderProyectos() {
     const pendientes = tasks.filter(t => t.proyecto === p.id && !t.completada && t.tipo !== 'nota').length;
     const pct = total ? Math.round((total-pendientes)/total*100) : 0;
     return `<div class="proj-card" onclick="abrirProyecto('${p.id}')">
-      <div class="proj-icon" style="background:${p.color}22">${p.icono}</div>
+      <div class="proj-icon" style="background:${p.color}22">${taskEsc(p.icono)}</div>
       <div class="proj-info">
-        <div class="proj-name">${p.nombre}</div>
+        <div class="proj-name">${taskEsc(p.nombre)}</div>
         <div class="proj-count">${pendientes} pendiente${pendientes!==1?'s':''} · ${pct}% completado</div>
         <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:5px;overflow:hidden">
           <div style="height:100%;width:${pct}%;background:${p.color};border-radius:2px"></div>
@@ -649,12 +635,12 @@ function renderProyectos() {
 
 // ── NOTAS ────────────────────────────────────────────────────
 function renderNotas() {
-  const notas = tasks.filter(t => t.tipo === 'nota').sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+  const notas = tasks.filter(t => t.tipo === 'nota').sort((a,b) => String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
   document.getElementById('notas-list').innerHTML = notas.length
     ? notas.map(n => `<div class="nota-card" onclick="editarTask('${n.id}')">
-        <div class="nota-titulo">${n.titulo}</div>
-        ${n.descripcion ? `<div class="nota-body">${n.descripcion}</div>` : ''}
-        <div class="nota-fecha">${n.createdAt.slice(0,10)}</div>
+        <div class="nota-titulo">${taskEsc(n.titulo)}</div>
+        ${n.descripcion ? `<div class="nota-body">${taskEsc(n.descripcion)}</div>` : ''}
+        <div class="nota-fecha">${taskEsc((n.createdAt||'').slice(0,10))}</div>
       </div>`).join('')
     : '<div class="empty">Sin notas aún 📝</div>';
 }
@@ -710,7 +696,7 @@ function renderStats() {
     const pct = ptotal ? Math.round(pcomp/ptotal*100) : 0;
     return `<div style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-        <span>${p.icono} ${p.nombre}</span><span style="color:var(--text3)">${pcomp}/${ptotal}</span>
+        <span>${taskEsc(p.icono)} ${taskEsc(p.nombre)}</span><span style="color:var(--text3)">${pcomp}/${ptotal}</span>
       </div>
       <div style="height:6px;background:var(--bg3);border-radius:4px;overflow:hidden">
         <div style="height:100%;width:${pct}%;background:${p.color};border-radius:4px"></div>
@@ -752,7 +738,7 @@ function taskHTML(t) {
           <div class="subtask-check ${s.done?'done':''}" onclick="event.stopPropagation();toggleSubtarea('${baseId}',${i})">
             ${s.done?'<svg viewBox="0 0 24 24" width="9" height="9" stroke="white" fill="none" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':''}
           </div>
-          <span style="${s.done?'text-decoration:line-through;color:var(--text3)':''}">${s.titulo}</span>
+          <span style="${s.done?'text-decoration:line-through;color:var(--text3)':''}">${taskEsc(s.titulo)}</span>
         </div>`).join('')}
       <div class="tiempo-bar"><div class="tiempo-fill" style="width:${pct}%"></div></div>
     </div>`;
@@ -774,12 +760,12 @@ function taskHTML(t) {
         ${t.completada?'<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" fill="none" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':''}
       </div>
       <div class="task-body">
-        <div class="task-title">${repIco}${t.titulo}</div>
+        <div class="task-title">${repIco}${taskEsc(t.titulo)}</div>
         <div class="task-meta">
           <span class="tag tag-tipo">${tipoIco} ${t.tipo}</span>
           <span class="tag ${prioClass}">${t.prioridad}</span>
           ${fechaStr?`<span class="tag-fecha" style="${vencida?'color:var(--red)':''}">📅 ${fechaStr}</span>`:''}
-          ${proj?`<span class="tag" style="background:${proj.color}22;color:${proj.color}">${proj.icono} ${proj.nombre}</span>`:''}
+          ${proj?`<span class="tag" style="background:${proj.color}22;color:${proj.color}">${taskEsc(proj.icono)} ${taskEsc(proj.nombre)}</span>`:''}
         </div>
         ${tiempoHTML}
       </div>
@@ -790,6 +776,7 @@ function taskHTML(t) {
 
 // ── Toggle ───────────────────────────────────────────────────
 function toggleTask(id) {
+  if(!ensureTaskScope())return;
   // Si es instancia de repeticion
   const isInstancia = id.includes('_20');
   if (isInstancia) {
@@ -803,7 +790,7 @@ function toggleTask(id) {
       base.completadasFechas.push(fechaInst);
     }
     base.updatedAt = new Date().toISOString();
-    saveLocal(); renderAll(); return;
+    if(!saveLocal())return; renderAll(); return;
   }
   const t = tasks.find(t => t.id === id);
   if (!t) return;
@@ -815,15 +802,16 @@ function toggleTask(id) {
     const r = prompt('¿Cuántos minutos tardaste realmente? (dejar vacío para omitir)');
     if (r && !isNaN(parseInt(r))) t.tiempoReal = parseInt(r);
   }
-  saveLocal(); renderAll();
+  if(!saveLocal())return; renderAll();
 }
 
 function toggleSubtarea(taskId, idx) {
+  if(!ensureTaskScope())return;
   const t = tasks.find(t => t.id === taskId);
   if (!t || !t.subtareas?.[idx]) return;
   t.subtareas[idx].done = !t.subtareas[idx].done;
   t.updatedAt = new Date().toISOString();
-  saveLocal(); renderAll();
+  if(!saveLocal())return; renderAll();
 }
 
 // ── Form ─────────────────────────────────────────────────────
@@ -868,16 +856,18 @@ function editarTask(id) {
 
 function llenarSelectProyectos() {
   document.getElementById('f-proyecto').innerHTML = '<option value="">Sin proyecto</option>' +
-    proyectos.map(p => `<option value="${p.id}">${p.icono} ${p.nombre}</option>`).join('');
+    proyectos.map(p => `<option value="${p.id}">${taskEsc(p.icono)} ${taskEsc(p.nombre)}</option>`).join('');
 }
 
 function guardarTask() {
+  if(!ensureTaskScope())return;
   const titulo = document.getElementById('f-titulo').value.trim();
-  if (!titulo) { alert('Ingresa un título'); return; }
+  if (!titulo) { taskNotice('Escribe un título para guardar.',true); return; }
   const tiempoEst  = parseInt(document.getElementById('f-tiempo-est').value) || 0;
   const tiempoReal = parseInt(document.getElementById('f-tiempo-real').value) || 0;
+  if(tiempoEst<0 || tiempoReal<0){taskNotice('El tiempo debe ser cero o mayor.',true);return;}
   const t = {
-    id:           editingId || 'tk' + Date.now(),
+    id:           editingId || 'tk-' + taskRevision(),
     tipo:         _tipo,
     titulo,
     descripcion:  document.getElementById('f-desc').value.trim(),
@@ -905,15 +895,16 @@ function guardarTask() {
   } else {
     tasks.unshift(t);
   }
-  if (t.tipo === 'recordatorio' && t.fecha && t.hora) programarNotificacion(t);
-  saveLocal(); cerrarModal('modal-nuevo'); renderAll();
+  if(!saveLocal())return;
+  if (t.tipo === 'recordatorio' && t.fecha && t.hora) programarNotificacion(t); cerrarModal('modal-nuevo'); renderAll();
 }
 
 function eliminarTask() {
+  if(!ensureTaskScope())return;
   if (!editingId) return;
   markTaskDeleted('tasks', editingId);
   tasks = tasks.filter(t => t.id !== editingId);
-  saveLocal(); cerrarModal('modal-nuevo'); renderAll();
+  if(!saveLocal())return; cerrarModal('modal-nuevo'); renderAll();
 }
 
 // ── Subtareas ────────────────────────────────────────────────
@@ -932,7 +923,7 @@ function renderSubtareasEdit() {
       <div class="subtask-check ${s.done?'done':''}" onclick="toggleSubEdit(${i})">
         ${s.done?'<svg viewBox="0 0 24 24" width="8" height="8" stroke="white" fill="none" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':''}
       </div>
-      <span style="flex:1;font-size:12px;${s.done?'text-decoration:line-through;color:var(--text3)':''}">${s.titulo}</span>
+      <span style="flex:1;font-size:12px;${s.done?'text-decoration:line-through;color:var(--text3)':''}">${taskEsc(s.titulo)}</span>
       <button onclick="borrarSubEdit(${i})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px">×</button>
     </div>`
   ).join('');
@@ -973,20 +964,21 @@ function abrirNuevoProyecto() {
 
 function renderColorRow(sel) {
   document.getElementById('color-row').innerHTML = COLORES.map(c =>
-    `<div class="color-dot ${c===sel?'active':''}" style="background:${c}" onclick="selectColor('${c}')"></div>`).join('');
+    `<div class="color-dot ${c===sel?'active':''}" data-color="${c}" style="background:${c}" onclick="selectColor('${c}')"></div>`).join('');
 }
 
 function selectColor(c) { renderColorRow(c); }
 
 function guardarProyecto() {
+  if(!ensureTaskScope())return;
   const nombre = document.getElementById('fp-nombre').value.trim();
-  if (!nombre) { alert('Ingresa un nombre'); return; }
-  const color = document.querySelector('.color-dot.active')?.style.background || COLORES[0];
+  if (!nombre) { taskNotice('Escribe un nombre para el proyecto.',true); return; }
+  const color = document.querySelector('.color-dot.active')?.dataset.color || COLORES[0];
   const now = new Date().toISOString();
-  const p = { id: editingProjId||'pj'+Date.now(), nombre, icono: document.getElementById('fp-icono').value||'📁', color, createdAt: now, updatedAt: now };
+  const p = { id: editingProjId||'pj-'+taskRevision(), nombre, icono: document.getElementById('fp-icono').value||'📁', color, createdAt: now, updatedAt: now };
   if (editingProjId) { const i = proyectos.findIndex(x=>x.id===editingProjId); if(i>=0) proyectos[i]=p; }
   else proyectos.unshift(p);
-  saveLocal(); cerrarModal('modal-proyecto'); renderAll();
+  if(!saveLocal())return; cerrarModal('modal-proyecto'); renderAll();
 }
 
 function abrirProyecto(id) {
@@ -1000,6 +992,7 @@ function abrirProyecto(id) {
 }
 
 function eliminarProyecto() {
+  if(!ensureTaskScope())return;
   if (!editingProjId||!confirm('¿Eliminar proyecto?')) return;
   markTaskDeleted('projects', editingProjId);
   proyectos = proyectos.filter(p=>p.id!==editingProjId);
@@ -1009,62 +1002,53 @@ function eliminarProyecto() {
       t.updatedAt = new Date().toISOString();
     }
   });
-  saveLocal(); cerrarModal('modal-proj'); renderAll();
+  if(!saveLocal())return; cerrarModal('modal-proj'); renderAll();
 }
 
 // ── Notificaciones ───────────────────────────────────────────
+const taskNotificationTimers=new Map();
 async function solicitarNotificaciones() {
-  if (!('Notification' in window)) { alert('Tu navegador no soporta notificaciones'); return; }
-  const p = await Notification.requestPermission();
-  alert(p==='granted' ? '🔔 Notificaciones activadas ✓' : 'Notificaciones denegadas. Actívalas en ajustes del navegador.');
+  if(!('Notification' in window)){taskNotice('Este dispositivo no permite avisos aquí. Tus pendientes siguen disponibles en Hoy.',true);return;}
+  try{
+    const permission=await Notification.requestPermission();
+    taskNotice(permission==='granted'?'Avisos activados mientras la app esté abierta. Revisa Hoy al volver a abrirla.':'No se activaron los avisos. Puedes habilitarlos en los ajustes del dispositivo.',permission!=='granted');
+    checkNotificaciones();
+  }catch{taskNotice('No se pudo activar los avisos. Revisa los permisos del dispositivo.',true);}
 }
-
 function programarNotificacion(t) {
-  if (!('Notification' in window) || Notification.permission!=='granted') return;
-  const dt = new Date(t.fecha+'T'+t.hora);
-  const delay = dt - Date.now();
-  if (delay<=0) return;
-  setTimeout(()=>new Notification('🔔 '+t.titulo,{body:t.descripcion||'Recordatorio',icon:'icon-192.png'}), delay);
+  clearTimeout(taskNotificationTimers.get(t.id));taskNotificationTimers.delete(t.id);
+  if(!('Notification' in window)||Notification.permission!=='granted'||t.tipo!=='recordatorio'||t.completada||!t.fecha||!t.hora)return;
+  const due=new Date(t.fecha+'T'+t.hora).getTime(),delay=due-Date.now();
+  if(!Number.isFinite(delay)||delay<=0)return;
+  taskNotificationTimers.set(t.id,setTimeout(async()=>{
+    taskNotificationTimers.delete(t.id);
+    const current=getAllTasks().find(row=>row.id===t.id);
+    if(!current||current.completada||current.tipo!=='recordatorio'||current.fecha!==t.fecha||current.hora!==t.hora)return;
+    if(Date.now()<due){checkNotificaciones();return;}
+    const options={body:current.descripcion||'Recordatorio',icon:'icon-192.png',tag:'task-'+current.id};
+    try{const registration=await navigator.serviceWorker?.getRegistration();if(registration?.showNotification)await registration.showNotification(current.titulo,options);else new Notification(current.titulo,options);}
+    catch{taskNotice('No se pudo mostrar el aviso. El recordatorio sigue en Hoy.',true);}
+  },Math.min(delay,86400000)));
 }
-
 function checkNotificaciones() {
-  if (!('Notification' in window) || Notification.permission!=='granted') return;
-  const ahora = Date.now();
-  tasks.filter(t=>t.tipo==='recordatorio'&&t.fecha&&t.hora&&!t.completada).forEach(t=>{
-    const dt = new Date(t.fecha+'T'+t.hora);
-    const diff = dt-ahora;
-    if (diff>0&&diff<86400000) programarNotificacion(t);
+  for(const timer of taskNotificationTimers.values())clearTimeout(timer);taskNotificationTimers.clear();
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  getAllTasks().filter(t=>t.tipo==='recordatorio'&&!t.completada&&t.fecha&&t.hora).forEach(t=>{
+    const diff=new Date(t.fecha+'T'+t.hora).getTime()-Date.now();if(diff>0&&diff<=86400000)programarNotificacion(t);
   });
 }
+window.addEventListener('focus',()=>{checkNotificaciones();renderAll();});
+setInterval(()=>{if(document.visibilityState==='visible'){checkNotificaciones();renderAll();}},60000);
 
 // ── Sync ─────────────────────────────────────────────────────
 function taskDeviceId() { return localStorage.getItem('syncDeviceId') || 'tasks_device'; }
 function taskHeaders(extra = {}) {
   return extra;
 }
-async function taskFetch(path, opts = {}) {
-  if (!usingSqliteApi()) throw new Error('Servidor SQLite no configurado');
-  const auth = getServerAuth();
-  const headers = {
-    ...(opts.headers || {}),
-    'Authorization': 'Bearer ' + (auth?.access_token || '')
-  };
-  const res = await fetch(`${sqliteApiBase()}/rest/${path}`, { ...opts, headers });
-  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
-  return res;
-}
-function getTaskDeleted() {
-  try { return JSON.parse(localStorage.getItem(taskKey('mr_deleted')) || '{}'); } catch(e) { return {}; }
-}
-function setTaskDeleted(data) { localStorage.setItem(taskKey('mr_deleted'), JSON.stringify(data)); }
-function markTaskDeleted(kind, id) {
-  if (!id) return;
-  const deleted = getTaskDeleted();
-  if (!deleted[kind]) deleted[kind] = [];
-  const row = { id: String(id), deleted_at: new Date().toISOString(), updated_by_device: taskDeviceId() };
-  deleted[kind] = [row, ...deleted[kind].filter(x => x.id !== row.id)].slice(0, 300);
-  setTaskDeleted(deleted);
-}
+
+
+
+
 function taskRowUpdatedMs(row) {
   return new Date(row?.updated_at || row?.data?.updatedAt || 0).getTime() || 0;
 }
@@ -1077,101 +1061,18 @@ function dedupeTaskRows(rows) {
   });
   return [...byKey.values()];
 }
-async function taskUpsert(table, rows) {
-  if (!rows.length) return;
-  const scopedRows = dedupeTaskRows(rows.map(r => ({ ...r, workspace_id: r.workspace_id || taskWorkspaceId() })));
-  await taskFetch(`${table}?on_conflict=workspace_id,id`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},
-    body: JSON.stringify(scopedRows)
-  });
-}
-async function taskSoftDelete(table, rows) {
-  const done = [];
-  for (const row of dedupeTaskRows((rows || []).map(r => ({ ...r, workspace_id: taskWorkspaceId() })))) {
-    await taskFetch(`${table}?workspace_id=eq.${encodeURIComponent(taskWorkspaceId())}&id=eq.${encodeURIComponent(row.id)}`, {
-      method:'PATCH',
-      headers:{'Content-Type':'application/json','Prefer':'return=minimal'},
-      body: JSON.stringify({ deleted_at: row.deleted_at, updated_at: row.deleted_at, updated_by_device: row.updated_by_device || taskDeviceId() })
-    });
-    done.push(row.id);
-  }
-  return done;
-}
-function clearTaskDeleted(kind, ids) {
-  const deleted = getTaskDeleted();
-  if (!deleted[kind]) return;
-  const done = new Set(ids.map(String));
-  deleted[kind] = deleted[kind].filter(x => !done.has(String(x.id)));
-  setTaskDeleted(deleted);
-}
 
-let _syncTimer;
-function scheduleSync() {
-  actualizarSyncStatus('pending');
-  if (!navigator.onLine) return;
-  clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(syncUp, 250);
-}
 
-let _taskSyncLock = false;
-let _taskSyncQueued = false;
-async function syncUp() {
-  if (!taskUsingAuth() || !navigator.onLine) return;
-  if (_taskSyncLock) { _taskSyncQueued = true; return; }
-  _taskSyncLock = true;
-  actualizarSyncStatus('syncing');
-  const now = new Date().toISOString();
-  try {
-    const lastSync = new Date(localStorage.getItem(taskKey('mr_lastSync')) || 0).getTime();
-    if (!lastSync) { await syncDown(true); return; }
-    const changed = x => x.updatedAt && new Date(x.updatedAt).getTime() > lastSync - 5000;
-    const rowsTasks = tasks.filter(changed).map(t => ({ workspace_id: taskWorkspaceId(), id:String(t.id), data:t, updated_at:t.updatedAt, updated_by_device:taskDeviceId(), deleted_at:null }));
-    const rowsProjects = proyectos.filter(changed).map(p => ({ workspace_id: taskWorkspaceId(), id:String(p.id), data:p, updated_at:p.updatedAt, updated_by_device:taskDeviceId(), deleted_at:null }));
-    await taskUpsert('gs_tasks', rowsTasks);
-    await taskUpsert('gs_task_projects', rowsProjects);
-    const deleted = getTaskDeleted();
-    const doneTasks = await taskSoftDelete('gs_tasks', deleted.tasks || []);
-    const doneProjects = await taskSoftDelete('gs_task_projects', deleted.projects || []);
-    if (doneTasks.length) clearTaskDeleted('tasks', doneTasks);
-    if (doneProjects.length) clearTaskDeleted('projects', doneProjects);
-    localStorage.setItem(taskKey('mr_lastSync'), new Date().toISOString());
-    actualizarSyncStatus('ok');
-  } catch(e) {
-    console.warn('Sync tareas servidor:', e);
-    actualizarSyncStatus('error');
-  } finally {
-    _taskSyncLock = false;
-    if (_taskSyncQueued) {
-      _taskSyncQueued = false;
-      setTimeout(syncUp, 50);
-    }
-  }
-}
 
-async function syncDown(force = false) {
-  if (!taskUsingAuth() || !navigator.onLine) return;
-  try {
-    actualizarSyncStatus('syncing');
-    const workspaceFilter = `workspace_id=eq.${encodeURIComponent(taskWorkspaceId())}`;
-    const [taskRows, projectRows] = await Promise.all([
-      taskFetch(`gs_tasks?select=id,data,updated_at,deleted_at&${workspaceFilter}&order=updated_at.asc`).then(r => r.json()),
-      taskFetch(`gs_task_projects?select=id,data,updated_at,deleted_at&${workspaceFilter}&order=updated_at.asc`).then(r => r.json())
-    ]);
-    if (taskRows.length || projectRows.length || force) {
-      tasks = taskRows.filter(r => !r.deleted_at).map(r => r.data);
-      proyectos = projectRows.filter(r => !r.deleted_at).map(r => r.data);
-      localStorage.setItem(taskKey('mr_lastSync'), new Date().toISOString());
-      taskSyncBlocked = true;
-      saveLocal();
-      taskSyncBlocked = false;
-      renderAll(); actualizarSyncStatus('ok'); return;
-    }
-  } catch(e) {
-    console.warn('Descarga tareas servidor:', e);
-    actualizarSyncStatus('error');
-  }
-}
+
+
+
+
+
+
+
+
+
 
 window.addEventListener('online', async () => {
   if (!taskUsingAuth()) return;
@@ -1184,7 +1085,7 @@ function actualizarSyncStatus(estado) {
   const el = document.getElementById('mr-sync-status');
   if (!el) return;
   if (estado === 'ok') {
-    const ts = localStorage.getItem(taskKey('mr_lastSync'));
+    const ts = taskSyncState?.lastSync;
     const hora = ts ? new Date(ts).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '';
     el.textContent = '✓ ' + hora;
     el.style.background = 'rgba(34,211,165,.15)';
@@ -1213,7 +1114,8 @@ document.getElementById('f-tiempo-est').addEventListener('input', function(){
 });
 document.getElementById('f-subtarea-nueva').addEventListener('keydown', e => { if(e.key==='Enter'){e.preventDefault();agregarSubtarea();}});
 
-init();
+window.addEventListener('DOMContentLoaded',init);
 </script>
+<script src="task-sync.js?v=20261025d"></script>
 </body>
 </html>

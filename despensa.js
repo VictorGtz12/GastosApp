@@ -59,6 +59,13 @@ function pantryMark(keys) {
   queueSyncOperation('pantry', { keys });
 }
 
+function pantryTransactionSnapshot() {
+  return cloneData({financial:expenseTransactionSnapshot(),pantryProducts,pantryBarcodes,pantryCategories,pantryLocations,pantryLots,pantryMovements,pantryMovementLines,pantryExpirationProfiles,pantryOcrCorrections});
+}
+function restorePantryTransaction(snapshot) {
+  ({pantryProducts,pantryBarcodes,pantryCategories,pantryLocations,pantryLots,pantryMovements,pantryMovementLines,pantryExpirationProfiles,pantryOcrCorrections}=snapshot);
+  restoreExpenseTransaction(snapshot.financial);
+}
 function savePantry(keys = ['pantry']) {
   normalizePantryState();
   pantryMark(keys);
@@ -303,7 +310,8 @@ function compressPantryImage(file) {
   });
 }
 
-function savePantryProduct(productId = '', origin = '') {
+function savePantryProduct(...args) { return runLocalTransaction(()=>savePantryProductImpl(...args),pantryTransactionSnapshot,restorePantryTransaction); }
+function savePantryProductImpl(productId = '', origin = '') {
   const name = document.getElementById('pantry-prod-name').value.trim();
   if (!name) { showToast('Nombre requerido'); return; }
   const now = pantryNow();
@@ -335,8 +343,8 @@ function savePantryProduct(productId = '', origin = '') {
     if (existing) Object.assign(existing, { product_id: p.id, principal: true, activo: true, updatedAt: now });
     else pantryBarcodes.push({ id: pantryId('bar'), product_id: p.id, barcode, principal: true, activo: true, created_at: now, updatedAt: now });
   }
-  closeModal('modal-pantry-form');
   savePantry(['pantryProducts','pantryBarcodes']);
+  closeModal('modal-pantry-form');
   showToast('Producto guardado');
   if (origin === 'entry' || pantryFlow?.origin === 'entry') {
     openPantryEntry(p.id);
@@ -361,7 +369,7 @@ function renderPantryEntryForm(productId = '') {
     <h2>Entrada</h2>
     <div class="field"><label>Producto <span class="req">*</span></label><div style="display:flex;gap:8px"><select id="pantry-entry-product" onchange="pantryEntryProductChanged()" style="flex:1">${pantryProductOptions(productId, false)}</select><button class="mbtn sec" type="button" onclick="scanPantryForEntry()" style="flex:0 0 auto">📷</button></div><button class="btn-cancel" style="width:100%;margin-top:8px" onclick="openPantryProductForm('', 'entry')">Registrar producto nuevo</button></div>
     ${!pantryProducts.length ? '<div class="auth-error" style="display:block">Primero registra un producto maestro. No se creará inventario hasta confirmar una entrada.</div>' : ''}
-    <div class="field"><label>Cantidad <span class="req">*</span></label><input type="number" id="pantry-entry-qty" min="0.01" step="1" inputmode="decimal" value="1"></div>
+    <div class="field"><label>Cantidad <span class="req">*</span></label><input type="number" id="pantry-entry-qty" min="0.01" step="0.01" inputmode="decimal" value="1"></div>
     <div class="field"><label>Ubicación efectiva <span class="req">*</span></label><select id="pantry-entry-location">${pantrySelectOptions(pantryLocations, p?.default_location_id || pantryLocations[0]?.id)}</select></div>
     <div class="field"><label>Caducidad</label><div style="display:flex;gap:8px"><input type="date" id="pantry-entry-exp"><button class="mbtn sec" style="flex:0 0 auto" onclick="startPantryOcr('pantry-entry-exp','${pantryEsc(productId)}')">Escanear fecha</button></div><label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" id="pantry-entry-no-exp" onchange="document.getElementById('pantry-entry-exp').disabled=this.checked">Sin fecha de caducidad</label><input type="hidden" id="pantry-entry-exp-precision" value="DAY"><input type="hidden" id="pantry-entry-exp-source" value="manual"><input type="hidden" id="pantry-entry-exp-confidence" value=""></div>
     <div class="field"><label>Número de lote</label><input type="text" id="pantry-entry-lot" placeholder="Opcional"></div>
@@ -389,11 +397,12 @@ function scanPantryForEntry() {
   });
 }
 
-function confirmPantryEntry() {
+function confirmPantryEntry(...args) { return runLocalTransaction(()=>confirmPantryEntryImpl(...args),pantryTransactionSnapshot,restorePantryTransaction); }
+function confirmPantryEntryImpl() {
   const productId = document.getElementById('pantry-entry-product')?.value;
   const qty = Number(document.getElementById('pantry-entry-qty')?.value || 0);
   const loc = document.getElementById('pantry-entry-location')?.value;
-  if (!productId || !(qty > 0) || !loc) { showToast('Completa producto, cantidad y ubicación'); return; }
+  if (!pantryProduct(productId) || !Number.isFinite(qty) || !(qty > 0) || !pantryLocation(loc)) { showToast('Completa producto, cantidad y ubicación'); return; }
   const noExp = document.getElementById('pantry-entry-no-exp')?.checked;
   const exp = noExp ? '' : (document.getElementById('pantry-entry-exp')?.value || '');
   const lotNumber = (document.getElementById('pantry-entry-lot')?.value || '').trim();
@@ -415,8 +424,8 @@ function confirmPantryEntry() {
   if (!compatible) pantryLots.push(lot);
   recordPantryMovement('ENTRY', productId, [{ lot_id: lot.id, product_id: productId, quantity: qty, destination_location_id: loc }]);
   learnPantryExpiration(productId, exp);
-  closeModal('modal-pantry-form');
   savePantry(['pantryLots','pantryMovements','pantryMovementLines','pantryExpirationProfiles']);
+  closeModal('modal-pantry-form');
   showToast('Entrada registrada');
 }
 
@@ -436,7 +445,7 @@ function openPantryOutForm(type, productId = '', preferredLotId = '') {
   openPantryModal(`
     <h2>${type === 'WASTE' ? 'Tirar' : 'Salida'}</h2>
     <div class="field"><label>Producto <span class="req">*</span></label><div style="display:flex;gap:8px"><select id="pantry-out-product" onchange="refreshPantryOutLots('${type}')" style="flex:1">${pantryProductOptions(productId, onlyStock)}</select><button class="mbtn sec" type="button" onclick="scanPantryForOut('${type}')" style="flex:0 0 auto">📷</button></div></div>
-    <div class="field"><label>Cantidad <span class="req">*</span></label><input type="number" id="pantry-out-qty" min="0.01" step="1" inputmode="decimal" value="1" oninput="refreshPantryOutLots('${type}')"></div>
+    <div class="field"><label>Cantidad <span class="req">*</span></label><input type="number" id="pantry-out-qty" min="0.01" step="0.01" inputmode="decimal" value="1" oninput="refreshPantryOutLots('${type}')"></div>
     ${type === 'WASTE' ? `<div class="field"><label>Motivo</label><select id="pantry-out-reason">${PANTRY_WASTE_REASONS.map(r => `<option>${pantryEsc(r)}</option>`).join('')}</select></div>` : ''}
     <div id="pantry-out-lots"></div>
     <div class="modal-actions"><button class="mbtn sec" onclick="closeModal('modal-pantry-form')">Cancelar</button><button class="mbtn prim" onclick="confirmPantryOut('${type}')">Confirmar</button></div>
@@ -479,17 +488,18 @@ function scanPantryForOut(type) {
   });
 }
 
-function confirmPantryOut(type) {
+function confirmPantryOut(...args) { return runLocalTransaction(()=>confirmPantryOutImpl(...args),pantryTransactionSnapshot,restorePantryTransaction); }
+function confirmPantryOutImpl(type) {
   const productId = document.getElementById('pantry-out-product')?.value;
   const requested = Number(document.getElementById('pantry-out-qty')?.value || 0);
   const selected = Array.from(document.querySelectorAll('.pantry-out-lot-qty')).map(el => ({ lot: pantryLots.find(l => String(l.id) === String(el.dataset.lot)), quantity: Number(el.value || 0) })).filter(x => x.lot && x.quantity > 0);
   const total = selected.reduce((s, x) => s + x.quantity, 0);
-  if (!productId || !(requested > 0) || Math.abs(total - requested) > 0.0001) { showToast('La selección debe sumar la cantidad indicada'); return; }
+  if (!productId || !Number.isFinite(requested) || !(requested > 0) || Math.abs(total - requested) > 0.0001) { showToast('La selección debe sumar la cantidad indicada'); return; }
   if (selected.some(x => x.quantity > Number(x.lot.quantity || 0))) { showToast('No puede quedar inventario negativo'); return; }
   selected.forEach(x => { x.lot.quantity = Number(x.lot.quantity || 0) - x.quantity; x.lot.updated_at = pantryNow(); x.lot.updatedAt = x.lot.updated_at; });
   recordPantryMovement(type, productId, selected.map(x => ({ lot_id: x.lot.id, product_id: productId, quantity: x.quantity, source_location_id: x.lot.location_id })), { reason: document.getElementById('pantry-out-reason')?.value || '' });
-  closeModal('modal-pantry-form');
   savePantry(['pantryLots','pantryMovements','pantryMovementLines']);
+  closeModal('modal-pantry-form');
   showToast(type === 'WASTE' ? 'Desecho registrado' : 'Salida registrada');
 }
 
@@ -510,9 +520,9 @@ function openPantryAdjustment(lotId = '') {
   const productId = lot?.product_id || '';
   openPantryModal(`
     <h2>Ajuste de inventario</h2>
-    <div class="field"><label>Producto</label><select id="pantry-adj-product" onchange="refreshPantryAdjustmentLots()">${pantryProductOptions(productId, true)}</select></div>
-    <div class="field"><label>Lote</label><select id="pantry-adj-lot"></select></div>
-    <div class="field"><label>Cantidad física real</label><input type="number" id="pantry-adj-qty" min="0" step="1" inputmode="decimal" value="${lot ? Number(lot.quantity || 0) : 0}"></div>
+    <div class="field"><label>Producto</label><select id="pantry-adj-product" onchange="refreshPantryAdjustmentLots()">${pantryProductOptions(productId, false)}</select></div>
+    <div class="field"><label>Lote</label><select id="pantry-adj-lot" onchange="updatePantryAdjustmentQuantity()"></select></div>
+    <div class="field"><label>Cantidad física real</label><input type="number" id="pantry-adj-qty" min="0" step="0.01" inputmode="decimal" value="${lot ? Number(lot.quantity || 0) : 0}"></div>
     <div class="field"><label>Motivo / nota</label><input type="text" id="pantry-adj-reason" placeholder="Ej. conteo físico, merma no registrada..."></div>
     <div class="modal-actions"><button class="mbtn sec" onclick="closeModal('modal-pantry-form')">Cancelar</button><button class="mbtn prim" onclick="confirmPantryAdjustment()">Registrar ajuste</button></div>
   `);
@@ -524,17 +534,21 @@ function refreshPantryAdjustmentLots(selected = '') {
   const productId = document.getElementById('pantry-adj-product')?.value;
   const select = document.getElementById('pantry-adj-lot');
   if (!select) return;
-  const lots = pantryLotsForProduct(productId).sort(pantryLotSort);
+  const lots = pantryLots.filter(l=>String(l.product_id)===String(productId)).sort(pantryLotSort);
   select.innerHTML = lots.map(l => `<option value="${pantryEsc(l.id)}" ${String(selected) === String(l.id) ? 'selected' : ''}>${Number(l.quantity || 0)} · ${pantryExpirationLabel(l)} · ${pantryEsc(pantryName(pantryLocations, l.location_id))}</option>`).join('');
-  const lot = pantryLots.find(l => String(l.id) === String(select.value));
-  const qty = document.getElementById('pantry-adj-qty');
-  if (qty && lot) qty.value = Number(lot.quantity || 0);
+  updatePantryAdjustmentQuantity();
+}
+function updatePantryAdjustmentQuantity() {
+  const lot=pantryLots.find(l=>String(l.id)===String(document.getElementById('pantry-adj-lot')?.value));
+  document.getElementById('pantry-adj-qty').value=lot?Number(lot.quantity||0):'';
 }
 
-function confirmPantryAdjustment() {
+function confirmPantryAdjustment(...args) { return runLocalTransaction(()=>confirmPantryAdjustmentImpl(...args),pantryTransactionSnapshot,restorePantryTransaction); }
+function confirmPantryAdjustmentImpl() {
   const lot = pantryLots.find(l => String(l.id) === String(document.getElementById('pantry-adj-lot')?.value));
-  const physical = Number(document.getElementById('pantry-adj-qty')?.value || 0);
-  if (!lot || physical < 0) { showToast('Selecciona lote y cantidad válida'); return; }
+  const raw=document.getElementById('pantry-adj-qty')?.value;
+  const physical = Number(raw);
+  if (!lot || !raw?.trim() || !Number.isFinite(physical) || physical < 0) { showToast('Selecciona lote y cantidad válida'); return; }
   const before = Number(lot.quantity || 0);
   const delta = physical - before;
   if (delta === 0) { showToast('No hay diferencia que ajustar'); return; }
@@ -549,8 +563,8 @@ function confirmPantryAdjustment() {
     quantity_after: physical,
     source_location_id: lot.location_id
   }], { reason: document.getElementById('pantry-adj-reason')?.value || 'Ajuste físico' });
-  closeModal('modal-pantry-form');
   savePantry(['pantryLots','pantryMovements','pantryMovementLines']);
+  closeModal('modal-pantry-form');
   showToast('Ajuste registrado');
 }
 
@@ -562,7 +576,8 @@ function refreshPantryTransferLots() {
   wrap.innerHTML = lots.map(l => `<div class="pantry-card"><label class="pantry-meta">${Number(l.quantity || 0)} · ${pantryExpirationLabel(l)} · ${pantryEsc(pantryName(pantryLocations, l.location_id))}</label><input type="number" class="pantry-transfer-lot-qty" data-lot="${pantryEsc(l.id)}" min="0" max="${Number(l.quantity || 0)}" step="1" value="0" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)"></div>`).join('');
 }
 
-function confirmPantryTransfer() {
+function confirmPantryTransfer(...args) { return runLocalTransaction(()=>confirmPantryTransferImpl(...args),pantryTransactionSnapshot,restorePantryTransaction); }
+function confirmPantryTransferImpl() {
   const productId = document.getElementById('pantry-transfer-product')?.value;
   const dest = document.getElementById('pantry-transfer-dest')?.value;
   const selected = Array.from(document.querySelectorAll('.pantry-transfer-lot-qty')).map(el => ({ lot: pantryLots.find(l => String(l.id) === String(el.dataset.lot)), quantity: Number(el.value || 0) })).filter(x => x.lot && x.quantity > 0);
@@ -583,8 +598,8 @@ function confirmPantryTransfer() {
   });
   if (!lines.length) { showToast('El destino es igual al origen'); return; }
   recordPantryMovement('TRANSFER', productId, lines);
-  closeModal('modal-pantry-form');
   savePantry(['pantryLots','pantryMovements','pantryMovementLines']);
+  closeModal('modal-pantry-form');
   showToast('Movimiento registrado');
 }
 
@@ -601,11 +616,13 @@ function openPantryProductMovements(productId) {
 
 function openPantryCatalogForm(type, id = '') {
   const list = type === 'category' ? pantryCategories : pantryLocations;
+  if(list.some(x=>String(x.id)!==String(id) && x.activo!==false && normalizarTextoRegla(x.nombre)===normalizarTextoRegla(name))){showToast('Ya existe ese nombre');return;}
   const item = list.find(x => String(x.id) === String(id)) || {};
   openPantryModal(`<h2>${id ? 'Editar' : 'Agregar'} ${type === 'category' ? 'categoría' : 'ubicación'}</h2><div class="field"><label>Nombre</label><input id="pantry-catalog-name" value="${pantryEsc(item.nombre || '')}"></div><div class="modal-actions"><button class="mbtn sec" onclick="closeModal('modal-pantry-form')">Cancelar</button><button class="mbtn prim" onclick="savePantryCatalog('${type}','${pantryEsc(id)}')">Guardar</button></div>`);
 }
 
-function savePantryCatalog(type, id = '') {
+function savePantryCatalog(...args) { return runLocalTransaction(()=>savePantryCatalogImpl(...args),pantryTransactionSnapshot,restorePantryTransaction); }
+function savePantryCatalogImpl(type, id = '') {
   const name = document.getElementById('pantry-catalog-name').value.trim();
   if (!name) { showToast('Nombre requerido'); return; }
   const list = type === 'category' ? pantryCategories : pantryLocations;
@@ -613,37 +630,52 @@ function savePantryCatalog(type, id = '') {
   const item = list.find(x => String(x.id) === String(id)) || { id: pantryId(type === 'category' ? 'pcat' : 'ploc'), createdAt: pantryNow(), activo: true };
   item.nombre = name; item.updatedAt = pantryNow();
   if (!list.includes(item)) list.push(item);
-  closeModal('modal-pantry-form');
   savePantry([key]);
+  closeModal('modal-pantry-form');
   renderDespensa(type === 'category' ? 'categorias' : 'ubicaciones');
 }
 
+function stopPantryCamera(kind) {
+  const state=kind==='scan'?pantryScanner:pantryOcr;
+  state.session=(state.session||0)+1;
+  try{state.controls?.stop?.();}catch{}
+  state.stream?.getTracks?.().forEach(track=>track.stop());state.stream=null;state.controls=null;state.reading=false;
+  const video=document.getElementById(kind==='scan'?'pantry-scan-video':'pantry-ocr-video');if(video)video.srcObject=null;
+}
 async function startPantryScanner(callback) {
+  stopPantryCamera('scan');const session=pantryScanner.session;
+  pantryScanner.lastCode='';pantryScanner.lastAt=0;
   pantryScanner.callback = callback;
   openModal('modal-pantry-scan');
   const status = document.getElementById('pantry-scan-status');
   try {
     const video = document.getElementById('pantry-scan-video');
-    pantryScanner.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    if(session!==pantryScanner.session){stream.getTracks().forEach(track=>track.stop());return;}
+    pantryScanner.stream=stream;
     video.srcObject = pantryScanner.stream;
     if ('BarcodeDetector' in window) {
       const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix'] });
       const tick = async () => {
-        if (!pantryScanner.stream) return;
+        if (!pantryScanner.stream || session!==pantryScanner.session) return;
         const codes = await detector.detect(video).catch(() => []);
+        if(session!==pantryScanner.session)return;
         if (codes[0]?.rawValue) return pantryScannerFound(codes[0].rawValue);
         requestAnimationFrame(tick);
       };
       tick();
     } else if (window.ZXingBrowser?.BrowserMultiFormatReader) {
       const reader = new ZXingBrowser.BrowserMultiFormatReader();
-      pantryScanner.controls = await reader.decodeFromVideoElement(video, (result) => {
-        if (result?.getText) pantryScannerFound(result.getText());
+      const controls = await reader.decodeFromVideoElement(video, (result) => {
+        if (session===pantryScanner.session && result?.getText) pantryScannerFound(result.getText());
       });
+      if(session!==pantryScanner.session){controls?.stop?.();return;}
+      pantryScanner.controls=controls;
     } else {
       status.textContent = 'Lector no disponible. Ingresa el código manualmente.';
     }
   } catch(e) {
+    if(session!==pantryScanner.session)return;
     pantryScanner.stream?.getTracks?.().forEach(t => t.stop());
     pantryScanner.stream = null;
     status.textContent = 'No se pudo abrir la cámara. Ingresa manualmente.';
@@ -660,12 +692,7 @@ function pantryScannerFound(code) {
   if (cb) cb(String(code).trim());
 }
 
-function closePantryScanner() {
-  try { pantryScanner.controls?.stop?.(); } catch(e) {}
-  pantryScanner.stream?.getTracks?.().forEach(t => t.stop());
-  pantryScanner.stream = null; pantryScanner.controls = null;
-  closeModal('modal-pantry-scan');
-}
+function closePantryScanner() { closeModal('modal-pantry-scan'); }
 
 function manualPantryBarcode() {
   const code = prompt('Código de barras');
@@ -673,31 +700,41 @@ function manualPantryBarcode() {
 }
 
 async function startPantryOcr(inputId, productId = '') {
+  stopPantryCamera('ocr');const session=pantryOcr.session;
   pantryOcr.targetInput = inputId;
   pantryOcr.productId = productId || document.getElementById('pantry-entry-product')?.value || '';
   openModal('modal-pantry-ocr');
   const status = document.getElementById('pantry-ocr-status');
   try {
     const video = document.getElementById('pantry-ocr-video');
-    pantryOcr.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    if(session!==pantryOcr.session){stream.getTracks().forEach(track=>track.stop());return;}
+    pantryOcr.stream=stream;
     video.srcObject = pantryOcr.stream;
     status.textContent = 'Enfoca la fecha y toca Escanear';
   } catch(e) {
-    status.textContent = 'No se pudo abrir la cámara';
+    if(session!==pantryOcr.session)return;
+    status.textContent = 'No se pudo abrir la cámara. Puedes escribir la fecha manualmente.';
   }
 }
 
 async function capturePantryExpiration() {
+  const session=pantryOcr.session;
+  if(pantryOcr.reading)return;
   const status = document.getElementById('pantry-ocr-status');
   const video = document.getElementById('pantry-ocr-video');
   const canvas = document.getElementById('pantry-ocr-canvas');
   if (!window.Tesseract) { status.textContent = 'OCR no disponible. Ingresa la fecha manualmente.'; return; }
+  if(!pantryOcr.stream || video.readyState<2){status.textContent='Espera a que abra la cámara o escribe la fecha manualmente.';return;}
+  pantryOcr.reading=true;
   status.textContent = 'Leyendo fecha...';
   const w = video.videoWidth || 1280, h = video.videoHeight || 720;
   const sx = Math.round(w * .12), sy = Math.round(h * .34), sw = Math.round(w * .76), sh = Math.round(h * .2);
   canvas.width = sw; canvas.height = sh;
-  canvas.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+  try{canvas.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,sw,sh);}catch{pantryOcr.reading=false;status.textContent='No se pudo capturar la imagen. Intenta de nuevo o escribe la fecha.';return;}
   const result = await Tesseract.recognize(canvas, 'eng+spa').catch(e => ({ data: { text: '' }, error: e }));
+  if(session!==pantryOcr.session)return;
+  pantryOcr.reading=false;
   const text = result.data?.text || '';
   pantryOcr.originalText = text;
   const parsed = parsePantryExpirationText(text, pantryOcr.productId);
@@ -706,11 +743,7 @@ async function capturePantryExpiration() {
   showPantryOcrSuggestion(parsed, text);
 }
 
-function closePantryOcr() {
-  pantryOcr.stream?.getTracks?.().forEach(t => t.stop());
-  pantryOcr.stream = null;
-  closeModal('modal-pantry-ocr');
-}
+function closePantryOcr() { closeModal('modal-pantry-ocr'); }
 
 function showPantryOcrSuggestion(parsed, text) {
   const label = pantryExpirationLabel({ expiration_date: parsed.date, expiration_precision: parsed.precision });

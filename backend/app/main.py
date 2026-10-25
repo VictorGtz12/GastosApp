@@ -337,6 +337,10 @@ def rest_get(conn, current, table: str, params: dict[str, str]):
         raise HTTPException(status_code=400, detail="Orden no soportado")
     sql += f" order by {order[0]} {order[1]}"
     rows = conn.execute(sql, args).fetchall()
+    offset = params.get("offset", "0")
+    if not offset.isdigit():
+        raise HTTPException(status_code=400, detail="Desplazamiento no válido")
+    rows = rows[int(offset):]
     limit = params.get("limit")
     if limit and limit.isdigit():
         rows = rows[: int(limit)]
@@ -442,7 +446,7 @@ def rest_patch(conn, current, table: str, params: dict[str, str], row: dict[str,
 @app.get("/{path:path}")
 def static_frontend(path: str):
     public_files = {
-        "index.html", "tasks.html", "app.js", "db.js", "despensa.js", "mobile-ui.js",
+        "index.html", "tasks.html", "app.js", "db.js", "despensa.js", "mobile-ui.js", "movement-filters.js", "task-sync.js",
         "mobile.css", "theme.js", "sw.js", "manifest.json", "icon-192.png", "icon-512.png",
         "parsers.js", "conciliacion.js", "cuentas-finanzas.js",
     }

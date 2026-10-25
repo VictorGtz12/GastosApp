@@ -56,6 +56,20 @@ async function seed(page) {
     const page=await context.newPage();const errors=[];
     page.on('pageerror',err=>errors.push(err.message));
     await page.goto(base);await page.waitForSelector('#modal-auth.open');await seed(page);
+    if(process.env.REMINDER_ONLY){
+      await require('./reminders.cjs')(context,check,base);
+      await context.close();console.log(`Verified ${checks.length} reminder scenarios.`);return;
+    }
+    if(process.env.FLOW_ONLY){
+      await require('./flows.cjs')(page,context,check,seed);
+      assert.deepEqual(errors,[],'No browser runtime errors');
+      await context.close();console.log(`Verified ${checks.length} flow scenarios.`);return;
+    }
+    if(process.env.MOVEMENT_ONLY){
+      await require('./movement-ui.cjs')(page,check,seed);
+      assert.deepEqual(errors,[],'No browser runtime errors');
+      await context.close();console.log(`Verified ${checks.length} movement scenarios.`);return;
+    }
     if(process.env.REGRESSION_ONLY){
       await require('./regressions.cjs')(page,context,check,seed);
       assert.deepEqual(errors,[],'No browser runtime errors');
@@ -214,6 +228,9 @@ async function seed(page) {
       await page.goto(base);await page.waitForSelector('#main-app[style*="block"]');
     });
     await require('./regressions.cjs')(page,context,check,seed);
+    await require('./movement-ui.cjs')(page,check,seed);
+    await require('./flows.cjs')(page,context,check,seed);
+    await require('./reminders.cjs')(context,check,base);
     // Capture final examples using only generated fixtures.
     await page.evaluate(()=>{closeModal('modal-auth');aplicarTema('oscuro');showTab('nuevo');});
     await page.setViewportSize({width:390,height:844});
@@ -236,13 +253,19 @@ async function seed(page) {
       await offlinePage.waitForFunction(()=>!!navigator.serviceWorker.controller);
       await offlinePage.waitForLoadState('networkidle');
       await offlinePage.waitForSelector('#modal-auth.open');
-      const assets=await offlinePage.evaluate(async()=>{const cache=await caches.open('gastos-v2.76');return (await cache.keys()).map(r=>new URL(r.url).pathname);});
-      for(const asset of ['/mobile.css','/mobile-ui.js','/theme.js'])assert.ok(assets.includes(asset),asset+' must be cached');
+      const assets=await offlinePage.evaluate(async()=>{const cache=await caches.open('gastos-v2.78');return (await cache.keys()).map(r=>new URL(r.url).pathname);});
+      for(const asset of ['/mobile.css','/mobile-ui.js','/theme.js','/movement-filters.js','/task-sync.js'])assert.ok(assets.includes(asset),asset+' must be cached');
       await pwa.setOffline(true);
       await offlinePage.goto(base+'/index.html',{waitUntil:'domcontentloaded'});
       await offlinePage.waitForSelector('#modal-auth.open');
       assert.equal(await offlinePage.evaluate(()=>typeof uiRenderMovements),'function');
+      assert.equal(await offlinePage.evaluate(()=>typeof MovementFilters.query),'function');
       assert.equal(await offlinePage.evaluate(()=>getComputedStyle(document.querySelector('.tabs')).position),'fixed');
+      await seed(offlinePage);
+      await offlinePage.goto(base+'/tasks.html',{waitUntil:'domcontentloaded'});
+      await offlinePage.waitForFunction(()=>typeof taskLoadedScope!=='undefined' && !!taskLoadedScope?.workspaceId);
+      assert.equal(await offlinePage.evaluate(()=>typeof taskSyncState),'object');
+      assert.equal(await offlinePage.locator('#content-hoy').isVisible(),true);
       await pwa.close();
       } finally {await cacheBrowser.close();}
     });

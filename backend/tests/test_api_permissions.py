@@ -98,6 +98,26 @@ class ApiPermissionsTests(unittest.TestCase):
                         api.static_frontend(name)
                     self.assertEqual(error.exception.status_code, 404)
 
+    def test_movement_filter_module_is_public_but_other_javascript_is_private(self):
+        root = Path(self.directory.name) / "frontend"
+        root.mkdir()
+        source = "globalThis.MovementFilters = {};"
+        (root / "movement-filters.js").write_text(source)
+        (root / "private.js").write_text("private fixture")
+        with patch.object(api, "ROOT_DIR", root):
+            response = self.client.get("/movement-filters.js?v=20261025c")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.text, source)
+            self.assertEqual(self.client.get("/private.js").status_code, 404)
+
+    def test_task_pagination_applies_offset_after_filtering_and_ordering(self):
+        rows = [{"id":str(i), "workspace_id":"one", "data":{"id":str(i),"titulo":"Fixture"}, "updated_at":utc_now()} for i in range(3)]
+        self.assertEqual(self.client.post("/api/rest/gs_tasks", headers=self.headers(), json=rows).status_code, 200)
+        response = self.client.get("/api/rest/gs_tasks?workspace_id=eq.one&order=id.asc&limit=2&offset=2", headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.json()], ["2"])
+        self.assertEqual(self.client.get("/api/rest/gs_tasks?workspace_id=eq.one&offset=-1", headers=self.headers()).status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

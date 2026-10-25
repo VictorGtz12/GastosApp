@@ -1,7 +1,8 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.76';
+const APP_VERSION = 'v2.78';
+let activeLocalTransaction = null;
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -150,7 +151,7 @@ const fmtD = d => {
   if (typeof d === 'string') return d.slice(0,10);
   if (d instanceof Date) {
     if (isNaN(d.getTime())) return '';
-    return d.toISOString().slice(0,10);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
   return String(d).slice(0,10);
 };
@@ -2093,7 +2094,7 @@ function exportarConciliacion() {
   const clave = `${concilCuenta}|${concilPeriodo}`;
   const [, hasta] = concilPeriodo.split('|');
   const desde = periodoDesde(concilPeriodo);
-  const all = [...gastos, ...historico];
+  const all = MovementFilters.collect(gastos,historico);
   const items = gastosEnPeriodo(all, concilCuenta,
     new Date(desde + 'T00:00:00'), new Date(hasta + 'T23:59:59'));
 
@@ -2315,6 +2316,7 @@ function saveLocal() {
     };
     localStorage.setItem(appDataStorageKey(), JSON.stringify(data));
     persisted = true;
+    if (activeLocalTransaction) activeLocalTransaction.persisted = true;
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
     if (!syncBloqueado) queueSyncOperation(tabActualGlobal === 'ahorros' ? 'ahorros' : tabActualGlobal === 'recurrentes' ? 'recurrentes' : tabActualGlobal === 'deudas' ? 'deudas' : tabActualGlobal === 'despensa' ? 'pantry' : 'gastos', { tab: tabActualGlobal || 'menu' });
@@ -2716,19 +2718,20 @@ function toggleEdicionMasiva() {
   const toolbar = document.getElementById('toolbar-masiva');
   const btn = document.getElementById('btn-edicion-masiva');
   if (toolbar) toolbar.style.display = modoMasivo ? 'flex' : 'none';
-  if (btn) { btn.textContent = modoMasivo ? '✕ Editar' : '✏️ Editar'; btn.style.borderColor = modoMasivo ? 'var(--accent)' : 'var(--border2)'; btn.style.color = modoMasivo ? 'var(--accent2)' : 'var(--text2)'; }
+  if (btn) { btn.textContent = modoMasivo ? 'Terminar selección' : 'Seleccionar gastos'; btn.style.borderColor = modoMasivo ? 'var(--accent)' : 'var(--border2)'; btn.style.color = modoMasivo ? 'var(--accent2)' : 'var(--text2)'; }
   if (modoMasivo) {
-    // Llenar selects
+    document.getElementById('masiva-estado').value = '';
     const sc = document.getElementById('masiva-cuenta');
     const sm = document.getElementById('masiva-motivo');
-    if (sc) sc.innerHTML = '<option value="">— Cuenta —</option>' + getCuentas().map(c => `<option value="${c}">${c}</option>`).join('');
-    if (sm) sm.innerHTML = '<option value="">— Motivo —</option>' + catalogoMotivos.map(m => `<option value="${m}">${m}</option>`).join('');
+    if (sc) sc.innerHTML = '<option value="">— Cuenta —</option>' + MovementFilters.options(getCuentas()).map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    if (sm) sm.innerHTML = '<option value="">— Motivo —</option>' + MovementFilters.options(catalogoMotivos).map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
   }
   actualizarConteoMasiva();
   renderGastos();
 }
 
 function toggleSeleccionMasiva(id) {
+  if (!modoMasivo || !uiCanSelectMovement(id)) return;
   if (seleccionMasiva.has(id)) seleccionMasiva.delete(id);
   else seleccionMasiva.add(id);
   actualizarConteoMasiva();
@@ -2736,125 +2739,51 @@ function toggleSeleccionMasiva(id) {
 }
 
 function actualizarConteoMasiva() {
+  const apply = document.getElementById('bulk-apply');
+  if (apply) apply.disabled = !modoMasivo || !seleccionMasiva.size;
   const el = document.getElementById('masiva-count');
   if (el) el.textContent = `${seleccionMasiva.size} seleccionado${seleccionMasiva.size !== 1 ? 's' : ''}`;
 }
 
 function aplicarEdicionMasiva() {
-  if (!seleccionMasiva.size) { showToast('Selecciona al menos un gasto'); return; }
-  const cuenta  = document.getElementById('masiva-cuenta')?.value;
-  const motivo  = document.getElementById('masiva-motivo')?.value;
-  const estado  = document.getElementById('masiva-estado')?.value;
+  if (!modoMasivo) return;
+  uiRenderMovements(); // Revalidate selection against the current filters and data.
+  if (!seleccionMasiva.size) { showToast('Selecciona al menos un gasto visible'); return; }
+  const cuenta = document.getElementById('masiva-cuenta').value;
+  const motivo = document.getElementById('masiva-motivo').value;
+  const estado = document.getElementById('masiva-estado').value;
   if (!cuenta && !motivo && !estado) { showToast('Selecciona al menos un campo a cambiar'); return; }
-
-  let count = 0;
-  gastos.forEach(g => {
-    if (!seleccionMasiva.has(g.id)) return;
-    if (cuenta) g.cuenta = cuenta;
-    if (motivo) g.motivo = motivo;
-    if (estado === 'abonado')    { g.abonado = true; }
-    if (estado === 'pendiente')  { g.abonado = false; }
-    if (estado === 'ignorar')    { g.ignorar = true; }
-    if (estado === 'no-ignorar') { g.ignorar = false; }
-    g.updatedAt = new Date().toISOString();
-    count++;
-  });
-
-  saveLocal();
-  showToast(`${count} gastos actualizados ✓`);
-  toggleEdicionMasiva();
-  renderMenu();
+  const selected = gastos.filter(g=>seleccionMasiva.has(g.id));
+  if (selected.some(g=>MovementFilters.flag(g.abonoTarjeta)) &&
+      ((cuenta && !getCortesConfig()[cuenta]) || ['pendiente','no-ignorar'].includes(estado))) {
+    showToast('Los abonos deben permanecer en una tarjeta, abonados y fuera del presupuesto.');return;
+  }
+  const snapshot = expenseTransactionSnapshot();
+  try {
+    for (const g of selected) {
+      if (cuenta) { g.cuenta = cuenta; g.periodoCorte = calcularPeriodoCorte(cuenta,g.fecha); }
+      if (motivo) g.motivo = motivo;
+      if (estado==='abonado') g.abonado=true;
+      if (estado==='pendiente') g.abonado=false;
+      if (estado==='ignorar') g.ignorar=true;
+      if (estado==='no-ignorar') g.ignorar=false;
+      g.updatedAt = new Date().toISOString();
+    }
+    saveLocal();
+  } catch(error) {
+    restoreExpenseTransaction(snapshot);
+    showToast('No se pudo guardar. La selección sigue disponible para reintentar.');return;
+  }
+  toggleEdicionMasiva();renderMenu();
+  showToast(`${selected.length} movimiento${selected.length===1?'':'s'} actualizado${selected.length===1?'':'s'} ✓`);
 }
 
 function renderGastos() {
   if (window.uiRenderMovements) return uiRenderMovements();
-  const q = (document.getElementById('search-in').value || '').toLowerCase();
-  const histPendientes = historico
-    .filter(g => !g.abonado && !g.ignorar && g.externo === 'no')
-    .map(g => ({...g, _esHistorico: true, _histPendiente: true}));
-  const histAlert = document.getElementById('gastos-hist-pend-alert');
-  const histAlertText = document.getElementById('gastos-hist-pend-text');
-  if (histAlert) {
-    histAlert.style.display = histPendientes.length && activeFilter !== 'hist-pendiente' ? 'flex' : 'none';
-    if (histAlertText) {
-      const totalHistPend = histPendientes.reduce((s, g) => s + Number(g.cantidad || 0), 0);
-      histAlertText.textContent = `${histPendientes.length} pendiente${histPendientes.length !== 1 ? 's' : ''} por ${fmt(totalHistPend)}`;
-    }
-  }
-
-  let list = gastos.filter(g => {
-    if (activeFilter === 'pendiente') return !g.abonado;
-    if (activeFilter === 'abonado')   return g.abonado;
-    if (activeFilter === 'ignorar')   return g.ignorar;
-    if (activeFilter === 'externo')   return g.externo !== 'no';
-    if (activeFilter === 'hist-pendiente') return false;
-    return true;
-  }).filter(g => !q ||
-    g.motivo.toLowerCase().includes(q) ||
-    g.cuenta.toLowerCase().includes(q) ||
-    (g.comentarios||'').toLowerCase().includes(q) ||
-    String(g.cantidad).includes(q)
-  );
-  if (activeFilter === 'pendiente' || activeFilter === 'hist-pendiente') {
-    const histMatches = histPendientes.filter(g => !q ||
-      g.motivo.toLowerCase().includes(q) ||
-      g.cuenta.toLowerCase().includes(q) ||
-      (g.comentarios||'').toLowerCase().includes(q) ||
-      String(g.cantidad).includes(q)
-    );
-    list = [...list, ...histMatches];
-  }
-  // Búsqueda global: incluir histórico cuando hay texto
-  if (q && activeFilter === 'todos') {
-    const enHist = historico.filter(g =>
-      g.motivo.toLowerCase().includes(q) ||
-      g.cuenta.toLowerCase().includes(q) ||
-      (g.comentarios||'').toLowerCase().includes(q) ||
-      String(g.cantidad).includes(q)
-    ).map(g => ({...g, _esHistorico: true}));
-    if (enHist.length) list = [...list, ...enHist];
-  }
-  list = list.sort((a,b) => (Number(b.id)||0) - (Number(a.id)||0) || String(b.fecha).localeCompare(String(a.fecha)));
-  const el = document.getElementById('gastos-list');
-  const resumenSinAbonar = activeFilter === 'pendiente' ? renderResumenSinAbonarPorCuenta(list) : '';
-  if (!list.length) { el.innerHTML = resumenSinAbonar || '<div class="empty">Sin gastos registrados</div>'; return; }
-  el.innerHTML = resumenSinAbonar + list.map(g => {
-    const iE = g.externo === 'externo', iP = g.externo === 'pagado';
-    const historicoBloqueaMasivo = modoMasivo && g._esHistorico;
-    const seleccionado = modoMasivo && !g._esHistorico && seleccionMasiva.has(g.id);
-    return `<div class="gasto-item ${iE?'ext-pend':iP?'ext-paid':''}" style="${g.ignorar?'opacity:.55':''}${seleccionado?';border-color:var(--accent);background:rgba(108,99,255,.08)':''}" onclick="${modoMasivo&&!g._esHistorico?`toggleSeleccionMasiva(${g.id})`:''}">
-      ${modoMasivo && !g._esHistorico
-        ? `<div style="width:22px;height:22px;border-radius:6px;border:2px solid ${seleccionado?'var(--accent)':'var(--border2)'};background:${seleccionado?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${seleccionado?'<span style="color:white;font-size:12px">✓</span>':''}</div>`
-        : `<div class="gasto-icon" onclick="openDetail(${g.id})">${getMotivoIcon(g.motivo)||'📋'}</div>`
-      }
-      <div class="gasto-info" onclick="${modoMasivo&&!g._esHistorico?`toggleSeleccionMasiva(${g.id})`:`openDetail(${g.id})`}">
-        <div class="gasto-motivo">${escapeHtml(g.motivo)}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${escapeHtml(g.ahorroDesc)}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}${g._histPendiente?' <span style="font-size:9px;background:rgba(255,159,67,.16);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">sin abonar</span>':''}</div>
-        <div class="gasto-meta">${escapeHtml(g.cuenta)}${g.comentarios?' · '+escapeHtml(g.comentarios):''} · ${escapeHtml(g.fecha)}</div>
-        <div class="badges">
-          ${g.ignorar ? '<span class="badge ignorar">🚫 Ignorado</span>' : ''}
-          ${!g.ignorar && iE ? '<span class="badge ext">📤 Externo</span>' : ''}
-          ${!g.ignorar && iP ? '<span class="badge ext-paid">✅ Cobrado</span>' : ''}
-          ${!iE && !iP ? `<span class="badge ${g.abonado?'ab':'pend'}">${g.abonado?'✓ Abonado':'✗ Pendiente'}</span>` : ''}
-          ${historicoBloqueaMasivo ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">Edita en historial</span>' : ''}
-          ${gastoPendienteSync(g) ? '<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);border:1px solid rgba(255,159,67,.3);padding:1px 6px;border-radius:6px;font-weight:600">⬆️ Sin sync</span>' : ''}
-          ${g.desdeConciliador ? '<span style="font-size:9px;background:rgba(108,99,255,.15);color:var(--accent2);border:1px solid rgba(108,99,255,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Banco</span>' : ''}
-          ${g.abonoTarjeta ? '<span style="font-size:9px;background:rgba(34,211,165,.15);color:var(--green);border:1px solid rgba(34,211,165,.3);padding:1px 6px;border-radius:6px;font-weight:600">🏦 Abono</span>' : ''}
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-        <div class="gasto-monto" onclick="openDetail(${g.id})" style="${g.ignorar||iP?'text-decoration:line-through;color:var(--text2)':iE?'color:var(--orange)':''}">${fmt(g.cantidad)}</div>
-        ${g._esHistorico&&!modoMasivo?`<button onclick="editarHistorico(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
-        ${!g._esHistorico&&!modoMasivo?`<button onclick="editarDirecto(${g.id})" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:5px 8px;font-size:11px;cursor:pointer;flex-shrink:0">✏️</button>`:''}
-      </div>
-    </div>`;
-  }).join('');
 }
 
 function renderResumenSinAbonarPorCuenta(list) {
-  const pendientes = (list || []).filter(g =>
-    !g.abonado &&
-    !g.abonoTarjeta
-  );
+  const pendientes = (list || []).filter(g => MovementFilters.paymentState(g)==='pendiente');
   if (!pendientes.length) return '';
   const porCuenta = new Map();
   pendientes.forEach(g => {
@@ -2867,7 +2796,7 @@ function renderResumenSinAbonarPorCuenta(list) {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px;min-width:0">
           <span class="dot" style="background:${getCuentaColor(cuenta) || '#888'}"></span>
-          <span style="font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cuenta}</span>
+          <span style="font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(cuenta)}</span>
         </div>
         <span style="font-size:13px;color:var(--orange);font-weight:800">${fmt(total)}</span>
       </div>`)
@@ -2878,7 +2807,7 @@ function renderResumenSinAbonarPorCuenta(list) {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:var(--orange);font-weight:800;text-transform:uppercase;letter-spacing:.4px">Falta por abonar</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px">${pendientes.length} gasto${pendientes.length === 1 ? '' : 's'} pendiente${pendientes.length === 1 ? '' : 's'} en tarjeta</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${pendientes.length} gasto${pendientes.length === 1 ? '' : 's'} pendiente${pendientes.length === 1 ? '' : 's'} en esta selección</div>
         </div>
         <div style="font-size:17px;color:var(--text);font-weight:800;white-space:nowrap">${fmt(totalGeneral)}</div>
       </div>
@@ -2887,29 +2816,13 @@ function renderResumenSinAbonarPorCuenta(list) {
 }
 
 function setFilter(f) {
-  if (f === 'hist-pendiente' && modoMasivo) {
-    modoMasivo = false;
-    seleccionMasiva.clear();
-    const toolbar = document.getElementById('toolbar-masiva');
-    const btn = document.getElementById('btn-edicion-masiva');
-    if (toolbar) toolbar.style.display = 'none';
-    if (btn) {
-      btn.textContent = '✏️ Editar';
-      btn.style.borderColor = 'var(--border2)';
-      btn.style.color = 'var(--text2)';
-    }
-    actualizarConteoMasiva();
-  }
-  activeFilter = f;
-  ['todos','pendiente','abonado','hist-pendiente','ignorar','externo'].forEach(x =>
-    document.getElementById('f-'+x).classList.toggle('active', x===f)
-  );
+  activeFilter = MovementFilters.STATES.includes(f) ? f : 'todos';
   renderGastos();
 }
 
 // ── Externos ──────────────────────────────────────────────────
 function renderExternos() {
-  const todos = [...gastos,...historico].filter(g => g.externo !== 'no');
+  const todos = MovementFilters.collect(gastos,historico).filter(g => ['externo','pagado'].includes(g.externo));
   const pend  = todos.filter(g => g.externo === 'externo');
   const paid  = todos.filter(g => g.externo === 'pagado');
   document.getElementById('ext-pend-tot').textContent = fmt(pend.reduce((s,g)=>s+g.cantidad,0));
@@ -2948,12 +2861,16 @@ function renderExternos() {
 }
 
 function setExtFilter(f) {
-  extFilter = f;
-  ['todos','pendiente','pagado'].forEach(x => document.getElementById('ef-'+x).classList.toggle('active',x===f));
+  extFilter = ['todos','pendiente','pagado'].includes(f) ? f : 'todos';
+  ['todos','pendiente','pagado'].forEach(x => {
+    const button=document.getElementById('ef-'+x);
+    button.classList.toggle('active',x===extFilter);button.setAttribute('aria-pressed',x===extFilter);
+  });
   renderExternos();
 }
 
-function marcarExterno(id, estado) {
+function marcarExterno(...args) { return runLocalTransaction(()=>marcarExternoImpl(...args)); }
+function marcarExternoImpl(id, estado) {
   const g = gastos.find(x => String(x.id) === String(id)) || historico.find(x => String(x.id) === String(id));
   if (!g || !['pagado', 'externo'].includes(estado)) {
     showToast('No se encontró el gasto externo');
@@ -2979,34 +2896,21 @@ function marcarExterno(id, estado) {
 // ════════════════════════════════════════════════════════════
 
 // Calcula a qué período pertenece un gasto dado su fecha y cuenta
+function fechaCorteMes(year,month,day) {
+  return new Date(year,month,Math.min(day,new Date(year,month+1,0).getDate()),12);
+}
 function calcularPeriodoCorte(cuenta, fechaGasto) {
   const cfg = getCortesConfig()[cuenta];
   if (!cfg) return null; // cuenta sin corte (débito)
 
-  const fecha = new Date(String(fechaGasto).slice(0,10) + 'T12:00:00');
-  if (isNaN(fecha.getTime())) return null; // fecha inválida
-  const dia   = cfg.dia;
-
-  // El período cierra el día "dia" de cada mes
-  // Si el día del gasto <= dia de corte → pertenece al corte de ESTE mes
-  // Si el día del gasto >  dia de corte → pertenece al corte del MES SIGUIENTE
-  let anio = fecha.getFullYear();
-  let mes  = fecha.getMonth(); // 0-11
-
-  if (fecha.getDate() <= dia) {
-    // corte es este mes
-  } else {
-    // corte es el mes siguiente
-    mes++;
-    if (mes > 11) { mes = 0; anio++; }
+  const key=MovementFilters.date(fechaGasto);if(!key)return null;
+  const fecha=new Date(key+'T12:00:00'),candidates=[];
+  for(let offset=-1;offset<=2;offset++){
+    const base=fmtD(fechaCorteMes(fecha.getFullYear(),fecha.getMonth()+offset,cfg.dia));
+    const exception=excepciones.find(e=>e.Cuenta===cuenta&&e.FechaOriginal===base);
+    const effective=exception?.FechaExcepcion||base;if(effective>=key)candidates.push(effective);
   }
-
-  // Verificar excepción
-  const corteBase = new Date(anio, mes, dia);
-  const fBase = fmtD(corteBase);
-  const exc = excepciones.find(e => e.Cuenta === cuenta && e.FechaOriginal === fBase);
-  const fechaCorte = exc ? exc.FechaExcepcion : fBase;
-  return `${cuenta}|${fechaCorte}`;
+  candidates.sort();return candidates[0]?`${cuenta}|${candidates[0]}`:null;
 }
 
 // Obtiene inicio del período dado su clave "CUENTA|YYYY-MM-DD"
@@ -3015,10 +2919,11 @@ function periodoDesde(clave) {
   const cfg = getCortesConfig()[cuenta];
   if (!cfg) return null;
   // El inicio es el día siguiente al corte del mes anterior
-  const hasta = new Date(hastaStr + 'T12:00:00');
+  const nominal=excepciones.find(e=>e.Cuenta===cuenta&&e.FechaExcepcion===hastaStr)?.FechaOriginal||hastaStr;
+  const hasta = new Date(nominal + 'T12:00:00');
   const pm    = hasta.getMonth() === 0 ? 11 : hasta.getMonth() - 1;
   const py    = hasta.getMonth() === 0 ? hasta.getFullYear() - 1 : hasta.getFullYear();
-  const corteAntBase = fmtD(new Date(py, pm, cfg.dia));
+  const corteAntBase = fmtD(fechaCorteMes(py, pm, cfg.dia));
   const exc = excepciones.find(e => e.Cuenta === cuenta && e.FechaOriginal === corteAntBase);
   const corteAnt = exc ? exc.FechaExcepcion : corteAntBase;
   const d = new Date(corteAnt + 'T12:00:00');
@@ -3042,7 +2947,7 @@ function gastosEnPeriodo(all, cuenta, desde, hasta) {
 }
 
 function renderCortes() {
-  const all = [...gastos, ...historico];
+  const all = MovementFilters.collect(gastos,historico);
   const hoy = new Date();
   const cfg = getCortesConfig();
 
@@ -3084,7 +2989,7 @@ function renderCortes() {
   </div>`;
 
   const cards = estados.map(({cuenta, c, desde, hasta, totalGastos, totalAbonos, total, sinAbonar, histPend, externosPend, diasR, vencida}) => {
-    return `<div class="tarjeta-card" onclick="openCorteTarjeta('${cuenta}')" style="${vencida?'border-color:var(--orange)':''}">
+    return `<div class="tarjeta-card" data-account="${escapeHtml(cuenta)}" onclick="openCorteTarjeta(this.dataset.account)" style="${vencida?'border-color:var(--orange)':''}">
       <div class="tarjeta-header">
         <span class="tarjeta-nombre"><span class="dot" style="background:${c.color}"></span>${cuenta}</span>
         <span class="tarjeta-monto">${fmt(total)}</span>
@@ -3218,7 +3123,9 @@ function openCorteTarjeta(cuenta) {
     const key  = keysConGastos[periodoIdx] || keyActual;
     const hasta = key ? key.split('|')[1] : today();
     document.getElementById('exc-cuenta').textContent     = cuenta;
-    document.getElementById('exc-fecha-orig').textContent = hasta;
+    const original=excepciones.find(e=>e.Cuenta===cuenta&&e.FechaExcepcion===hasta)?.FechaOriginal||hasta;
+    document.getElementById('exc-fecha-orig').textContent = original;
+    document.getElementById('exc-periodo-key').value=original;
     document.getElementById('exc-fecha-nueva').value      = hasta;
     document.getElementById('exc-nota').value             = '';
     window._excCuenta    = cuenta;
@@ -3232,8 +3139,8 @@ function openCorteTarjeta(cuenta) {
 
 
 // ── Ahorros ───────────────────────────────────────────────────
-const saldoCuenta = c => c.movimientos.reduce((s,m) =>
-  (m.tipo==='abono'||m.tipo==='traspaso-in') ? s+m.cantidad : s-m.cantidad, 0);
+const saldoCuenta = c => Math.round(c.movimientos.reduce((s,m) =>
+  (m.tipo==='abono'||m.tipo==='traspaso-in') ? s+Number(m.cantidad) : s-Number(m.cantidad), 0)*100)/100+0;
 
 function renderAhorros() {
   const el = document.getElementById('ahorros-list');
@@ -3398,7 +3305,9 @@ function editarMovimientoAhorro(cuentaId, movIndex) {
   if (!c) return;
   const m = c.movimientos[movIndex];
   if (!m) return;
-  window._editarMovIndex = movIndex;
+  const linked=m.gastoId && !m.revertidoEn && ([...gastos,...historico].find(g=>g.id===m.gastoId));
+  if(linked){closeModal('modal-hist-ahorro');uiStartEdit(linked.id,!gastos.some(g=>g.id===linked.id));return;}
+  window._editarMovIndex = movIndex;window._editarMovScope=syncIdentity();
 
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
 
@@ -3444,16 +3353,19 @@ function pairedTransfer(cuentaId, movement) {
   return pair ? { cuenta: other, mov: pair, index: other.movimientos.indexOf(pair) } : null;
 }
 
-function confirmarEditarMovAhorro() {
+function confirmarEditarMovAhorro(...args) { return runLocalTransaction(()=>confirmarEditarMovAhorroImpl(...args)); }
+function confirmarEditarMovAhorroImpl() {
   const cuentaId = parseInt(document.getElementById('editar-mov-cuenta-id').value);
-  const movIndex = Number(window._editarMovIndex);
+  if(window._editarMovScope!==syncIdentity()){showToast('La base cambió. Abre otra vez el movimiento.');return;}
+  const movementId=document.getElementById('editar-mov-id').value;
+  const movIndex=cuentasAhorro.find(x=>x.id===cuentaId)?.movimientos.findIndex(m=>String(m.movId)===movementId)??-1;
   const c = cuentasAhorro.find(x => x.id === cuentaId);
   if (!c) return;
   const m = c.movimientos[movIndex];
   if (!m) return;
 
   const nuevaCantidad = parseFloat(document.getElementById('editar-mov-cantidad').value);
-  if (!Number.isFinite(nuevaCantidad) || nuevaCantidad <= 0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!validMoney(nuevaCantidad)) { showToast('Ingresa una cantidad válida'); return; }
   const nuevaNota = document.getElementById('editar-mov-nota').value || '';
   const nuevaFecha = document.getElementById('editar-mov-fecha').value || today();
 
@@ -3465,6 +3377,9 @@ function confirmarEditarMovAhorro() {
     const source = m.tipo === 'traspaso-out' ? c : pair.cuenta;
     if (nuevaCantidad > saldoCuenta(source) + Number(m.cantidad)) { showToast('Saldo insuficiente en la cuenta de origen'); return; }
   }
+
+  const projected=saldoCuenta(c)+(m.tipo==='abono'?nuevaCantidad-Number(m.cantidad):m.tipo==='retiro'?Number(m.cantidad)-nuevaCantidad:0);
+  if(projected < -0.000001){showToast('El cambio dejaría esta cuenta con saldo negativo');return;}
 
   // Actualizar este movimiento
   m.cantidad = nuevaCantidad;
@@ -3491,6 +3406,9 @@ function eliminarMovimientoAhorro(cuentaId, movIndex) {
   const c = cuentasAhorro.find(x => x.id === cuentaId);
   const m = c?.movimientos[movIndex];
   if (!c || !m) return;
+  if(m.gastoId && !m.revertidoEn && [...gastos,...historico].some(g=>g.id===m.gastoId)){
+    showToast('Este retiro pertenece a un gasto. Edita o elimina el gasto para conservar el saldo correcto.');return;
+  }
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
   document.getElementById('confirm-eliminar-desc').textContent =
     `${m.tipo === 'abono' || m.tipo === 'traspaso-in' ? 'Abono' : 'Retiro'} de ${fmt(m.cantidad)} - ${c.nombre}${esTraspaso ? ' (traspaso)' : ''}${esTraspaso ? ' · Se eliminará de ambas cuentas' : ''}`;
@@ -3504,7 +3422,8 @@ function eliminarMovimientoAhorro(cuentaId, movIndex) {
   window._eliminarModo = 'ahorro';
 }
 
-function confirmarEliminarMovimientoAhorroHandler() {
+function confirmarEliminarMovimientoAhorroHandler(...args) { return runLocalTransaction(()=>confirmarEliminarMovimientoAhorroHandlerImpl(...args)); }
+function confirmarEliminarMovimientoAhorroHandlerImpl() {
   const cuentaId = window._eliminarMovCuentaId;
   const movIndex = window._eliminarMovIndex;
   const c = cuentasAhorro.find(x => x.id === cuentaId);
@@ -3548,9 +3467,10 @@ function openMovAhorro(id, tipo) {
   openModal('modal-ahorro');
 }
 
-async function confirmarMovAhorro() {
+function confirmarMovAhorro(...args) { return runLocalTransaction(()=>confirmarMovAhorroImpl(...args)); }
+async function confirmarMovAhorroImpl() {
   const cantidad = parseFloat(document.getElementById('ahorro-cantidad').value);
-  if (!Number.isFinite(cantidad)||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!validMoney(cantidad)) { showToast('Ingresa una cantidad válida'); return; }
   const nota = document.getElementById('ahorro-nota').value;
   const c = cuentasAhorro.find(x=>x.id===movCuentaId);
   if (!c) return;
@@ -3594,9 +3514,10 @@ function openTraspaso(origenId) {
   openModal('modal-traspaso');
 }
 
-async function confirmarTraspaso() {
+function confirmarTraspaso(...args) { return runLocalTransaction(()=>confirmarTraspasoImpl(...args)); }
+async function confirmarTraspasoImpl() {
   const cantidad   = parseFloat(document.getElementById('traspaso-cantidad').value);
-  if (!Number.isFinite(cantidad)||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!validMoney(cantidad)) { showToast('Ingresa una cantidad válida'); return; }
   const destinoId  = parseInt(document.getElementById('traspaso-destino').value);
   const nota       = document.getElementById('traspaso-nota').value;
   const origen     = cuentasAhorro.find(x=>x.id===traspasoOrigenId);
@@ -3641,24 +3562,32 @@ function editarCuentaAhorro(id) {
   openModal('modal-nueva-cuenta');
 }
 
-async function crearCuentaAhorro() {
+function crearCuentaAhorro(...args) { return runLocalTransaction(()=>crearCuentaAhorroImpl(...args)); }
+async function crearCuentaAhorroImpl() {
   const nombre      = document.getElementById('nc-nombre').value.trim();
   if (!nombre) { showToast('Ingresa un nombre'); return; }
-  const meta        = parseFloat(document.getElementById('nc-meta').value) || 0;
+  if (cuentasAhorro.some(c=>c.id!==_editAhorroId && normalizarTextoRegla(c.nombre)===normalizarTextoRegla(nombre))) { showToast('Ya existe una cuenta de ahorro con ese nombre'); return; }
+  const meta = Number(document.getElementById('nc-meta').value || 0);
+  const initial = Number(document.getElementById('nc-saldo-inicial').value || 0);
+  if (!validMoney(meta,true) || !validMoney(initial,true)) { showToast('La meta y el saldo inicial deben ser cero o mayores'); return; }
   const grupo       = document.getElementById('nc-grupo').value.trim() || 'General';
   const excluirTotal = document.getElementById('nc-excluir').checked;
 
   if (_editAhorroId !== null) {
     // Editar existente
     const c = cuentasAhorro.find(x=>x.id===_editAhorroId);
-    if (c) { c.nombre=nombre; c.meta=meta; c.grupo=grupo; c.excluirTotal=excluirTotal; c.updatedAt = new Date().toISOString(); }
+    if (c) {
+      const previousName=c.nombre,now=new Date().toISOString();
+      for(const g of [...gastos,...historico])if(g.ahorroDesc===previousName){g.ahorroDesc=nombre;g.updatedAt=now;}
+      for(const adjustment of ajustesPresupuesto)if(adjustment.ahorroId===c.id)adjustment.ahorroNombre=nombre;
+      c.nombre=nombre; c.meta=meta; c.grupo=grupo; c.excluirTotal=excluirTotal; c.updatedAt = new Date().toISOString(); }
     markStructuredDirty('cuentasAhorro');
     saveLocal();
     closeModal('modal-nueva-cuenta');
     showToast('Cuenta actualizada ✓');
   } else {
     // Crear nueva
-    const saldoInicial = parseFloat(document.getElementById('nc-saldo-inicial').value) || 0;
+    const saldoInicial = initial;
     const movimientos  = saldoInicial > 0
       ? [nuevoMov({ tipo:'abono', cantidad: saldoInicial, nota:'Saldo inicial', fecha: today() })]
       : [];
@@ -3672,7 +3601,8 @@ async function crearCuentaAhorro() {
   renderAhorros(); renderMenu();
 }
 
-async function eliminarCuenta(id) {
+function eliminarCuenta(...args) { return runLocalTransaction(()=>eliminarCuentaImpl(...args)); }
+async function eliminarCuentaImpl(id) {
   if (!confirm('¿Eliminar esta cuenta de ahorro?')) return;
   const cuenta = cuentasAhorro.find(x => x.id === id);
   if (cuenta) {
@@ -3740,7 +3670,7 @@ function toggleAbonoTarjetaVisibility() {
   const sel = document.getElementById('f-cuenta');
   const cuenta = sel ? sel.value : '';
   const cfg = getCortesConfig();
-  const esTarjeta = !!cfg[cuenta];
+  const esTarjeta = window.uiExpenseIsCreditAccount?uiExpenseIsCreditAccount():!!cfg[cuenta];
   const wrap = document.getElementById('abono-tarjeta-wrap');
   if (wrap) {
     wrap.style.display = esTarjeta ? '' : 'none';
@@ -3862,25 +3792,63 @@ function aplicarReglaAutomatica(origen = 'comentario') {
   if (cambios.length && origen !== 'silencioso') showToast('Regla aplicada: ' + cambios.join(' · '));
 }
 
+function validMoney(value,allowZero=false) {
+  return Number.isFinite(value) && (allowZero?value>=0:value>0) && value<=Number.MAX_SAFE_INTEGER/100 && Math.abs(value*100-Math.round(value*100))<0.000001;
+}
+function localSyncMetadata() {
+  return Object.fromEntries(['pendingSyncOps','localModified',workspaceStorageKey('structuredDirty'),workspaceStorageKey('structuredDeleted')].map(key=>[key,localStorage.getItem(key)]));
+}
+function restoreLocalSyncMetadata(metadata) {
+  for(const [key,value] of Object.entries(metadata||{})){
+    try {if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}catch{}
+  }
+}
 function expenseTransactionSnapshot() {
-  return cloneData({ gastos, historico, cuentasAhorro, recurrentes, deudas, nextId, nextMovId });
+  return cloneData({ gastos,historico,cuentasAhorro,recurrentes,deudas,excepciones,ajustesPresupuesto,
+    catalogoCuentas,catalogoMotivos,catalogoComentarios,catalogoTags,reglasAutomaticas,
+    nextId,nextMovId,nextAhorroId,nextRecId,nextDeudaId,PRESUPUESTO,_metadata:localSyncMetadata() });
 }
 function restoreExpenseTransaction(snapshot) {
-  ({ gastos, historico, cuentasAhorro, recurrentes, deudas, nextId, nextMovId } = snapshot);
+  ({ gastos,historico,cuentasAhorro,recurrentes,deudas,excepciones,ajustesPresupuesto,
+    catalogoCuentas,catalogoMotivos,catalogoComentarios,catalogoTags,reglasAutomaticas,
+    nextId,nextMovId,nextAhorroId,nextRecId,nextDeudaId,PRESUPUESTO } = snapshot);
+  restoreLocalSyncMetadata(snapshot._metadata);
 }
+function runLocalTransaction(work,capture=expenseTransactionSnapshot,restore=restoreExpenseTransaction,rethrow=false) {
+  const dialog=[...document.querySelectorAll('.overlay.open')].at(-1);
+  if(dialog?.dataset.dataScope && dialog.dataset.dataScope!==syncIdentity()){closeModal(dialog.id);showToast('La base cambió. Abre otra vez el formulario.');return false;}
+  const snapshot=capture(),identity=syncIdentity(),transaction={persisted:false,snapshot,capture},previous=activeLocalTransaction;
+  const failed=error=>{
+    console.warn('No se pudo completar el cambio local:',error);
+    if(!transaction.persisted && identity===syncIdentity())restore(transaction.snapshot);
+    if(rethrow && !transaction.persisted)throw error;
+    showToast(transaction.persisted?'Guardado en este iPhone. La sincronización sigue pendiente.':'No se pudo guardar en este iPhone. Conservamos tus datos; vuelve a intentarlo.');
+    return false;
+  };
+  activeLocalTransaction=transaction;
+  let result;
+  try { result=work(transaction); } catch(error) { return failed(error); }
+  finally {activeLocalTransaction=previous;}
+  return result && typeof result.then==='function' ? result.catch(failed) : result;
+}
+
+function saveLocalForTransaction(transaction) {
+  const previous=activeLocalTransaction;activeLocalTransaction=transaction;
+  try{saveLocal();}finally{activeLocalTransaction=previous;}
+}
+
 async function guardarGasto() {
-  const snapshot = expenseTransactionSnapshot();
-  try { return await guardarGastoImpl(); }
-  catch (error) { restoreExpenseTransaction(snapshot); throw error; }
-  finally { syncBloqueado = false; }
+  try{return await runLocalTransaction(()=>guardarGastoImpl(),expenseTransactionSnapshot,restoreExpenseTransaction,true);}
+  finally{syncBloqueado=false;}
 }
 
 async function guardarGastoImpl() {
   syncBloqueado = true; // bloquear sync durante guardado
   aplicarReglaAutomatica('silencioso');
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
-  if (!Number.isFinite(cantidad)||cantidad<=0) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
+  if (!validMoney(cantidad)) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
 
+  if(abonoTarjeta){abonado=true;ignorar=true;externo='no';}
   const isEditing = !!editingId;
   const isHistorico = window._editandoHistorico === true;
   let gastoAnterior = null;
@@ -3934,6 +3902,7 @@ async function guardarGastoImpl() {
     desdeConciliador: window._desdeConciliador ? true : undefined,
   };
 
+  if(!gasto.periodoCorte && gastoAnterior?.cuenta===gasto.cuenta && gastoAnterior.fecha===gasto.fecha)gasto.periodoCorte=gastoAnterior.periodoCorte;
   if (isHistorico && gastoAnterior) gasto.semana = gastoAnterior.semana;
   if (isEditing) {
     const idx = destino.findIndex(x=>x.id===editingId);
@@ -3949,7 +3918,7 @@ async function guardarGastoImpl() {
             gasto, gastoAnterior, idx, cuentaAnterior, isHistorico,
             workspaceId: currentWorkspaceId(), userId: currentUserId(),
             ahorroSelId, descontarAhorro,
-            _volverConcil: !!window._desdeConciliador
+            bankMovement:window._desdeConciliador, _volverConcil: !!window._desdeConciliador
           };
           window._desdeConciliador = null;
           const accion = descontarAhorro ? 'cambiar de cuenta' : 'desactivar';
@@ -3978,6 +3947,7 @@ async function guardarGastoImpl() {
   syncBloqueado = false;
   saveLocal();
   const _volverConcil = !!window._desdeConciliador;
+  if(_volverConcil)finishBankCapture(gasto,window._desdeConciliador);
   window._desdeConciliador = null;
   const destination = _volverConcil ? 'conciliacion' : (window.uiExpenseDestination ? uiExpenseDestination() : 'gastos');
   if (window.uiExpenseSaved) uiExpenseSaved();
@@ -3988,17 +3958,13 @@ async function guardarGastoImpl() {
 }
 
 function _confirmarGuardarGastoConRevertAhorro() {
-  const snapshot = expenseTransactionSnapshot();
-  const pending = window._guardarGastoPendiente;
-  try { return confirmarGuardarGastoConRevertAhorroImpl(); }
-  catch (error) {
-    restoreExpenseTransaction(snapshot);
-    window._guardarGastoPendiente = pending;
-    if (pending) pending.cuentaAnterior = cuentasAhorro.find(c => c.id === pending.cuentaAnterior.id) || pending.cuentaAnterior;
-    const field = document.getElementById('form-error');
-    field.textContent = 'No se pudo guardar. Tu borrador sigue disponible; vuelve a intentarlo.'; field.style.display = 'block';
-    showToast('No se pudo guardar el cambio de ahorro.');
-  } finally { syncBloqueado = false; }
+  const pending=window._guardarGastoPendiente;
+  const restore=snapshot=>{
+    restoreExpenseTransaction(snapshot);window._guardarGastoPendiente=pending;
+    if(pending)pending.cuentaAnterior=cuentasAhorro.find(c=>c.id===pending.cuentaAnterior.id)||pending.cuentaAnterior;
+  };
+  try{return runLocalTransaction(()=>confirmarGuardarGastoConRevertAhorroImpl(),expenseTransactionSnapshot,restore);}
+  finally{syncBloqueado=false;}
 }
 
 function confirmarGuardarGastoConRevertAhorroImpl() {
@@ -4041,6 +4007,7 @@ function confirmarGuardarGastoConRevertAhorroImpl() {
   window._guardarGastoPendiente = null;
   syncBloqueado = false;
   saveLocal();
+  if(pending._volverConcil)finishBankCapture(gasto,pending.bankMovement);
   const destination = pending._volverConcil ? 'conciliacion' : (window.uiExpenseDestination ? uiExpenseDestination() : 'gastos');
   if (window.uiExpenseSaved) uiExpenseSaved();
   resetForm();
@@ -4051,6 +4018,8 @@ function confirmarGuardarGastoConRevertAhorroImpl() {
 }
 
 function resetForm() {
+  const error=document.getElementById('form-error');if(error){error.textContent='';error.style.display='none';}
+  if(window.uiPreserveExpenseOptions)uiPreserveExpenseOptions(null);
   pendingPayment = null;
   document.getElementById('f-cantidad').value    = '';
   document.getElementById('f-comentarios-input').value = ''; document.getElementById('comentario-dropdown').style.display='none';
@@ -4128,7 +4097,8 @@ function eliminar(id) {
   openModal('modal-confirm-eliminar');
 }
 
-function confirmarEliminar() {
+function confirmarEliminar(...args) { return runLocalTransaction(()=>confirmarEliminarImpl(...args)); }
+function confirmarEliminarImpl() {
   if (window._eliminarModo === 'ahorro') return confirmarEliminarMovimientoAhorroHandler();
   const gasto = gastos.find(x => x.id === window._eliminarId);
   // Si el gasto tenía descuento de ahorro, eliminar el movimiento correspondiente
@@ -4175,7 +4145,8 @@ function openCorte() {
   openModal('modal-corte-sem');
 }
 
-async function hacerCorte() {
+function hacerCorte(...args) { return runLocalTransaction(()=>hacerCorteImpl(...args)); }
+async function hacerCorteImpl() {
   if (window._corteEnCurso) return;
   if (!gastos.length) { closeModal('modal-corte-sem'); showToast('No hay gastos que cortar'); return; }
   window._corteEnCurso = true;
@@ -4275,6 +4246,7 @@ function liberarFondoModalSiAplica() {
 function openModal(id)  {
   const modal = document.getElementById(id);
   if (!modal) return;
+  modal.dataset.dataScope=syncIdentity();
   modal.classList.add('open');
   bloquearFondoModal();
   if (window.uiModalOpened) uiModalOpened(id);
@@ -4284,6 +4256,7 @@ function closeModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
   modal.classList.remove('open');
+  if(window.stopPantryCamera && ['modal-pantry-scan','modal-pantry-ocr'].includes(id))stopPantryCamera(id==='modal-pantry-scan'?'scan':'ocr');
   liberarFondoModalSiAplica();
   if (window.uiModalClosed) uiModalClosed(id);
 }
@@ -4324,9 +4297,10 @@ function abrirAumentarPresupuesto() {
   openModal('modal-aumentar-presupuesto');
 }
 
-function confirmarAumentarPresupuesto() {
+function confirmarAumentarPresupuesto(...args) { return runLocalTransaction(()=>confirmarAumentarPresupuestoImpl(...args)); }
+function confirmarAumentarPresupuestoImpl() {
   const cantidad = parseFloat(document.getElementById('aum-cantidad').value);
-  if (!cantidad || cantidad <= 0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!validMoney(cantidad)) { showToast('Ingresa una cantidad válida'); return; }
   const ahorroId = parseInt(document.getElementById('aum-ahorro-select').value);
   const ca = cuentasAhorro.find(x => x.id === ahorroId);
   if (!ca) { showToast('Selecciona una cuenta de ahorro'); return; }
@@ -4512,9 +4486,18 @@ async function abrirAjustes() {
   openModal('modal-ajustes');
 }
 
-async function guardarAjustes() {
+function guardarAjustes() {
+  const keys=['workerUrl','modoViaje','serverSyncEnabled'];
+  const capture=()=>({financial:expenseTransactionSnapshot(),preferences:Object.fromEntries(keys.map(key=>[key,localStorage.getItem(key)]))});
+  const restore=snapshot=>{restoreExpenseTransaction(snapshot.financial);restoreLocalSyncMetadata(snapshot.preferences);openModal('modal-ajustes');};
+  const result=runLocalTransaction(transaction=>guardarAjustesImpl(transaction),capture,restore);
+  return Promise.resolve(result).finally(()=>{syncBloqueado=false;});
+}
+
+async function guardarAjustesImpl(transaction) {
+  const initialBudget=PRESUPUESTO;
   const val = parseFloat(document.getElementById('ajuste-presupuesto').value);
-  if (!val || val <= 0) { showToast('Presupuesto inválido'); return; }
+  if (!validMoney(val)) { showToast('Presupuesto inválido'); return; }
   PRESUPUESTO = val;
 
   // Guardar config directamente en localStorage sin disparar autoSync
@@ -4527,7 +4510,7 @@ async function guardarAjustes() {
   if (travelEl) travelEl.checked ? localStorage.setItem('modoViaje','1') : localStorage.removeItem('modoViaje');
 
   // Dispositivo nuevo O sin datos: forzar descarga remota
-  const esNuevo = (!localStorage.getItem('lastSync') && !localStorage.getItem('lastRemoteSync')) || gastos.length === 0;
+  const esNuevo = !localStorage.getItem('lastSync') && !localStorage.getItem('lastRemoteSync') && !hasPendingSync() && !gastos.length && !historico.length && !cuentasAhorro.length && !recurrentes.length && !deudas.length && !pantryLots.length;
   closeModal('modal-ajustes');
 
   if (workspaceEl?.value && workspaceEl.value !== currentWorkspaceId()) {
@@ -4537,7 +4520,8 @@ async function guardarAjustes() {
 
   if (isTravelMode()) {
     syncBloqueado = true;
-    saveLocal();
+    if(val!==initialBudget)queueSyncOperation('ajustes',{presupuesto:val});
+    saveLocalForTransaction(transaction);
     syncBloqueado = false;
     renderMenu();
     mostrarEstadoSync(false);
@@ -4549,13 +4533,16 @@ async function guardarAjustes() {
     showToast('🔄 Descargando datos de la nube...');
 
     let ok = false;
-    // force=true: ignorar timestamps, bajar el mas reciente sin importar device_id
-    ok = await downloadRemote(true);
+    // La primera descarga también debe respetar capturas hechas mientras esperaba.
+    ok = await downloadRemote(false);
+    transaction.snapshot=transaction.capture();
+    if(val!==initialBudget)PRESUPUESTO=val;
 
     syncBloqueado = false;
     // saveLocal con sync bloqueado para no disparar upload
     syncBloqueado = true;
-    saveLocal();
+    if(val!==initialBudget)queueSyncOperation('ajustes',{presupuesto:val});
+    saveLocalForTransaction(transaction);
     syncBloqueado = false;
     showTab('menu');
     renderMenu();
@@ -4563,7 +4550,8 @@ async function guardarAjustes() {
   } else {
     // Dispositivo conocido: guardar normal
     syncBloqueado = true;
-    saveLocal();
+    if(val!==initialBudget)queueSyncOperation('ajustes',{presupuesto:val});
+    saveLocalForTransaction(transaction);
     syncBloqueado = false;
     if (usingRemoteSync() && navigator.onLine) await uploadRemote();
     renderMenu();
@@ -4673,7 +4661,8 @@ function recurrenteYaPagado(r) {
   return r.ultimoPago === mesKey;
 }
 
-function marcarPagadoManual(i) {
+function marcarPagadoManual(...args) { return runLocalTransaction(()=>marcarPagadoManualImpl(...args)); }
+function marcarPagadoManualImpl(i) {
   const r = recurrentes[i];
   if (!r) return;
   const hoy = new Date();
@@ -4686,7 +4675,8 @@ function marcarPagadoManual(i) {
   showToast(`${r.nombre} marcado como pagado ✓`);
 }
 
-function desmarcarPagado(i) {
+function desmarcarPagado(...args) { return runLocalTransaction(()=>desmarcarPagadoImpl(...args)); }
+function desmarcarPagadoImpl(i) {
   const r = recurrentes[i];
   if (!r) return;
   r.ultimoPago = null;
@@ -4763,14 +4753,15 @@ function editarRecurrente(i) {
   openModal('modal-rec-servicio');
 }
 
-function guardarRecurrente() {
+function guardarRecurrente(...args) { return runLocalTransaction(()=>guardarRecurrenteImpl(...args)); }
+function guardarRecurrenteImpl() {
   const nombre   = document.getElementById('rec-nombre').value.trim();
   const cuenta   = document.getElementById('rec-cuenta').value;
   const motivo   = document.getElementById('rec-motivo').value;
   const cantidadRaw = document.getElementById('rec-cantidad').value;
   const cantidad = cantidadRaw === '' ? 0 : parseFloat(cantidadRaw);
-  const dia      = parseInt(document.getElementById('rec-dia').value);
-  if (!nombre || !dia || dia<1 || dia>31 || Number.isNaN(cantidad) || cantidad<0) { showToast('Completa todos los campos'); return; }
+  const dia      = Number(document.getElementById('rec-dia').value);
+  if (!nombre || !Number.isInteger(dia) || dia<1 || dia>31 || !validMoney(cantidad,true) || !getCuentas().includes(cuenta) || !catalogoMotivos.includes(motivo)) { showToast('Completa todos los campos'); return; }
   const obj = { id: 0, nombre, cuenta, motivo, cantidad, dia, activo: true, updatedAt: new Date().toISOString() };
   if (window._editRecIdx !== null) {
     const anterior = recurrentes[window._editRecIdx] || {};
@@ -4790,7 +4781,8 @@ function guardarRecurrente() {
   renderServicios();
 }
 
-function eliminarRecurrente(i) {
+function eliminarRecurrente(...args) { return runLocalTransaction(()=>eliminarRecurrenteImpl(...args)); }
+function eliminarRecurrenteImpl(i) {
   if (!confirm(`¿Eliminar "${recurrentes[i].nombre}"?`)) return;
   repairStructuredEntityIds();
   markStructuredDeleted('recurrentes', recurrentes[i].id);
@@ -4875,21 +4867,23 @@ function editarDeuda(i) {
 
 function calcularCuotaDeuda() {
   const total = parseFloat(document.getElementById('deuda-total').value) || 0;
-  const meses = parseInt(document.getElementById('deuda-meses').value)   || 0;
+  const meses = Number(document.getElementById('deuda-meses').value)   || 0;
   if (total && meses) document.getElementById('deuda-cuota').value = (total/meses).toFixed(2);
 }
 
-function guardarDeuda() {
+function guardarDeuda(...args) { return runLocalTransaction(()=>guardarDeudaImpl(...args)); }
+function guardarDeudaImpl() {
   const nombre  = document.getElementById('deuda-nombre').value.trim();
   const cuenta  = document.getElementById('deuda-cuenta').value;
   const total   = parseFloat(document.getElementById('deuda-total').value);
   const cuota   = parseFloat(document.getElementById('deuda-cuota').value);
-  const meses   = parseInt(document.getElementById('deuda-meses').value);
-  const dia     = parseInt(document.getElementById('deuda-dia').value);
-  const pagados = parseInt(document.getElementById('deuda-pagados').value) || 0;
-  if (!nombre||!total||!cuota||!meses||!dia) { showToast('Completa todos los campos'); return; }
-  if (pagados >= meses) { showToast('Los meses pagados no pueden ser mayores al total'); return; }
-  const obj = { nombre, cuenta, total, cuota, mesesTotal: meses, mesesPagados: pagados, diaCorte: dia, fechaInicio: today(), updatedAt: new Date().toISOString() };
+  const meses   = Number(document.getElementById('deuda-meses').value);
+  const dia     = Number(document.getElementById('deuda-dia').value);
+  const pagados = Number(document.getElementById('deuda-pagados').value) || 0;
+  if (!nombre || !validMoney(total) || !validMoney(cuota) || !Number.isInteger(meses) || meses<=0 || !Number.isInteger(dia) || dia<1 || dia>31 || !Number.isInteger(pagados) || pagados<0 || !getCuentas().includes(cuenta)) { showToast('Revisa el importe, la cuenta, los meses y el día de pago (1 a 31)'); return; }
+  if (pagados > meses) { showToast('Los meses pagados no pueden ser mayores al total'); return; }
+  const previous=window._editDeudaIdx!==null?deudas[window._editDeudaIdx]:null;
+  const obj = { ...previous,nombre,cuenta,total,cuota,mesesTotal:meses,mesesPagados:pagados,diaCorte:dia,fechaInicio:previous?.fechaInicio||today(),updatedAt:new Date().toISOString() };
   if (window._editDeudaIdx !== null) {
     obj.id = deudas[window._editDeudaIdx].id;
     deudas[window._editDeudaIdx] = obj;
@@ -4904,7 +4898,8 @@ function guardarDeuda() {
   renderDeudas();
 }
 
-function eliminarDeuda(i) {
+function eliminarDeuda(...args) { return runLocalTransaction(()=>eliminarDeudaImpl(...args)); }
+function eliminarDeudaImpl(i) {
   if (!confirm(`¿Eliminar deuda "${deudas[i].nombre}"?`)) return;
   markStructuredDeleted('deudas', deudas[i].id);
   markStructuredDirty('deudas');
@@ -5134,15 +5129,18 @@ function busquedaGlobal() {
 
 
 // ── Excepciones de corte ──────────────────────────────────────
-function guardarExcepcion() {
+function guardarExcepcion(...args) { return runLocalTransaction(()=>guardarExcepcionImpl(...args)); }
+function guardarExcepcionImpl() {
   const cuenta    = document.getElementById('exc-cuenta').textContent;
   const fechaNueva = document.getElementById('exc-fecha-nueva').value;
   const nota      = document.getElementById('exc-nota').value.trim();
-  if (!fechaNueva) { showToast('Selecciona una fecha'); return; }
+  if (!MovementFilters.date(fechaNueva)) { showToast('Selecciona una fecha válida'); return; }
   // Remover excepción previa para este período si existe
   const periodoKey = document.getElementById('exc-periodo-key')?.value || '';
   excepciones = excepciones.filter(e => !(e.Cuenta === cuenta && e.FechaOriginal === periodoKey));
   excepciones.push({ Cuenta: cuenta, FechaOriginal: periodoKey, FechaExcepcion: fechaNueva, Nota: nota });
+  for(const g of [...gastos,...historico])if(g.cuenta===cuenta){g.periodoCorte=calcularPeriodoCorte(cuenta,g.fecha);g.updatedAt=new Date().toISOString();}
+  markStructuredDirty('excepciones');
   saveLocal();
   closeModal('modal-excepcion');
   showToast('Excepción guardada ✓');
@@ -5163,12 +5161,39 @@ let concilCuenta   = '';
 let concilPeriodo  = '';
 let conciliados    = {}; // { gastoId: true/false }
 
+let reconciliationScope='';
+function reconciliationKey(){return `reconciliation:${currentUserId()||'local'}:${currentWorkspaceId()||'personal'}`;}
+function loadReconciliationState(){
+  const key=reconciliationKey();if(reconciliationScope===key)return;
+  reconciliationScope=key;
+  try{conciliados=JSON.parse(localStorage.getItem(key)||'{}');if(!conciliados||Array.isArray(conciliados)||typeof conciliados!=='object')conciliados={};}catch{conciliados={};}
+}
+function persistReconciliationState(previous){
+  try{localStorage.setItem(reconciliationKey(),JSON.stringify(conciliados));return true;}
+  catch{if(previous)conciliados=previous;showToast('No se pudo guardar la conciliación en este iPhone. Vuelve a intentarlo.');return false;}
+}
+function beginReconciliationRequest(){
+  const request={token:makeLocalId('reconciliation'),scope:syncIdentity(),account:concilCuenta,period:concilPeriodo,revision:localSyncRevision()};
+  window._reconciliationRequest=request.token;return request;
+}
+function reconciliationRequestValid(request){
+  const same=request.scope===syncIdentity()&&request.account===concilCuenta&&request.period===concilPeriodo&&request.token===window._reconciliationRequest;
+  if(same && request.revision!==localSyncRevision())document.getElementById('concil-pdf-status').textContent='Tus movimientos cambiaron. Vuelve a subir el archivo para comparar los datos actuales.';
+  return same && request.revision===localSyncRevision();
+}
+function finishBankCapture(gasto,bank){
+  if(!bank || gasto.cuenta!==concilCuenta)return;
+  const index=(window._noConcilBanco||[]).findIndex(row=>row.fecha===bank.fecha && Number(row.monto)===Number(bank.monto) && row.descripcion===bank.descripcion);
+  if(index>=0)window._noConcilBanco.splice(index,1);
+  loadReconciliationState();
+  const key=`${concilCuenta}|${concilPeriodo}`;conciliados[key]||={};conciliados[key][gasto.id]=true;persistReconciliationState();
+}
 function abrirConciliacion() {
   closeDrawer();
   // Poblar selector de cuentas con corte
   const cfg = getCortesConfig();
   const sel = document.getElementById('concil-cuenta');
-  sel.innerHTML = Object.keys(cfg).map(c => `<option value="${c}">${c}</option>`).join('');
+  sel.innerHTML = Object.keys(cfg).map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
   concilCuenta = sel.value || Object.keys(cfg)[0] || '';
   actualizarPeriodosConcil();
   showTab('conciliacion');
@@ -5178,7 +5203,7 @@ function actualizarPeriodosConcil() {
   const cuenta = document.getElementById('concil-cuenta').value;
   concilCuenta = cuenta;
   // Recopilar períodos únicos para esta cuenta
-  const all = [...gastos, ...historico];
+  const all = MovementFilters.collect(gastos,historico);
   const periodos = [...new Set(
     all.filter(g => g.cuenta === cuenta && g.periodoCorte)
        .map(g => g.periodoCorte)
@@ -5199,7 +5224,7 @@ function actualizarPeriodosConcil() {
   selP.innerHTML = periodos.map(p => {
     const [, hasta] = p.split('|');
     const [, desde] = [p, periodoDesde(p)];
-    return `<option value="${p}">${periodoDesde(p)} → ${hasta}</option>`;
+    return `<option value="${escapeHtml(p)}">${periodoDesde(p)} → ${hasta}</option>`;
   }).join('');
   concilPeriodo = selP.value;
   // Limpiar resultados de conciliación anterior al cambiar tarjeta/período
@@ -5212,6 +5237,7 @@ function actualizarPeriodosConcil() {
 }
 
 function renderConciliacion() {
+  loadReconciliationState();
   const cuenta  = document.getElementById('concil-cuenta')?.value || concilCuenta;
   const periodo = document.getElementById('concil-periodo')?.value || concilPeriodo;
   concilCuenta  = cuenta;
@@ -5325,29 +5351,27 @@ function renderConciliacion() {
 }
 
 function registrarDesdeBanco(mv) {
-  // Pre-llenar formulario con los datos del movimiento bancario
-  window._desdeConciliador = mv; // marcar origen
-  showTab('nuevo');
-  setTimeout(() => {
-    const fCantidad = document.getElementById('f-cantidad');
-    const fFecha    = document.getElementById('f-fecha');
-    const fComent   = document.getElementById('f-comentarios-input');
-    const fCuenta   = document.getElementById('f-cuenta');
-    if (fCantidad) fCantidad.value = mv.monto;
-    if (fFecha && mv.fecha) fFecha.value = mv.fecha;
-    if (fComent) fComent.value = mv.descripcion || '';
-    if (fCuenta && concilCuenta) {
-      const opt = Array.from(fCuenta.options).find(o => o.value === concilCuenta);
-      if (opt) fCuenta.value = concilCuenta;
-    }
-    showToast('Completa el motivo y guarda el gasto ✓');
-  }, 150);
+  if(!mv || !Number.isFinite(Number(mv.monto)) || Number(mv.monto)<=0){showToast('Revisa el importe del movimiento bancario.');return;}
+  const scope=syncIdentity(),account=concilCuenta;
+  const open=()=>{
+    if(scope!==syncIdentity()){showToast('La base cambió. Abre otra vez el movimiento bancario.');return;}
+    showTab('nuevo');uiDiscardDraft();window._desdeConciliador=cloneData(mv);
+    document.getElementById('f-cantidad').value=mv.monto;
+    document.getElementById('f-fecha').value=MovementFilters.date(mv.fecha)||today();
+    document.getElementById('f-comentarios-input').value=mv.descripcion||'';
+    if(getCuentas().includes(account))document.getElementById('f-cuenta').value=account;
+    uiUpdateForm();uiCaptureDraft();
+  };
+  let draft;try{draft=JSON.parse(localStorage.getItem(uiDraftKey())||'null');}catch{}
+  if(draft?.fields?.['f-cantidad']||draft?.fields?.['f-comentarios-input'])modalConfirmar('Hay un borrador pendiente. ¿Reemplazarlo con este movimiento del banco?',open);else open();
 }
 
 function toggleConcil(gastoId) {
+  loadReconciliationState();const previous=cloneData(conciliados);
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
   conciliados[clave][gastoId] = !conciliados[clave][gastoId];
+  if(!persistReconciliationState(previous))return;
   renderConciliacion();
 }
 
@@ -5359,6 +5383,7 @@ function mostrarSubirImagenes() {
 async function procesarImagenesConciliacion(event) {
   const files = Array.from(event.target.files);
   if (!files.length) return;
+  const request=beginReconciliationRequest();
   const status = document.getElementById('concil-pdf-status');
 
   const workerUrl = localStorage.getItem('workerUrl') || '';
@@ -5377,10 +5402,11 @@ async function procesarImagenesConciliacion(event) {
       r.readAsDataURL(f);
     })));
 
+    if(!reconciliationRequestValid(request))return;
     const clave = `${concilCuenta}|${concilPeriodo}`;
     const [, hasta] = concilPeriodo.split('|');
     const desde = periodoDesde(concilPeriodo);
-    const all = [...gastos, ...historico];
+    const all = MovementFilters.collect(gastos,historico);
     const items = gastosEnPeriodo(all, concilCuenta,
       new Date(desde + 'T00:00:00'), new Date(hasta + 'T23:59:59'));
 
@@ -5400,11 +5426,12 @@ async function procesarImagenesConciliacion(event) {
 
     if (!response.ok) throw new Error(`Worker error ${response.status}`);
     const resultado = await response.json();
+    if(!reconciliationRequestValid(request))return;
     if (resultado.error) throw new Error(resultado.error);
 
     if (!conciliados[clave]) conciliados[clave] = {};
-    (resultado.conciliados || []).forEach(id => { conciliados[clave][id] = true; });
-    (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
+    (resultado.conciliados || []).filter(id=>items.some(g=>String(g.id)===String(id))).forEach(id => { conciliados[clave][id] = true; });
+    (resultado.no_conciliados_app || []).filter(id=>items.some(g=>String(g.id)===String(id))).forEach(id => { conciliados[clave][id] = false; });
 
     window._bancMovs = resultado.movimientos_banco || [];
 
@@ -5419,29 +5446,34 @@ async function procesarImagenesConciliacion(event) {
 
     const concilCount = (resultado.conciliados || []).length;
     status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos sin registrar`;
+    persistReconciliationState();
     renderConciliacion();
 
   } catch(e) {
+    if(!reconciliationRequestValid(request))return;
     status.textContent = `❌ Error: ${e.message}`;
   }
   event.target.value = '';
 }
 
 function conciliarPosible(gastoId) {
+  loadReconciliationState();const previous=cloneData(conciliados);
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
   conciliados[clave][gastoId] = true;
   // Mover de posibles a conciliados
   window._posiblesMatches = (window._posiblesMatches || []).filter(p => p.gasto.id !== gastoId);
+  if(!persistReconciliationState(previous))return;
   renderConciliacion();
 }
 
 function conciliarTodos() {
+  loadReconciliationState();const previous=cloneData(conciliados);
   const clave = `${concilCuenta}|${concilPeriodo}`;
   if (!conciliados[clave]) conciliados[clave] = {};
   const [, hasta] = concilPeriodo.split('|');
   const desde = periodoDesde(concilPeriodo);
-  const all = [...gastos, ...historico];
+  const all = MovementFilters.collect(gastos,historico);
   const items = gastosEnPeriodo(all, concilCuenta,
     new Date(desde + 'T00:00:00'),
     new Date(hasta + 'T23:59:59')
@@ -5451,6 +5483,7 @@ function conciliarTodos() {
     if (!confirm(`¿Marcar los ${items.length} gastos como conciliados?`)) return;
   }
   items.forEach(g => { conciliados[clave][g.id] = !todosConcil; });
+  if(!persistReconciliationState(previous))return;
   renderConciliacion();
 }
 
@@ -5465,6 +5498,7 @@ function subirEstadoCuenta() {
 async function procesarEstadoCuenta(event) {
   const file = event.target.files[0];
   if (!file) return;
+  const request=beginReconciliationRequest();
   const status = document.getElementById('concil-pdf-status');
   status.style.display = 'block';
   status.textContent = '📄 Leyendo PDF...';
@@ -5481,6 +5515,7 @@ async function procesarEstadoCuenta(event) {
     // Extraer texto del PDF
     status.textContent = '📄 Extrayendo texto del PDF...';
     const pdfText = await extraerTextoPDF(base64);
+    if(!reconciliationRequestValid(request))return;
     if (!pdfText || pdfText.length < 50) {
       status.innerHTML = '📷 Este PDF no tiene texto extraíble. <a href="#" onclick="mostrarSubirImagenes();return false" style="color:var(--accent2);text-decoration:underline">Subir imágenes de los movimientos</a>';
       event.target.value = '';
@@ -5497,10 +5532,11 @@ async function procesarEstadoCuenta(event) {
     }
 
     // Obtener gastos del período actual
+    if(!reconciliationRequestValid(request))return;
     const clave = `${concilCuenta}|${concilPeriodo}`;
     const [, hasta] = concilPeriodo.split('|');
     const desde = periodoDesde(concilPeriodo);
-    const all = [...gastos, ...historico];
+    const all = MovementFilters.collect(gastos,historico);
     const items = gastosEnPeriodo(all, concilCuenta,
       new Date(desde + 'T00:00:00'),
       new Date(hasta + 'T23:59:59')
@@ -5585,7 +5621,8 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
 
       const concilCount = Object.values(conciliados[clave]).filter(Boolean).length;
       status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados · ${window._noConcilBanco.length} cargos sin registrar`;
-      renderConciliacion();
+      persistReconciliationState();
+    renderConciliacion();
       if (window._noConcilBanco.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
       return;
     }
@@ -5608,11 +5645,12 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
       throw new Error(`Worker error ${response.status}: ${errTxt.slice(0, 200)}`);
     }
     const resultado = await response.json();
+    if(!reconciliationRequestValid(request))return;
     if (resultado.error) throw new Error(resultado.error);
 
     if (!conciliados[clave]) conciliados[clave] = {};
-    (resultado.conciliados || []).forEach(id => { conciliados[clave][id] = true; });
-    (resultado.no_conciliados_app || []).forEach(id => { conciliados[clave][id] = false; });
+    (resultado.conciliados || []).filter(id=>items.some(g=>String(g.id)===String(id))).forEach(id => { conciliados[clave][id] = true; });
+    (resultado.no_conciliados_app || []).filter(id=>items.some(g=>String(g.id)===String(id))).forEach(id => { conciliados[clave][id] = false; });
 
     window._bancMovs = resultado.movimientos_banco || [];
     window._noConcilBanco = resultado.no_conciliados_banco || [];
@@ -5620,10 +5658,12 @@ Criterios: monto exacto o diferencia <$1, fecha ±3 días.`;
     const concilCount = (resultado.conciliados || []).length;
     status.textContent = `✅ ${concilCount} de ${items.length} gastos conciliados automáticamente`;
     if (resultado.resumen) status.textContent += ` · ${resultado.resumen}`;
+    persistReconciliationState();
     renderConciliacion();
     if (window._noConcilBanco?.length) showToast(`⚠️ ${window._noConcilBanco.length} cargo(s) del banco no encontrados en la app`);
 
   } catch(e) {
+    if(!reconciliationRequestValid(request))return;
     status.textContent = `❌ Error: ${e.message}`;
     showToast('Error al procesar el PDF');
   }
@@ -6371,16 +6411,19 @@ function editarCuenta(i) {
   openModal('modal-cat-cuenta');
 }
 
-async function guardarCuenta_cat() {
+function guardarCuenta_cat(...args) { return runLocalTransaction(()=>guardarCuenta_catImpl(...args)); }
+async function guardarCuenta_catImpl() {
   const nombre = document.getElementById('cc-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre de la cuenta'); return; }
+  if(catalogoCuentas.some((c,i)=>i!==window._editCuentaIdx && normalizarTextoRegla(c.nombre)===normalizarTextoRegla(nombre))){showToast('Ya existe una cuenta con ese nombre');return;}
   const color      = document.getElementById('cc-color').value;
   const tieneCorte = document.getElementById('cc-tiene-corte').checked;
-  const diaCorte   = tieneCorte ? parseInt(document.getElementById('cc-dia').value) : null;
-  if (tieneCorte && (!diaCorte || diaCorte < 1 || diaCorte > 31)) {
+  const diaCorte = tieneCorte ? Number(document.getElementById('cc-dia').value) : null;
+  if (tieneCorte && (!Number.isInteger(diaCorte) || diaCorte < 1 || diaCorte > 31)) {
     showToast('Ingresa un día de corte válido (1-31)'); return;
   }
   const obj = { nombre, color, tieneCorte, diaCorte, updatedAt: new Date().toISOString() };
+  const oldName=window._editCuentaIdx!==null?catalogoCuentas[window._editCuentaIdx]?.nombre:null;
   if (window._editCuentaIdx !== null) {
     catalogoCuentas[window._editCuentaIdx] = obj;
   } else {
@@ -6389,8 +6432,18 @@ async function guardarCuenta_cat() {
     }
     catalogoCuentas.push(obj);
   }
+  if(oldName && oldName!==nombre){
+    markStructuredDeleted('cuentas',oldName);
+    const now=new Date().toISOString();
+    for(const g of [...gastos,...historico])if(g.cuenta===oldName){g.cuenta=nombre;if(g.periodoCorte?.startsWith(oldName+'|'))g.periodoCorte=nombre+g.periodoCorte.slice(oldName.length);g.updatedAt=now;}
+    for(const e of excepciones)if(e.Cuenta===oldName)e.Cuenta=nombre;
+    for(const [items,key] of [[recurrentes,'recurrentes'],[deudas,'deudas']])for(const item of items)if(item.cuenta===oldName){item.cuenta=nombre;item.updatedAt=now;markStructuredDirty(key);}
+    for(const rule of reglasAutomaticas)if(rule.cuenta===oldName)rule.cuenta=nombre;
+    markStructuredDirty('catalogos');markStructuredDirty('excepciones');
+  }
   markStructuredDirty('cuentas');
   saveLocal();
+  if(oldName && oldName!==nombre && window.uiRewriteDraftField)uiRewriteDraftField('f-cuenta',oldName,nombre);
   closeModal('modal-cat-cuenta');
   showToast('Cuenta guardada ✓');
   renderCatCuentas();
@@ -6398,7 +6451,8 @@ async function guardarCuenta_cat() {
   actualizarSelectCuentas();
 }
 
-async function eliminarCuenta_cat(i) {
+function eliminarCuenta_cat(...args) { return runLocalTransaction(()=>eliminarCuenta_catImpl(...args)); }
+async function eliminarCuenta_catImpl(i) {
   const c = catalogoCuentas[i];
   if (!confirm(`¿Eliminar la cuenta "${c.nombre}"? Los gastos existentes mantendrán el nombre.`)) return;
   markStructuredDeleted('cuentas', c.nombre);
@@ -6445,9 +6499,12 @@ function editarMotivo(i) {
   openModal('modal-cat-motivo');
 }
 
-async function guardarMotivo_cat() {
+function guardarMotivo_cat(...args) { return runLocalTransaction(()=>guardarMotivo_catImpl(...args)); }
+async function guardarMotivo_catImpl() {
   const nombre = document.getElementById('cm-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre del motivo'); return; }
+  if(catalogoMotivos.some((m,i)=>i!==window._editMotivoIdx && normalizarTextoRegla(m)===normalizarTextoRegla(nombre))){showToast('Ya existe esa categoría');return;}
+  const oldName=window._editMotivoIdx!==null?catalogoMotivos[window._editMotivoIdx]:null;
   if (window._editMotivoIdx !== null) {
     catalogoMotivos[window._editMotivoIdx] = nombre;
   } else {
@@ -6456,15 +6513,24 @@ async function guardarMotivo_cat() {
     }
     catalogoMotivos.push(nombre);
   }
+  if(oldName && oldName!==nombre){
+    markStructuredDeleted('catalogos','motivo:'+oldName);
+    const now=new Date().toISOString();
+    for(const g of [...gastos,...historico])if(g.motivo===oldName){g.motivo=nombre;g.updatedAt=now;}
+    for(const r of recurrentes)if(r.motivo===oldName){r.motivo=nombre;r.updatedAt=now;markStructuredDirty('recurrentes');}
+    for(const rule of reglasAutomaticas)if(rule.motivo===oldName)rule.motivo=nombre;
+  }
   markStructuredDirty('catalogos');
   saveLocal();
+  if(oldName && oldName!==nombre && window.uiRewriteDraftField)uiRewriteDraftField('f-motivo',oldName,nombre);
   closeModal('modal-cat-motivo');
   showToast('Motivo guardado ✓');
   renderCatMotivos();
   actualizarSelectMotivos();
 }
 
-async function eliminarMotivo(i) {
+function eliminarMotivo(...args) { return runLocalTransaction(()=>eliminarMotivoImpl(...args)); }
+async function eliminarMotivoImpl(i) {
   if (!confirm(`¿Eliminar el motivo "${catalogoMotivos[i]}"?`)) return;
   markStructuredDeleted('catalogos', `motivo:${catalogoMotivos[i]}`);
   markStructuredDirty('catalogos');
@@ -6579,7 +6645,8 @@ function editarComentario(i) {
   openModal('modal-cat-comentario');
 }
 
-async function guardarComentarioCat() {
+function guardarComentarioCat(...args) { return runLocalTransaction(()=>guardarComentarioCatImpl(...args)); }
+async function guardarComentarioCatImpl() {
   const nombre = document.getElementById('ccom-nombre').value.trim();
   if (!nombre) { showToast('Ingresa el nombre del comentario'); return; }
   if (window._editComentarioIdx !== null) {
@@ -6597,7 +6664,8 @@ async function guardarComentarioCat() {
   renderCatComentarios();
 }
 
-async function eliminarComentario(i) {
+function eliminarComentario(...args) { return runLocalTransaction(()=>eliminarComentarioImpl(...args)); }
+async function eliminarComentarioImpl(i) {
   if (!confirm(`¿Eliminar "${catalogoComentarios[i]}" del catálogo?`)) return;
   markStructuredDeleted('catalogos', `comentario:${catalogoComentarios[i]}`);
   markStructuredDirty('catalogos');
@@ -6651,7 +6719,8 @@ function editarReglaAuto(i) {
   openModal('modal-regla-auto');
 }
 
-function guardarReglaAuto() {
+function guardarReglaAuto(...args) { return runLocalTransaction(()=>guardarReglaAutoImpl(...args)); }
+function guardarReglaAutoImpl() {
   const texto = document.getElementById('regla-texto').value.trim();
   if (!texto) { showToast('Ingresa el texto de la regla'); return; }
   const regla = {
@@ -6672,7 +6741,8 @@ function guardarReglaAuto() {
   showToast('Regla guardada ✓');
 }
 
-function eliminarReglaAuto(i) {
+function eliminarReglaAuto(...args) { return runLocalTransaction(()=>eliminarReglaAutoImpl(...args)); }
+function eliminarReglaAutoImpl(i) {
   const r = reglasAutomaticas[i];
   if (r) markStructuredDeleted('catalogos', `regla:${i}:${r.texto || ''}:${r.cuenta || ''}:${r.motivo || ''}`);
   markStructuredDirty('catalogos');

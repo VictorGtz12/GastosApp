@@ -41,12 +41,15 @@ function uiText(id,text) { const el=document.getElementById(id); if(el && el.tex
 function uiCategoryWasEdited() { return uiState.categoryManual; }
 function uiAccountWasEdited() { return uiState.accountManual; }
 function uiDraftKey() { return `expenseDraft:${currentUserId() || 'local'}:${currentWorkspaceId() || 'personal'}`; }
+function uiRewriteDraftField(field,oldValue,newValue) {
+  try{const key=uiDraftKey(),draft=JSON.parse(localStorage.getItem(key)||'null');if(draft?.fields?.[field]===oldValue){draft.fields[field]=newValue;localStorage.setItem(key,JSON.stringify(draft));}}catch{}
+}
 function uiCaptureDraft() {
   if (uiState.restoring || uiState.skipDraft || tabActualGlobal !== 'nuevo' || uiState.formScope !== uiDraftKey()) return;
   const ids = ['f-cantidad','f-cuenta','f-motivo','f-comentarios-input','f-fecha','f-ahorro-cuenta','f-reembolso-persona','f-reembolso-fecha','f-reembolso-nota'];
   const fields = Object.fromEntries(ids.map(id => [id, document.getElementById(id)?.value || '']));
-  const meaningful = fields['f-cantidad'] || fields['f-comentarios-input'] || editingId;
-  if (!meaningful) return;
+  const meaningful = fields['f-cantidad'] || fields['f-comentarios-input'] || editingId || uiState.accountManual || uiState.categoryManual || abonoTarjeta || ignorar || externo!=='no' || descontarAhorro || (fields['f-fecha'] && fields['f-fecha']!==today());
+  if (!meaningful) { try{localStorage.removeItem(uiDraftKey());}catch{} return; }
   try {
     localStorage.setItem(uiDraftKey(), JSON.stringify({ fields, abonado, abonoTarjeta, ignorar, externo, descontarAhorro, editingId, historico:!!window._editandoHistorico, bank:window._desdeConciliador || null, payment:pendingPayment, origin:uiState.origin, categoryManual:uiState.categoryManual, accountManual:uiState.accountManual }));
     uiText('draft-status','Borrador guardado en este iPhone');
@@ -61,6 +64,7 @@ function uiRestoreDraft() {
   try {
     editingId = draft.editingId || null;
     window._editandoHistorico = !!draft.historico;
+    uiPreserveExpenseOptions(uiExpenseRecord());
     window._desdeConciliador = draft.bank || null;
     pendingPayment = draft.payment || null;
     uiState.categoryManual = !!draft.categoryManual; uiState.accountManual=!!draft.accountManual;
@@ -143,12 +147,24 @@ function uiCancelExpense() {
   editingId = null; window._editandoHistorico = false; window._desdeConciliador = null;
   resetForm(); showTab(destination);
 }
+function uiExpenseRecord() { return editingId ? (window._editandoHistorico?historico:gastos).find(g=>g.id===editingId) : null; }
+function uiExpenseIsCreditAccount() { const name=document.getElementById('f-cuenta').value,record=uiExpenseRecord();return !!getCortesConfig()[name] || !!(record?.abonoTarjeta && record.cuenta===name); }
+function uiPreserveExpenseOptions(record) {
+  for(const [id,value] of [['f-cuenta',record?.cuenta],['f-motivo',record?.motivo]]){
+    const select=document.getElementById(id);
+    select.querySelectorAll('option[data-archived]').forEach(option=>option.remove());
+    if(value && ![...select.options].some(option=>option.value===value)){
+      const option=new Option(value+' · anterior',value);option.dataset.archived='true';select.add(option);
+    }
+  }
+}
 function uiStartEdit(id,isHistoric=false) {
   const record=(isHistoric?historico:gastos).find(g=>g.id===id); if(!record)return;
   closeModal('modal-detail');
   uiState.formScope=uiDraftKey();uiState.restoring=true;
   resetForm();editingId=id;window._editandoHistorico=isHistoric;window._desdeConciliador=null;
   uiState.creditMode=!!record.abonoTarjeta;uiState.categoryManual=true;uiState.accountManual=true;
+  uiPreserveExpenseOptions(record);
   for(const [field,value] of Object.entries({'f-cantidad':record.cantidad,'f-cuenta':record.cuenta,'f-motivo':record.motivo,'f-comentarios-input':record.comentarios||'','f-fecha':record.fecha||today()}))document.getElementById(field).value=value;
   setAb(!!record.abonado);setIg(!!record.ignorar);setExt(record.externo||'no');llenarReembolsoForm(record);toggleAbonoTarjetaVisibility();setAbonoTarjeta(!!record.abonoTarjeta);
   setDescAhorro(!!record.ahorroDesc);
@@ -159,7 +175,7 @@ function uiStartEdit(id,isHistoric=false) {
   showTab('nuevo');uiUpdateForm();
 }
 function uiSetOperation(value) {
-  if (value === 'abono' && !getCortesConfig()[document.getElementById('f-cuenta').value]) {
+  if (value === 'abono' && !uiExpenseIsCreditAccount()) {
     const first = Object.keys(getCortesConfig())[0];
     if (!first) { showToast('Agrega una tarjeta en Catálogos para registrar un abono'); return; }
     document.getElementById('f-cuenta').value = first;
@@ -170,9 +186,11 @@ function uiSetOperation(value) {
   uiUpdateForm(); uiCaptureDraft();
 }
 function uiUpdateForm() {
-  const isCredit = !!getCortesConfig()[document.getElementById('f-cuenta')?.value];
+  const isCredit = uiExpenseIsCreditAccount();
   if (!isCredit && abonoTarjeta) setAbonoTarjeta(false);
   if (uiState.creditMode && !isCredit) { setAb(false); setIg(false); }
+  if(abonoTarjeta){setAb(true);setIg(true);setExt('no');}
+  document.querySelectorAll('[data-expense-only]').forEach(el=>el.hidden=abonoTarjeta);
   uiState.creditMode=abonoTarjeta;
   document.querySelectorAll('[data-operation]').forEach(el => { const active = (el.dataset.operation === 'abono') === abonoTarjeta; el.classList.toggle('active',active); el.setAttribute('aria-pressed',active); });
   const special = externo !== 'no' || descontarAhorro || (ignorar && !abonoTarjeta);
@@ -189,8 +207,9 @@ async function uiSubmitExpense(event) {
   const amount = Number(document.getElementById('f-cantidad').value);
   let message = '';
   if (!Number.isFinite(amount) || amount <= 0) message = 'Escribe un importe mayor que cero.';
-  else if (!getCuentas().includes(document.getElementById('f-cuenta').value)) message = 'Selecciona una cuenta válida.';
-  else if (!catalogoMotivos.includes(document.getElementById('f-motivo').value)) message = 'Selecciona una categoría válida.';
+  else if (!validMoney(amount)) message = 'Usa un importe con máximo dos decimales.';
+  else if (!getCuentas().includes(document.getElementById('f-cuenta').value) && uiExpenseRecord()?.cuenta!==document.getElementById('f-cuenta').value) message = 'Selecciona una cuenta válida.';
+  else if (!catalogoMotivos.includes(document.getElementById('f-motivo').value) && uiExpenseRecord()?.motivo!==document.getElementById('f-motivo').value) message = 'Selecciona una categoría válida.';
   else if (!/^\d{4}-\d{2}-\d{2}$/.test(document.getElementById('f-fecha').value)) message = 'Selecciona la fecha del movimiento.';
   if (message) { error.textContent = message; error.style.display = 'block'; error.scrollIntoView({block:'center'}); return; }
   error.style.display = 'none';
@@ -247,73 +266,104 @@ function uiEmpty(title,description,action,tab) {
 }
 function uiSortMovements(a,b) { return String(b.fecha).localeCompare(String(a.fecha)) || Number(b.id)-Number(a.id); }
 function uiMovementRow(g, selectable = false) {
-  const historic = historico.some(item=>item.id===g.id) && !gastos.some(item=>item.id===g.id);
+  const historic = typeof g._esHistorico === 'boolean' ? g._esHistorico : historico.some(item=>item.id===g.id) && !gastos.some(item=>item.id===g.id);
   const selected = selectable && !historic && seleccionMasiva.has(g.id);
-  const status = g.ignorar ? 'Fuera del presupuesto' : g.externo === 'externo' ? 'Por cobrar' : g.externo === 'pagado' ? 'Cobrado' : g.abonoTarjeta ? 'Abono a tarjeta' : g.abonado ? 'Abonado' : 'Sin abonar';
+  const credit = MovementFilters.flag(g.abonoTarjeta), excluded = MovementFilters.flag(g.ignorar);
+  const status = credit ? 'Abono a tarjeta' : MovementFilters.paymentState(g) === 'abonado' ? 'Abonado' : 'Sin abonar';
+  const flags = [];
+  if(g.externo==='externo')flags.push('Por cobrar');
+  if(g.externo==='pagado')flags.push('Cobrado');
+  if(excluded)flags.push('Fuera del presupuesto');
   const title = g.comentarios || g.motivo;
-  return `<button type="button" class="movement-row ${selected?'selected':''} ${g.ignorar?'excluded':''}" data-movement="${Number(g.id)}" data-selectable="${selectable && !historic}" ${selectable && !historic?`aria-pressed="${selected}"`:''}>
+  return `<button type="button" class="movement-row ${selected?'selected':''} ${excluded?'excluded':''}" data-movement="${Number(g.id)}" data-selectable="${selectable && !historic}" ${selectable && !historic?`aria-pressed="${selected}"`:''} ${selectable && historic?'disabled title="Los movimientos del historial se editan individualmente"':''}>
     <span class="movement-icon">${selectable && !historic ? uiIcon(selected?'check':'plus') : uiCategoryIcon(g.motivo)}</span>
-    <span class="movement-copy"><span class="movement-title">${escapeHtml(title)}</span><span class="movement-meta">${escapeHtml(g.cuenta)} · ${escapeHtml(g.motivo)}${historic?' · Historial':''}</span></span>
-    <span class="movement-amount ${g.abonoTarjeta?'credit':''}">${g.abonoTarjeta?'− ':''}${fmt(g.cantidad)}<span class="movement-status">${escapeHtml(status)}${gastoPendienteSync(g)?' · Local':''}</span></span>
+    <span class="movement-copy"><span class="movement-title">${escapeHtml(title)}</span><span class="movement-meta">${escapeHtml(g.cuenta)} · ${escapeHtml(g.motivo)}${historic?' · Historial':''}</span>${flags.length?`<span class="movement-flags">${flags.map(escapeHtml).join(' · ')}</span>`:''}</span>
+    <span class="movement-amount ${credit?'credit':''}">${credit?'− ':''}${fmt(g.cantidad)}<span class="movement-status">${status}${gastoPendienteSync(g)?' · Local':''}</span></span>
   </button>`;
 }
-function uiMovementMatches(g) {
-  const q = normalizarTextoRegla(document.getElementById('search-in').value);
-  if (q && !normalizarTextoRegla(`${g.comentarios || ''} ${g.cuenta} ${g.motivo} ${g.cantidad}`).includes(q)) return false;
-  if (uiState.account && g.cuenta !== uiState.account) return false;
-  if (uiState.category && g.motivo !== uiState.category) return false;
-  if (activeFilter === 'pendiente' && g.abonado) return false;
-  if (activeFilter === 'abonado' && !g.abonado) return false;
-  if (activeFilter === 'ignorar' && !g.ignorar) return false;
-  if (activeFilter === 'externo' && g.externo === 'no') return false;
-  if (activeFilter === 'hist-pendiente' && (!g._esHistorico || g.abonado || g.ignorar || g.externo !== 'no')) return false;
-  const date = String(g.fecha || '').slice(0,10);
-  if (uiState.period === 'hoy' && date !== today()) return false;
-  if (uiState.period === 'mes' && !date.startsWith(today().slice(0,7))) return false;
-  if (uiState.period === 'semana') {
-    // Current working week is the same collection used by the weekly budget.
-    if (g._esHistorico && activeFilter !== 'hist-pendiente' && activeFilter !== 'pendiente') return false;
-  }
-  return true;
+function uiMovementFilters() {
+  const value = (id,allowed,fallback) => { const raw=document.getElementById(id)?.value; return allowed.includes(raw)?raw:fallback; };
+  return {
+    period:value('movement-period',MovementFilters.PERIODS,'semana'),
+    state:MovementFilters.STATES.includes(activeFilter)?activeFilter:'todos',
+    type:value('movement-type',MovementFilters.TYPES,'todos'),
+    budget:value('movement-budget',MovementFilters.BUDGETS,'todos'),
+    account:document.getElementById('movement-account')?.value || '',
+    category:document.getElementById('movement-category')?.value || '',
+    query:document.getElementById('search-in')?.value || ''
+  };
+}
+function uiGetMovements(filters = uiMovementFilters()) {
+  return MovementFilters.query(MovementFilters.collect(gastos,historico),filters,today());
+}
+function uiCanSelectMovement(id) { return uiGetMovements().some(g => g.id===id && !g._esHistorico); }
+function uiMovementDateLabel(key) {
+  const [year,month,day]=key.split('-').map(Number);
+  return new Date(year,month-1,day,12).toLocaleDateString('es-MX',{day:'numeric',month:'short',year:key.slice(0,4)!==today().slice(0,4)?'numeric':undefined});
+}
+function uiMovementMoney(records) {
+  const total=MovementFilters.totals(records);
+  return `Gastos ${fmt(total.expenses)}${total.payments ? ` · Abonos ${fmt(total.payments)}` : ''}`;
+}
+function uiShowOlderPending() {
+  document.getElementById('movement-period').value='anteriores';
+  setFilter('pendiente');
+}
+function uiRefreshMovementDate() {
+  if(tabActualGlobal==='gastos' && uiState.movementDate!==today())uiRenderMovements();
 }
 function uiRenderMovements() {
   if (!document.getElementById('movement-period')) return;
-  uiState.period = document.getElementById('movement-period').value;
-  uiState.account = document.getElementById('movement-account').value;
-  uiState.category = document.getElementById('movement-category').value;
-  const all = [...gastos.map(g=>({...g,_esHistorico:false})),...historico.map(g=>({...g,_esHistorico:true}))];
-  const list = all.filter(uiMovementMatches).sort(uiSortMovements);
-  const total = list.filter(g=>!g.ignorar && !g.abonoTarjeta).reduce((s,g)=>s+Number(g.cantidad||0),0);
-  document.getElementById('movement-count').textContent = `${list.length} movimiento${list.length===1?'':'s'} · ${fmt(total)}`;
-  const hasFilters = activeFilter !== 'todos' || uiState.period !== 'semana' || uiState.account || uiState.category || document.getElementById('search-in').value;
-  document.getElementById('clear-movement-filters').hidden = !hasFilters;
-  const groups = new Map(); for (const g of list) { const date = g.fecha || 'Sin fecha'; if (!groups.has(date)) groups.set(date,[]); groups.get(date).push(g); }
-  let html = activeFilter === 'pendiente' ? renderResumenSinAbonarPorCuenta(list) : '';
-  for (const [date,items] of groups) {
-    const value = items.filter(g=>!g.ignorar && !g.abonoTarjeta).reduce((s,g)=>s+Number(g.cantidad||0),0);
-    const label = date === today() ? 'Hoy' : /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(date+'T12:00:00').toLocaleDateString('es-MX',{weekday:'short',day:'numeric',month:'short',year:date.slice(0,4)!==today().slice(0,4)?'numeric':undefined}) : date;
-    html += `<div class="day-heading"><span>${escapeHtml(label)}</span><span>${fmt(value)}</span></div><div class="movement-list">${items.map(g=>uiMovementRow(g,modoMasivo)).join('')}</div>`;
+  const filters=uiMovementFilters(),records=MovementFilters.collect(gastos,historico),referenceDay=today();
+  uiState.movementDate=referenceDay;
+  const list=MovementFilters.query(records,filters,referenceDay);
+  Object.assign(uiState,{period:filters.period,account:filters.account,category:filters.category});
+  // A hidden row must never stay selected for an unrelated bulk edit.
+  const visibleEditable=new Set(list.filter(g=>!g._esHistorico).map(g=>g.id));
+  for(const id of seleccionMasiva)if(!visibleEditable.has(id))seleccionMasiva.delete(id);
+  actualizarConteoMasiva();
+  uiText('movement-count',`${list.length} movimiento${list.length===1?'':'s'} · ${uiMovementMoney(list)}`);
+  const activeCount=[filters.account,filters.category,filters.type!=='todos',filters.budget!=='todos'].filter(Boolean).length;
+  uiText('movement-filter-toggle',activeCount?`Filtros (${activeCount})`:'Filtros');
+  const hasFilters=filters.state!=='todos' || filters.period!=='semana' || activeCount>0 || !!filters.query.trim();
+  document.getElementById('clear-movement-filters').hidden=!hasFilters;
+  const bounds=MovementFilters.range(filters.period,referenceDay);
+  uiText('movement-period-range',filters.period==='todos'?'Todas las fechas, incluido el historial':filters.period==='anteriores'?`Hasta el ${uiMovementDateLabel(bounds.to)} · antes de esta semana`:filters.period==='hoy'?`Solo el ${uiMovementDateLabel(bounds.from)}`:`Del ${uiMovementDateLabel(bounds.from)} al ${uiMovementDateLabel(bounds.to)}${filters.period==='semana'?' · lunes a domingo':''}`);
+  const groups=new Map();
+  for(const g of list){const key=MovementFilters.date(g.fecha)||'Sin fecha';if(!groups.has(key))groups.set(key,[]);groups.get(key).push(g);}
+  let html=filters.state==='pendiente' && list.length ? renderResumenSinAbonarPorCuenta(list) : '';
+  for(const [key,items] of groups){
+    const label=key===today()?'Hoy':key==='Sin fecha'?key:uiMovementDateLabel(key);
+    html+=`<div class="day-heading"><span>${escapeHtml(label)}</span><span>${uiMovementMoney(items)}</span></div><div class="movement-list">${items.map(g=>uiMovementRow(g,modoMasivo)).join('')}</div>`;
   }
-  document.getElementById('gastos-list').innerHTML = html || uiEmpty(hasFilters?'Sin coincidencias':'Todavía no hay gastos',hasFilters?'Prueba otro período o limpia los filtros.':'Registra una compra y aparecerá aquí.',hasFilters?'':'Registrar gasto','nuevo');
-  const count = historico.filter(g=>!g.abonado&&!g.ignorar&&g.externo==='no').length;
-  const alert = document.getElementById('gastos-hist-pend-alert');
-  alert.style.display = count && activeFilter !== 'hist-pendiente' ? 'flex':'none';
-  document.getElementById('gastos-hist-pend-text').textContent = `${count} movimiento${count===1?'':'s'} de semanas anteriores`;
+  const incompatible=filters.type==='abonos' && filters.state!=='todos';
+  document.getElementById('gastos-list').innerHTML=html || uiEmpty(hasFilters?'Sin coincidencias':'Todavía no hay gastos',incompatible?'El estado de abono aplica a los gastos. Cambia Tipo a Gastos o Estado a Todos los estados.':hasFilters?'Ningún movimiento coincide con todos los filtros. Cambia el período o limpia los filtros.':'Registra una compra y aparecerá aquí.',hasFilters?'':'Registrar gasto','nuevo');
+  const older=MovementFilters.query(records,{...filters,period:'anteriores',state:'pendiente'},referenceDay);
+  document.getElementById('gastos-hist-pend-alert').style.display=older.length && !['anteriores','todos'].includes(filters.period)?'flex':'none';
+  uiText('gastos-hist-pend-text',`${older.length} gasto${older.length===1?'':'s'} · ${fmt(MovementFilters.totals(older).expenses)} antes de esta semana`);
+  document.getElementById('bulk-history-note').hidden=!modoMasivo || !list.some(g=>g._esHistorico);
+  document.querySelectorAll('#movement-state-filters button').forEach(button=>{
+    const active=button.dataset.state===filters.state;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);
+  });
 }
 function uiClearMovementFilters() {
-  document.getElementById('search-in').value = '';
-  document.getElementById('movement-period').value = 'semana';
-  document.getElementById('movement-account').value = '';
-  document.getElementById('movement-category').value = '';
+  document.getElementById('search-in').value='';
+  document.getElementById('movement-period').value='semana';
+  for(const id of ['movement-account','movement-category'])document.getElementById(id).value='';
+  for(const id of ['movement-type','movement-budget'])document.getElementById(id).value='todos';
   setFilter('todos');
 }
 function uiPopulateFilters() {
-  const account = document.getElementById('movement-account'); const category = document.getElementById('movement-category');
-  const a = account.value; const c = category.value;
-  account.innerHTML = '<option value="">Todas las cuentas</option>'+getCuentas().map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
-  category.innerHTML = '<option value="">Todas las categorías</option>'+catalogoMotivos.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
-  if (getCuentas().includes(a)) account.value=a;
-  if (catalogoMotivos.includes(c)) category.value=c;
+  const records=MovementFilters.collect(gastos,historico);
+  for(const [id,values,placeholder] of [
+    ['movement-account',[...getCuentas(),...records.map(g=>g.cuenta)],'Todas las cuentas'],
+    ['movement-category',[...catalogoMotivos,...records.map(g=>g.motivo)],'Todas las categorías']
+  ]){
+    const select=document.getElementById(id),previous=MovementFilters.normalize(select.value);
+    const choices=MovementFilters.options(values);
+    select.innerHTML=`<option value="">${placeholder}</option>`+choices.map(value=>`<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+    select.value=choices.find(value=>MovementFilters.normalize(value)===previous)||'';
+  }
 }
 function uiRenderMore() {
   const group = (title,items) => `<div class="more-group"><h3 class="more-group-title">${title}</h3><div class="more-list">${items.map(([icon,title,sub,action,value])=>`<${action==='href'?'a':'button'} ${action==='href'?`href="${value}"`:`type="button" data-${action}="${value}"`} class="more-item">${uiIcon(icon)}<span><strong>${title}</strong><small>${sub}</small></span>${uiIcon('arrow')}</${action==='href'?'a':'button'}>`).join('')}</div></div>`;
@@ -414,8 +464,11 @@ document.addEventListener('DOMContentLoaded',()=>{
   const form=document.getElementById('expense-form');
   form.addEventListener('input',()=>uiCaptureDraft());
   form.addEventListener('change',event=>{if(event.target.id==='f-motivo')uiState.categoryManual=true;if(event.target.id==='f-cuenta')uiState.accountManual=true;uiUpdateForm();uiCaptureDraft();});
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')uiCaptureDraft();});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')uiCaptureDraft();else uiRefreshMovementDate();});
   window.addEventListener('pagehide',uiCaptureDraft);
+  window.addEventListener('pageshow',uiRefreshMovementDate);
+  window.addEventListener('focus',uiRefreshMovementDate);
+  setInterval(uiRefreshMovementDate,60000);
   window.addEventListener('online',()=>uiSyncStatus(true));window.addEventListener('offline',()=>uiSyncStatus(false));
   if(window.visualViewport){let fullHeight=window.visualViewport.height;const keyboard=()=>{const focused=document.activeElement?.matches('input,textarea,select');if(!focused)fullHeight=Math.max(fullHeight,window.visualViewport.height);document.body.classList.toggle('keyboard-open',!!focused && fullHeight-window.visualViewport.height>140);};window.visualViewport.addEventListener('resize',keyboard);document.addEventListener('focusout',()=>setTimeout(keyboard,150));}
   const observer=new MutationObserver(()=>{uiReconciliationSteps();accessibleControls(document.getElementById('pantry-body'));});

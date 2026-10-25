@@ -274,8 +274,8 @@
     .scanner-guide{position:absolute;left:10%;right:10%;top:34%;height:120px;border:2px solid var(--green);border-radius:16px;box-shadow:0 0 0 999px rgba(0,0,0,.42);display:flex;align-items:flex-start;justify-content:center;color:white;font-size:11px;font-weight:800;letter-spacing:.8px;padding-top:8px;text-shadow:0 1px 8px #000}
     .scanner-bar{position:absolute;left:12px;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));display:flex;gap:8px}
 </style>
-  <link rel="stylesheet" href="mobile.css?v=20261025b">
-  <script src="theme.js?v=20261025b"></script>
+  <link rel="stylesheet" href="mobile.css?v=20261025d">
+  <script src="theme.js?v=20261025d"></script>
 </head>
 <body>
 
@@ -395,22 +395,25 @@
   <!-- GASTOS -->
   <div class="content" id="content-gastos">
     <div class="page-intro"><div class="eyebrow">Tu actividad</div><h2>Movimientos</h2><p>Encuentra cada gasto y sigue tus pendientes.</p></div>
-    <div class="segment movement-switch"><button type="button" data-movement-view="gastos" class="active" data-go="gastos">Todos los gastos</button><button type="button" data-movement-view="externos" data-go="externos">Por cobrar</button><button type="button" data-movement-view="historico" data-go="historico">Historial</button></div>
+    <div class="segment movement-switch"><button type="button" data-movement-view="gastos" class="active" data-go="gastos">Gastos</button><button type="button" data-movement-view="externos" data-go="externos">Por cobrar</button><button type="button" data-movement-view="historico" data-go="historico">Historial</button></div>
     <div class="search-wrap"><span class="search-icon" data-icon="search"></span><label class="sr-only" for="search-in">Buscar movimientos</label><input type="search" id="search-in" placeholder="Comercio, categoría o importe" oninput="renderGastos()"></div>
-    <div class="movement-controls"><label for="movement-period">Período <select id="movement-period" onchange="renderGastos()"><option value="semana">Semana actual</option><option value="hoy">Hoy</option><option value="mes">Este mes</option><option value="todos">Todo el historial</option></select></label><button type="button" class="text-button" aria-expanded="false" aria-controls="movement-filter-panel" onclick="const panel=document.getElementById('movement-filter-panel');panel.hidden=!panel.hidden;this.setAttribute('aria-expanded',!panel.hidden)">Filtrar</button></div>
-    <div id="movement-filter-panel" class="filter-options" hidden><div class="field"><label for="movement-account">Cuenta</label><select id="movement-account" onchange="renderGastos()"></select></div><div class="field"><label for="movement-category">Categoría</label><select id="movement-category" onchange="renderGastos()"></select></div></div>
-    <div class="filter-summary"><span id="movement-count"></span><button type="button" class="text-button" id="clear-movement-filters" onclick="uiClearMovementFilters()" hidden>Limpiar filtros</button></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-      <div class="filter-row" style="margin-bottom:0;flex:1">
-        <div class="chip active" id="f-todos" onclick="setFilter('todos')">Todos</div>
-      <div class="chip" id="f-pendiente" onclick="setFilter('pendiente')">Sin abonar</div>
-      <div class="chip" id="f-abonado" onclick="setFilter('abonado')">Abonados</div>
-      <div class="chip" id="f-hist-pendiente" onclick="setFilter('hist-pendiente')">Semanas anteriores</div>
-      <div class="chip" id="f-ignorar" onclick="setFilter('ignorar')">Fuera del presupuesto</div>
-      <div class="chip" id="f-externo" onclick="setFilter('externo')">Por cobrar</div>
-      </div>
-      <button id="btn-edicion-masiva" onclick="toggleEdicionMasiva()" style="flex-shrink:0;margin-left:8px;padding:5px 10px;border-radius:8px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">✏️ Editar</button>
+    <div class="movement-controls"><label for="movement-period">Período <select id="movement-period" onchange="renderGastos()"><option value="semana">Semana actual</option><option value="hoy">Hoy</option><option value="mes">Este mes</option><option value="anteriores">Semanas anteriores</option><option value="todos">Todas las fechas</option></select></label><button type="button" class="text-button" id="movement-filter-toggle" aria-expanded="false" aria-controls="movement-filter-panel" onclick="const panel=document.getElementById('movement-filter-panel');panel.hidden=!panel.hidden;this.setAttribute('aria-expanded',!panel.hidden)">Filtros</button></div>
+    <p id="movement-period-range" class="movement-period-range" aria-live="polite"></p>
+    <div id="movement-filter-panel" class="filter-options" hidden>
+      <div class="field"><label for="movement-account">Cuenta</label><select id="movement-account" onchange="renderGastos()"></select></div>
+      <div class="field"><label for="movement-category">Categoría</label><select id="movement-category" onchange="renderGastos()"></select></div>
+      <div class="field"><label for="movement-type">Tipo</label><select id="movement-type" onchange="renderGastos()"><option value="todos">Gastos y abonos</option><option value="gastos">Solo gastos</option><option value="abonos">Solo abonos a tarjeta</option></select></div>
+      <div class="field"><label for="movement-budget">Presupuesto</label><select id="movement-budget" onchange="renderGastos()"><option value="todos">Incluidos y excluidos</option><option value="incluidos">Dentro del presupuesto</option><option value="excluidos">Fuera del presupuesto</option></select></div>
     </div>
+    <div class="movement-state-label">Estado del gasto</div>
+    <div class="filter-row movement-status-filters" id="movement-state-filters" aria-label="Estado del gasto">
+      <button type="button" class="chip active" id="f-todos" data-state="todos" onclick="setFilter('todos')" aria-pressed="true">Todos los estados</button>
+      <button type="button" class="chip" id="f-pendiente" data-state="pendiente" onclick="setFilter('pendiente')" aria-pressed="false">Sin abonar</button>
+      <button type="button" class="chip" id="f-abonado" data-state="abonado" onclick="setFilter('abonado')" aria-pressed="false">Abonados</button>
+    </div>
+    <div class="filter-summary"><span id="movement-count" role="status"></span><button type="button" class="text-button" id="clear-movement-filters" onclick="uiClearMovementFilters()" hidden>Limpiar filtros</button></div>
+    <button type="button" id="btn-edicion-masiva" class="text-button" onclick="toggleEdicionMasiva()">Seleccionar gastos</button>
+    <p id="bulk-history-note" class="form-note" hidden>Los movimientos del historial se editan individualmente. Solo puedes seleccionar gastos abiertos que coincidan con los filtros.</p>
     <!-- Toolbar edición masiva -->
     <div id="toolbar-masiva" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin-bottom:8px;gap:8px;flex-wrap:wrap;align-items:center">
       <span id="masiva-count" style="font-size:12px;color:var(--text2);flex:1">0 seleccionados</span>
@@ -423,15 +426,15 @@
         <option value="ignorar">Ignorar</option>
         <option value="no-ignorar">No ignorar</option>
       </select>
-      <button onclick="aplicarEdicionMasiva()" style="padding:5px 12px;border-radius:6px;border:none;background:var(--accent);color:white;font-size:11px;cursor:pointer;font-weight:600">Aplicar</button>
+      <button type="button" id="bulk-apply" disabled onclick="aplicarEdicionMasiva()" style="padding:5px 12px;border-radius:6px;border:none;background:var(--accent);color:white;font-size:11px;cursor:pointer;font-weight:600">Aplicar</button>
       <button onclick="toggleEdicionMasiva()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer">Cancelar</button>
     </div>
     <div id="gastos-hist-pend-alert" style="display:none;background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.28);border-radius:10px;padding:9px 12px;margin-bottom:8px;align-items:center;justify-content:space-between;gap:8px">
       <div>
-        <div style="font-size:12px;font-weight:600;color:var(--orange)">Historial con gastos sin abonar</div>
+        <div style="font-size:12px;font-weight:600;color:var(--orange)">Pendientes anteriores a esta semana</div>
         <div id="gastos-hist-pend-text" style="font-size:11px;color:var(--text2);margin-top:2px"></div>
       </div>
-      <button onclick="setFilter('hist-pendiente')" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,159,67,.4);background:rgba(255,159,67,.14);color:var(--orange);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0">Ver</button>
+      <button type="button" id="older-pending-link" onclick="uiShowOlderPending()" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,159,67,.4);background:rgba(255,159,67,.14);color:var(--orange);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0">Ver anteriores</button>
     </div>
     <div id="gastos-list"></div>
   </div>
@@ -449,11 +452,11 @@
       <div class="field"><label for="f-motivo">Categoría</label><select id="f-motivo" required></select><p id="rule-hint" class="form-note" aria-live="polite"></p></div>
       <div class="field"><label for="f-fecha">Fecha</label><input type="date" id="f-fecha" required></div>
       <details class="form-options" id="expense-options"><summary>Más opciones</summary>
-        <div class="field"><label>¿Ya abonaste este gasto?</label><div class="toggle-group"><button type="button" class="tog sel-no" id="ab-no" onclick="setAb(false)">Sin abonar</button><button type="button" class="tog" id="ab-si" onclick="setAb(true)">Abonado</button></div><p class="form-note">Indica si ya cubriste este gasto en tu tarjeta.</p></div>
-        <div class="field"><label>Reembolso</label><div class="toggle-group three"><button type="button" class="tog sel-no" id="ext-no" onclick="setExt('no')">No aplica</button><button type="button" class="tog" id="ext-ext" onclick="setExt('externo')">Por cobrar</button><button type="button" class="tog" id="ext-pagado" onclick="setExt('pagado')">Cobrado</button></div></div>
+        <div class="field" data-expense-only><label>¿Ya cubriste este gasto?</label><div class="toggle-group"><button type="button" class="tog sel-no" id="ab-no" onclick="setAb(false)">Sin abonar</button><button type="button" class="tog" id="ab-si" onclick="setAb(true)">Abonado</button></div><p class="form-note">Controla si queda pendiente por abonar. El reembolso se registra por separado.</p></div>
+        <div class="field" data-expense-only><label>Reembolso</label><div class="toggle-group three"><button type="button" class="tog sel-no" id="ext-no" onclick="setExt('no')">No aplica</button><button type="button" class="tog" id="ext-ext" onclick="setExt('externo')">Por cobrar</button><button type="button" class="tog" id="ext-pagado" onclick="setExt('pagado')">Cobrado</button></div></div>
         <div id="reembolso-wrap" style="display:none"><div class="field"><label for="f-reembolso-persona">Persona o referencia</label><input type="text" id="f-reembolso-persona" placeholder="¿Quién te lo reembolsa?"></div><div class="field"><label for="f-reembolso-fecha">Fecha prometida</label><input type="date" id="f-reembolso-fecha"></div><div class="field"><label for="f-reembolso-nota">Nota de reembolso</label><textarea id="f-reembolso-nota" rows="2" placeholder="Agrega un detalle"></textarea></div></div>
         <div class="field"><label>Descontar de una cuenta de ahorro</label><div class="toggle-group"><button type="button" class="tog sel-no" id="desc-no" onclick="setDescAhorro(false)">No</button><button type="button" class="tog" id="desc-si" onclick="setDescAhorro(true)">Sí</button></div><div id="ahorro-selector-wrap" style="display:none;margin-top:10px"><label for="f-ahorro-cuenta">Cuenta de ahorro</label><select id="f-ahorro-cuenta"></select></div></div>
-        <div class="field"><label>Incluir en el presupuesto semanal</label><div class="toggle-group"><button type="button" class="tog sel-no" id="ig-no" onclick="setIg(false)">Incluir</button><button type="button" class="tog" id="ig-si" onclick="setIg(true)">Excluir</button></div></div>
+        <div class="field" data-expense-only><label>Incluir en el presupuesto semanal</label><div class="toggle-group"><button type="button" class="tog sel-no" id="ig-no" onclick="setIg(false)">Incluir</button><button type="button" class="tog" id="ig-si" onclick="setIg(true)">Excluir</button></div></div>
       </details>
       <div id="abono-tarjeta-wrap" hidden><button type="button" class="tog" id="abono-tarjeta-no" onclick="setAbonoTarjeta(false)">Gasto</button><button type="button" class="tog" id="abono-tarjeta-si" onclick="setAbonoTarjeta(true)">Abono</button></div>
       <p class="form-note" id="draft-status" aria-live="polite">Se guarda automáticamente como borrador</p>
@@ -462,7 +465,7 @@
   </section>
 
   <!-- EXTERNOS -->
-  <div class="content" id="content-externos"><div class="segment movement-switch"><button type="button" data-movement-view="gastos" data-go="gastos">Todos los gastos</button><button type="button" data-movement-view="externos" data-go="externos">Por cobrar</button><button type="button" data-movement-view="historico" data-go="historico">Historial</button></div>
+  <div class="content" id="content-externos"><div class="segment movement-switch"><button type="button" data-movement-view="gastos" data-go="gastos">Gastos</button><button type="button" data-movement-view="externos" data-go="externos">Por cobrar</button><button type="button" data-movement-view="historico" data-go="historico">Historial</button></div>
     <div class="ext-resumen">
       <div class="ext-stat-row">
         <div class="ext-stat"><div class="ext-stat-val" style="color:var(--orange)" id="ext-pend-tot">$0.00</div><div class="ext-stat-label" style="color:var(--text2)">Por cobrar</div></div>
@@ -471,9 +474,9 @@
       </div>
     </div>
     <div class="filter-row">
-      <div class="chip active" id="ef-todos" onclick="setExtFilter('todos')">Todos</div>
-      <div class="chip" id="ef-pendiente" onclick="setExtFilter('pendiente')">Por cobrar</div>
-      <div class="chip" id="ef-pagado" onclick="setExtFilter('pagado')">Cobrados</div>
+      <button type="button" class="chip active" id="ef-todos" aria-pressed="true" onclick="setExtFilter('todos')">Todos</button>
+      <button type="button" class="chip" id="ef-pendiente" aria-pressed="false" onclick="setExtFilter('pendiente')">Por cobrar</button>
+      <button type="button" class="chip" id="ef-pagado" aria-pressed="false" onclick="setExtFilter('pagado')">Cobrados</button>
     </div>
     <div id="externos-list"></div>
   </div>
@@ -497,7 +500,7 @@
   </div>
 
   <!-- HISTÓRICO -->
-  <div class="content" id="content-historico"><div class="segment movement-switch"><button type="button" data-movement-view="gastos" data-go="gastos">Todos los gastos</button><button type="button" data-movement-view="externos" data-go="externos">Por cobrar</button><button type="button" data-movement-view="historico" data-go="historico">Historial</button></div>
+  <div class="content" id="content-historico"><div class="segment movement-switch"><button type="button" data-movement-view="gastos" data-go="gastos">Gastos</button><button type="button" data-movement-view="externos" data-go="externos">Por cobrar</button><button type="button" data-movement-view="historico" data-go="historico">Historial</button></div>
     <div style="display:flex;background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:4px;gap:4px;margin-bottom:14px">
       <button id="hv-semana" onclick="histView='semana';renderHistorico()" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:var(--accent);color:white">Por semana</button>
       <button id="hv-mes" onclick="histView='mes';renderHistorico()" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;background:transparent;color:var(--text2)">Resumen mensual</button>
@@ -660,7 +663,7 @@
 <div class="overlay" id="modal-excepcion">
   <div class="modal">
     <h2>📅 Ajustar fecha de corte</h2>
-    <p style="margin-bottom:12px">Tarjeta: <strong id="exc-cuenta"></strong> · Fecha original: <strong id="exc-fecha-orig"></strong></p>
+    <p style="margin-bottom:12px">Tarjeta: <strong id="exc-cuenta"></strong> · Fecha original: <strong id="exc-fecha-orig"></strong></p><input type="hidden" id="exc-periodo-key">
     <div class="field"><label>Nueva fecha <span class="req">*</span></label><input type="date" id="exc-fecha-nueva"></div>
     <div class="field"><label>Nota</label><input type="text" id="exc-nota" placeholder="Ej. Día inhábil..."></div>
     <p style="font-size:11px;color:var(--text2)">El próximo período iniciará el día siguiente a esta fecha.</p>
@@ -977,9 +980,10 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="db.js?v=2"></script>
-<script src="app.js?v=20261025b"></script>
-<script src="despensa.js?v=20261025b"></script>
-<script src="mobile-ui.js?v=20261025b"></script>
+<script src="app.js?v=20261025d"></script>
+<script src="despensa.js?v=20261025d"></script>
+<script src="movement-filters.js?v=20261025d"></script>
+<script src="mobile-ui.js?v=20261025d"></script>
 <script async src="https://unpkg.com/@zxing/browser@latest"></script>
 <script async src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script async src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
