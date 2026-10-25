@@ -48,7 +48,7 @@ function uiCaptureDraft() {
   const meaningful = fields['f-cantidad'] || fields['f-comentarios-input'] || editingId;
   if (!meaningful) return;
   try {
-    localStorage.setItem(uiDraftKey(), JSON.stringify({ fields, abonado, abonoTarjeta, ignorar, externo, descontarAhorro, editingId, historico:!!window._editandoHistorico, bank:window._desdeConciliador || null, origin:uiState.origin, categoryManual:uiState.categoryManual, accountManual:uiState.accountManual }));
+    localStorage.setItem(uiDraftKey(), JSON.stringify({ fields, abonado, abonoTarjeta, ignorar, externo, descontarAhorro, editingId, historico:!!window._editandoHistorico, bank:window._desdeConciliador || null, payment:pendingPayment, origin:uiState.origin, categoryManual:uiState.categoryManual, accountManual:uiState.accountManual }));
     uiText('draft-status','Borrador guardado en este iPhone');
   } catch { document.getElementById('draft-status').textContent = 'El borrador no pudo guardarse en este dispositivo'; }
 }
@@ -62,6 +62,7 @@ function uiRestoreDraft() {
     editingId = draft.editingId || null;
     window._editandoHistorico = !!draft.historico;
     window._desdeConciliador = draft.bank || null;
+    pendingPayment = draft.payment || null;
     uiState.categoryManual = !!draft.categoryManual; uiState.accountManual=!!draft.accountManual;
     setAb(!!draft.abonado); setAbonoTarjeta(!!draft.abonoTarjeta); setIg(!!draft.ignorar); setExt(draft.externo || 'no'); setDescAhorro(!!draft.descontarAhorro);
     for (const [id,value] of Object.entries(draft.fields)) {

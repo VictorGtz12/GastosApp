@@ -5,13 +5,13 @@
 // ════════════════════════════════════════════════════════════
 
 const DB_NAME = 'GastosDB_v1';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DB_STORES = {
-  appData:    '++id, key',
-  versions:   '++id, savedAt, origen',
-  syncHistory:'++id, ts, tipo',
-  conciliacion:'++id, clave',
-  tags:       '++id, nombre',
+  appData: { keyPath: 'id' },
+  versions: { keyPath: 'id' },
+  syncHistory: { keyPath: 'id' },
+  conciliacion: { keyPath: 'clave' },
+  tags: { keyPath: 'id', autoIncrement: true },
 };
 
 let _dbPromise = null;
@@ -22,14 +22,14 @@ function _openDB() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
-      Object.entries(DB_STORES).forEach(([name, keyPath]) => {
+      Object.entries(DB_STORES).forEach(([name, options]) => {
         if (!db.objectStoreNames.contains(name)) {
-          db.createObjectStore(name, { keyPath });
+          db.createObjectStore(name, options);
         }
       });
     };
     req.onsuccess = (e) => resolve(e.target.result);
-    req.onerror = (e) => reject(e.target.error);
+    req.onerror = (e) => { _dbPromise = null; reject(e.target.error); };
   });
   return _dbPromise;
 }

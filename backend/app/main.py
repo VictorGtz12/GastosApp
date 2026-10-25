@@ -21,6 +21,7 @@ from .storage import (
     ROOT_DIR,
     auth_user_payload,
     can_read_workspace,
+    can_manage_workspace,
     can_write_workspace,
     connect,
     create_session,
@@ -82,7 +83,9 @@ def parse_eq_filter(params: dict[str, str], field: str) -> str | None:
 
 def normalize_data_row(row: dict[str, Any], workspace_id: str | None = None) -> dict[str, Any]:
     clean = dict(row)
-    if workspace_id and not clean.get("workspace_id"):
+    if workspace_id:
+        if clean.get("workspace_id") and clean["workspace_id"] != workspace_id:
+            raise HTTPException(status_code=400, detail="Todas las filas deben pertenecer a la base seleccionada")
         clean["workspace_id"] = workspace_id
     return clean
 
@@ -314,11 +317,25 @@ def rest_get(conn, current, table: str, params: dict[str, str]):
     get_workspace_or_403(conn, current, workspace_id)
     sql = f"select * from {table} where workspace_id=?"
     args: list[Any] = [workspace_id]
-    row_id = parse_eq_filter(params, "id")
-    if row_id:
-        sql += " and id=?"
-        args.append(row_id)
-    sql += " order by updated_at asc"
+    operators = {"eq": "=", "neq": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+    for column in DATA_TABLES[table]:
+        if column in {"workspace_id", "data"} or column not in params:
+            continue
+        value = params[column]
+        if value == "is.null":
+            sql += f" and {column} is null"
+        elif value == "not.is.null":
+            sql += f" and {column} is not null"
+        elif "." in value and value.split(".", 1)[0] in operators:
+            op, operand = value.split(".", 1)
+            sql += f" and {column}{operators[op]}?"
+            args.append(operand)
+        else:
+            raise HTTPException(status_code=400, detail="Filtro no soportado")
+    order = params.get("order", "updated_at.asc").split(".")
+    if len(order) != 2 or order[0] not in DATA_TABLES[table] or order[1] not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Orden no soportado")
+    sql += f" order by {order[0]} {order[1]}"
     rows = conn.execute(sql, args).fetchall()
     limit = params.get("limit")
     if limit and limit.isdigit():
@@ -334,6 +351,9 @@ def rest_post(conn, current, table: str, rows: list[dict[str, Any]]):
                 target_id = str(row.get("id") or current["id"])
                 if target_id != current["id"] and not is_admin(current):
                     raise HTTPException(status_code=403, detail="Sin permiso")
+                if not is_admin(current):
+                    if row.get("role", current["role"]) != current["role"] or row.get("email", current["email"]) != current["email"]:
+                        raise HTTPException(status_code=403, detail="Solo admin puede cambiar identidad o rol")
                 conn.execute(
                     """
                     insert into app_users(id,email,display_name,role,created_at,updated_at)
@@ -356,6 +376,9 @@ def rest_post(conn, current, table: str, rows: list[dict[str, Any]]):
             return {"ok": True}
         if table == "app_workspaces":
             for row in rows:
+                existing = conn.execute("select id from app_workspaces where id=?", (row["id"],)).fetchone()
+                if existing and not can_manage_workspace(conn, current, row["id"]):
+                    raise HTTPException(status_code=403, detail="Sin permiso para administrar esta base")
                 if not is_admin(current) and row.get("created_by") != current["id"]:
                     raise HTTPException(status_code=403, detail="Sin permiso")
                 conn.execute(
@@ -372,8 +395,10 @@ def rest_post(conn, current, table: str, rows: list[dict[str, Any]]):
         if table == "app_workspace_members":
             for row in rows:
                 workspace_id = row["workspace_id"]
-                if not can_write_workspace(conn, current, workspace_id):
+                if not can_manage_workspace(conn, current, workspace_id):
                     raise HTTPException(status_code=403, detail="Sin permiso")
+                if row.get("role", "editor") not in {"viewer", "editor", "admin"}:
+                    raise HTTPException(status_code=400, detail="Rol de base inválido")
                 conn.execute(
                     """
                     insert into app_workspace_members(workspace_id,user_id,role,created_at,updated_at)
@@ -416,7 +441,14 @@ def rest_patch(conn, current, table: str, params: dict[str, str], row: dict[str,
 
 @app.get("/{path:path}")
 def static_frontend(path: str):
-    target = ROOT_DIR / path
-    if path and target.exists() and target.is_file() and "backend" not in target.parts:
-        return FileResponse(target)
-    return FileResponse(ROOT_DIR / "index.html")
+    public_files = {
+        "index.html", "tasks.html", "app.js", "db.js", "despensa.js", "mobile-ui.js",
+        "mobile.css", "theme.js", "sw.js", "manifest.json", "icon-192.png", "icon-512.png",
+        "parsers.js", "conciliacion.js", "cuentas-finanzas.js",
+    }
+    name = path or "index.html"
+    root = ROOT_DIR.resolve()
+    target = (root / name).resolve()
+    if name not in public_files or target.parent != root or not target.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return FileResponse(target)

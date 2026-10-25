@@ -1,4 +1,4 @@
-# Gastos Semanales v2.75
+# Gastos Semanales v2.76
 
 App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
@@ -99,6 +99,28 @@ npm run test:mobile
 
 El script levanta un servidor temporal en `127.0.0.1`, prueba WebKit en tamaños de iPhone de 320 a 430 px, verifica borradores, filtros, ediciones, ahorro, abonos y guardado sin conexión, y guarda capturas en `test-results/`. La reapertura de la PWA sin conexión se comprueba en Chromium; WebKit en Windows presenta limitaciones para simular esa navegación. Las pruebas emulan el navegador; cámara, OCR y notificaciones deben revisarse en un iPhone físico.
 
+### Correcciones verificadas en v2.76
+
+- La subida reconoce únicamente las operaciones y revisiones incluidas en su petición. Los cambios posteriores siguen pendientes y una descarga tardía no los sobrescribe.
+- Cada base conserva su cola y marcas de sincronización al cambiar de workspace. Las respuestas de una base anterior no modifican la base actual.
+- Un fallo de red al renovar sesión conserva la sesión local; una respuesta de credenciales rechazadas sí la cierra. El inicio muestra el caché aunque falle la consulta del perfil.
+- Editar gastos del historial también ajusta sus retiros de ahorro. Cambiar el ahorro de origen registra una reversión y no reutiliza retiros ya revertidos. Eliminar el gasto también elimina el retiro remoto.
+- Los traspasos nuevos comparten un identificador entre sus dos movimientos; la edición y eliminación encuentran la contraparte correcta. Cancelar una eliminación de ahorro conserva el comportamiento de eliminar gastos.
+- Registrar servicios o cuotas ya no los marca como pagados al abrir el formulario. Solo se cuentan al guardar; editar la cuota no la cuenta de nuevo y eliminar su gasto enlazado revierte el contador.
+- Si falla la escritura local del gasto, se conservan su formulario y borrador y se revierte la modificación en memoria para evitar duplicados al reintentar.
+- IndexedDB usa claves válidas. Se conservan los almacenes existentes y se crean los que faltan al actualizar a la versión 2.
+- Las notas de gastos se muestran como texto. El servidor protege identidad, roles, membresías y filas de otras bases, y solo publica los archivos de la aplicación.
+- La comprobación del cierre semanal respeta los filtros de estado y borrado del servidor.
+
+Las pruebas adicionales viven en `tests/regressions.cjs` y se ejecutan con `npm run test:mobile`. Las pruebas del servidor usan una base SQLite temporal:
+
+```sh
+python -m pip install -r backend/requirements-dev.txt
+python -m unittest discover -s backend/tests -v
+```
+
+Para publicar esta revisión también hay que actualizar el backend y reiniciar su servicio, además de los archivos de la PWA. No se modifican los registros de la base de producción durante las pruebas.
+
 ---
 
 ## Cómo pedir cambios a la IA (plantilla)
@@ -174,7 +196,7 @@ Sube el PDF de tu estado de cuenta y la app compara automáticamente los cargos 
 ### Opción A — Netlify
 
 1. Ve a app.netlify.com/drop
-2. Arrastra la carpeta del proyecto → URL pública al instante
+2. Publica únicamente los HTML, JS, CSS, manifest e iconos de la app. No incluyas `backend/`, `backups/`, `.git/` ni bases SQLite.
 
 ### Opción B — Servidor estático
 
@@ -288,4 +310,4 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 
 ---
 
-*Versión 2.75*
+*Versión 2.76*

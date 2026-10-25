@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.75';
-const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20261025', './despensa.js?v=20261025', './mobile.css?v=20261025', './mobile-ui.js?v=20261025', './theme.js?v=20261025', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'gastos-v2.76';
+const ASSETS = ['./', './index.html', './db.js?v=2', './app.js?v=20261025b', './despensa.js?v=20261025b', './mobile.css?v=20261025b', './mobile-ui.js?v=20261025b', './theme.js?v=20261025b', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -7,7 +7,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('gastos-') && k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

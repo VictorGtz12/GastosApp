@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.75';
+const APP_VERSION = 'v2.76';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -104,6 +104,7 @@ let ahorroDescontar = null;
 let activeFilter = 'todos';
 let extFilter = 'todos';
 let editingId = null;
+let pendingPayment = null;
 let movMode = 'abono';
 let movCuentaId = null;
 let traspasoOrigenId = null;
@@ -201,7 +202,7 @@ async function sqliteApiFetch(path, opts = {}) {
     'Authorization': `Bearer ${auth?.access_token || ''}`
   };
   const res = await fetch(`${base}${path}`, { ...opts, headers });
-  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+  if (!res.ok) { const error = new Error(await res.text().catch(() => `HTTP ${res.status}`)); error.status = res.status; throw error; }
   return res;
 }
 
@@ -236,10 +237,27 @@ function currentWorkspaceId() {
   return localStorage.getItem('currentWorkspaceId') || null;
 }
 
+const SYNC_CONTEXT_FIELDS = ['lastSync','lastRemoteSync','lastStructuredRemoteSync','localModified','pendingSyncOps','syncConflictPending','lastSyncError','lastSuccessfulUploadAt'];
+function persistSyncContext(id = currentWorkspaceId()) {
+  if (!id) return;
+  const state = Object.fromEntries(SYNC_CONTEXT_FIELDS.map(key => [key, localStorage.getItem(key)]));
+  localStorage.setItem(`syncContext:${id}`, JSON.stringify(state));
+}
+function restoreSyncContext(id = currentWorkspaceId()) {
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(`syncContext:${id}`) || '{}'); } catch {}
+  SYNC_CONTEXT_FIELDS.forEach(key => { if(state[key] != null)localStorage.setItem(key,state[key]);else localStorage.removeItem(key); });
+}
 function setCurrentWorkspaceId(id) {
+  const previous = currentWorkspaceId();
+  if ((id || null) === previous) return;
+  persistSyncContext(previous);
   if (id) localStorage.setItem('currentWorkspaceId', id);
   else localStorage.removeItem('currentWorkspaceId');
+  restoreSyncContext(id);
 }
+function syncIdentity() { return `${currentUserId() || ''}:${currentWorkspaceId() || ''}`; }
+function localSyncRevision() { return JSON.stringify([localStorage.getItem('localModified'), getPendingSyncOps().map(op => op.id), getStructuredDirty()]); }
 
 function appDataStorageKey() {
   const wid = currentWorkspaceId();
@@ -356,7 +374,7 @@ function userScopedTable(table) {
 
 async function refreshServerSession() {
   const auth = getServerAuth();
-  if (!auth?.refresh_token) return false;
+  if (!auth?.refresh_token || !navigator.onLine) return false;
   const expiresAt = Number(auth.expires_at || 0) * 1000;
   if (expiresAt && expiresAt - Date.now() > 60000) return true;
   try {
@@ -365,7 +383,7 @@ async function refreshServerSession() {
     return true;
   } catch(e) {
     console.warn('Refresh session error:', e.message);
-    setServerAuth(null);
+    if (e.status === 401 || e.status === 403) setServerAuth(null);
     return false;
   }
 }
@@ -455,7 +473,7 @@ async function serverAuthFetch(path, body) {
     body: JSON.stringify(payload)
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
+  if (!res.ok) { const error = new Error(data.detail || data.message || `Auth HTTP ${res.status}`); error.status = res.status; throw error; }
   localStorage.setItem('syncProvider', 'sqlite');
   return data;
 }
@@ -538,6 +556,7 @@ async function crearUsuarioAdmin() {
 }
 
 function cerrarSesion() {
+  persistSyncContext();
   setServerAuth(null);
   ['lastSync', 'lastRemoteSync', 'lastStructuredRemoteSync', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
   showToast('Sesión cerrada');
@@ -548,7 +567,9 @@ async function ensureUserProfile(displayName = '') {
   const user = currentUser();
   if (!user) return false;
   const name = authUserName(displayName);
-  const role = (user.email || '').toLowerCase() === 'vedu.gutierrez@gmail.com' ? 'admin' : 'user';
+  const role = user.app_metadata?.role === 'admin' || (user.email || '').toLowerCase() === 'vedu.gutierrez@gmail.com' ? 'admin' : 'user';
+  appUserProfile = { id: user.id, email: user.email || '', display_name: name, role };
+  if (!navigator.onLine) return true;
   await sbFetch('app_users?on_conflict=id', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
@@ -628,10 +649,9 @@ async function cambiarWorkspace(workspaceId) {
   if (!workspaceId || workspaceId === currentWorkspaceId()) return;
   guardarBackupMinimo('antes-cambiar-base');
   setCurrentWorkspaceId(workspaceId);
-  ['lastSync', 'lastRemoteSync', 'lastStructuredRemoteSync', 'localModified', 'pendingSyncOps', 'syncConflictPending'].forEach(k => localStorage.removeItem(k));
   resetPersonalState();
   loadFromLocal();
-  if (navigator.onLine) await downloadRemote(true);
+  if (navigator.onLine) await downloadRemote(!hasPendingSync());
   actualizarSelectCuentas();
   actualizarSelectMotivos();
   renderMenu();
@@ -728,13 +748,13 @@ function getStructuredDirty() {
 
 function markStructuredDirty(key) {
   const dirty = getStructuredDirty();
-  dirty[key] = true;
+  dirty[key] = makeLocalId('revision');
   localStorage.setItem(workspaceStorageKey('structuredDirty'), JSON.stringify(dirty));
 }
 
-function clearStructuredDirty(keys) {
+function clearStructuredDirty(keys, acknowledged = null) {
   const dirty = getStructuredDirty();
-  keys.forEach(k => delete dirty[k]);
+  keys.forEach(k => { if (!acknowledged || dirty[k] === acknowledged[k]) delete dirty[k]; });
   localStorage.setItem(workspaceStorageKey('structuredDirty'), JSON.stringify(dirty));
 }
 
@@ -1155,19 +1175,26 @@ let _remoteUploadQueued = false;
 async function uploadStructuredSync(opts = {}) {
   if (!structuredSyncReady()) return false;
   if (_remoteUploadLock) {
-    _remoteUploadQueued = true;
-    return true;
+    _remoteUploadQueued = { full: !!opts.full || !!_remoteUploadQueued?.full };
+    return false;
   }
+  const identity = syncIdentity();
+  const workspaceId = currentWorkspaceId();
+  const startedAt = new Date().toISOString();
+  const acknowledgedOps = new Set(getPendingSyncOps().map(op => op.id));
+  const acknowledgedDirty = getStructuredDirty();
   _remoteUploadLock = true;
   mostrarEstadoSync(false, 'subiendo');
-  let payload = buildStructuredPayload();
+  let payload;
   const deleted = getStructuredDeleted();
   try {
+    payload = buildStructuredPayload();
     const remoteSettings = await remoteStructuredSettings();
+    if (identity !== syncIdentity()) return false;
     if (remoteSettings && localPayloadLooksOlder(payload.settings, remoteSettings)) {
       console.warn('[Sync servidor] Cache local vieja: se descarga remoto antes de subir.');
       setTimeout(async () => {
-        const ok = await downloadRemote(true);
+        const ok = await downloadRemote(false);
         if (ok) {
           actualizarSelectCuentas();
           actualizarSelectMotivos();
@@ -1182,7 +1209,7 @@ async function uploadStructuredSync(opts = {}) {
       payload = filterIncrementalPayload(payload);
       if (!payload) {
         console.warn('[Sync servidor] Sin marca de sync previa: se descarga remoto antes de subir.');
-        setTimeout(() => downloadRemote(true), 50);
+        setTimeout(() => downloadRemote(false), 50);
         return false;
       }
     }
@@ -1217,26 +1244,28 @@ async function uploadStructuredSync(opts = {}) {
     await sqliteApiFetch('/sync/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace_id: currentWorkspaceId(), payload, deleted })
+      body: JSON.stringify({ workspace_id: workspaceId, payload, deleted })
     });
-    const deleteResults = Object.keys(deleteMap).map(key => ({ key, done: (deleted[key] || []).map(r => r.id) }));
-    deleteResults.forEach(({ key, done }) => {
-      if (done.length) clearStructuredDeleted(key, done);
-    });
-    clearStructuredDirty(['cuentas', 'catalogos', 'cuentasAhorro', 'recurrentes', 'deudas', 'pantryProducts', 'pantryBarcodes', 'pantryCategories', 'pantryLocations', 'pantryLots', 'pantryMovements', 'pantryMovementLines', 'pantryExpirationProfiles', 'pantryOcrCorrections']);
-
-    const ts = new Date().toISOString();
-    localStorage.setItem('lastRemoteSync', ts);
-    localStorage.setItem('lastStructuredRemoteSync', ts);
-    localStorage.setItem('lastSync', ts);
-    localStorage.setItem('localModified', ts);
-    markRecentUpload(ts);
+    if (identity !== syncIdentity()) return false;
+    const remainingDeleted = getStructuredDeleted();
+    for (const key of Object.keys(deleteMap)) {
+      const acknowledged = new Map((deleted[key] || []).map(row => [String(row.id),row.deleted_at]));
+      if (remainingDeleted[key]) remainingDeleted[key] = remainingDeleted[key].filter(row => acknowledged.get(String(row.id)) !== row.deleted_at);
+    }
+    setStructuredDeleted(remainingDeleted);
+    clearStructuredDirty(Object.keys(acknowledgedDirty), acknowledgedDirty);
+    setPendingSyncOps(getPendingSyncOps().filter(op => !acknowledgedOps.has(op.id)));
+    localStorage.setItem('lastRemoteSync', startedAt);
+    localStorage.setItem('lastStructuredRemoteSync', startedAt);
+    localStorage.setItem('lastSync', startedAt);
+    if (!getPendingSyncOps().length && !Object.keys(getStructuredDirty()).length) localStorage.setItem('localModified', startedAt);
+    markRecentUpload(startedAt);
     localStorage.removeItem('lastSyncError');
     localStorage.removeItem('syncConflictPending');
-    clearPendingSyncOps();
     registrarEntradaHistorialSync('subida', 'servidor');
     return true;
   } catch(e) {
+    if (identity !== syncIdentity()) return false;
     console.warn('Error subiendo al servidor:', e.message);
     localStorage.setItem('lastSyncError', e.message || 'Error desconocido al subir a Servidor');
     mostrarEstadoSync(false, 'error');
@@ -1244,8 +1273,9 @@ async function uploadStructuredSync(opts = {}) {
   } finally {
     _remoteUploadLock = false;
     if (_remoteUploadQueued) {
+      const queued = _remoteUploadQueued;
       _remoteUploadQueued = false;
-      setTimeout(() => uploadStructuredSync().then(ok => {
+      setTimeout(() => uploadStructuredSync(queued).then(ok => {
         if (ok) mostrarEstadoSync(true);
       }), 50);
     }
@@ -1264,12 +1294,15 @@ async function sbSelect(table, query = 'select=*') {
 
 async function downloadStructuredSync(force = false) {
   if (!structuredSyncReady()) return false;
+  const identity = syncIdentity();
+  const revision = localSyncRevision();
   mostrarEstadoSync(false, 'descargando');
   try {
     let gRows, cRows, catRows, caRows, movRows, recRows, deudaRows, settingsRows;
     let pantryProductRows, pantryBarcodeRows, pantryCategoryRows, pantryLocationRows, pantryLotRows, pantryMovementRows, pantryMovementLineRows, pantryProfileRows, pantryCorrectionRows;
     const res = await sqliteApiFetch(`/sync/download?workspace_id=${encodeURIComponent(currentWorkspaceId())}`);
     const remote = await res.json();
+    if (identity !== syncIdentity()) return false;
     const tables = remote.tables || {};
     gRows = tables.gs_gastos || [];
     cRows = tables.gs_cuentas || [];
@@ -1300,7 +1333,7 @@ async function downloadStructuredSync(force = false) {
     ].reduce((max, r) => Math.max(max, new Date(r.updated_at || r.data?.updatedAt || 0).getTime()), 0);
     const localModified = new Date(localStorage.getItem('localModified') || 0).getTime();
     const yaSync = !!localStorage.getItem('lastStructuredRemoteSync');
-    if (!force && yaSync && localModified > remoteLatest + 5000 && !recentUploadGraceActive() && getPendingSyncOps().length > 0) {
+    if (revision !== localSyncRevision() || (!force && hasPendingSync())) {
       console.warn('[Sync servidor estructurado] Local mas nuevo, no se descarga remoto viejo.');
       showSyncConflict({
         local: summarizeSnapshotForSync(),
@@ -1374,14 +1407,14 @@ async function downloadStructuredSync(force = false) {
     if (settings.ajustesPresupuesto) ajustesPresupuesto = settings.ajustesPresupuesto;
 
     syncBloqueado = true;
-    saveLocal();
-    syncBloqueado = false;
+    try { saveLocal(); } finally { syncBloqueado = false; }
     const ts = new Date(remoteLatest || Date.now()).toISOString();
     localStorage.setItem('lastRemoteSync', ts);
     localStorage.setItem('lastStructuredRemoteSync', ts);
     localStorage.setItem('lastSync', ts);
     localStorage.setItem('localModified', ts);
     localStorage.removeItem('syncConflictPending');
+    if (force) { clearPendingSyncOps(); clearStructuredDirty(Object.keys(getStructuredDirty())); setStructuredDeleted({}); }
     registrarEntradaHistorialSync('descarga', 'servidor');
     return true;
   } catch(e) {
@@ -1452,7 +1485,7 @@ async function resolverSyncConflict(accion) {
     syncBloqueado = true;
     const ok = await downloadStructuredSync(true);
     syncBloqueado = false;
-    if (ok) {
+    if (ok === true) {
       actualizarSelectCuentas();
       actualizarSelectMotivos();
       renderMenu();
@@ -1467,7 +1500,7 @@ async function resolverSyncConflict(accion) {
     syncBloqueado = true;
     const okDown = await downloadStructuredSync(true);
     syncBloqueado = false;
-    if (!okDown) {
+    if (okDown !== true) {
       showToast('No se pudo bajar servidor para combinar');
       return;
     }
@@ -1856,7 +1889,6 @@ function refrescarVistasDespuesDeCambio(tab = tabActualGlobal) {
 
 async function refreshData() {
   if (!requireAuth()) return;
-  await ensureUserProfile();
   if (!navigator.onLine) {
     loadFromLocal(); actualizarSelectCuentas(); actualizarSelectMotivos();
     showTab(tabActualGlobal);
@@ -1864,6 +1896,8 @@ async function refreshData() {
     showToast('Sin internet: cambios guardados offline');
     return;
   }
+
+  try { await ensureUserProfile(); } catch (error) { mostrarEstadoSync(false, 'error'); showToast('No se pudo conectar. Tu copia local sigue disponible.'); return false; }
 
   // Servidor sync (download primero, luego upload)
   if (usingRemoteSync()) {
@@ -2266,12 +2300,13 @@ function iniciarAutoSync() {
 // ════════════════════════════════════════════════════════════
 
 function saveLocal() {
+  let persisted = false;
   try {
     repairStructuredEntityIds();
     const data = {
       gastos, historico, nextId, nextAhorroId,
       cuentasAhorro, excepciones,
-      catalogoCuentas, catalogoMotivos, catalogoComentarios, reglasAutomaticas,
+      catalogoCuentas, catalogoMotivos, catalogoComentarios, catalogoTags, reglasAutomaticas,
       presupuesto: PRESUPUESTO,
       recurrentes, nextRecId, deudas, nextDeudaId, nextMovId,
       pantryProducts, pantryBarcodes, pantryCategories, pantryLocations, pantryLots,
@@ -2279,6 +2314,7 @@ function saveLocal() {
       ajustesPresupuesto,
     };
     localStorage.setItem(appDataStorageKey(), JSON.stringify(data));
+    persisted = true;
     const ts = new Date().toISOString();
     localStorage.setItem('localModified', ts);
     if (!syncBloqueado) queueSyncOperation(tabActualGlobal === 'ahorros' ? 'ahorros' : tabActualGlobal === 'recurrentes' ? 'recurrentes' : tabActualGlobal === 'deudas' ? 'deudas' : tabActualGlobal === 'despensa' ? 'pantry' : 'gastos', { tab: tabActualGlobal || 'menu' });
@@ -2308,16 +2344,15 @@ function saveLocal() {
     }
   } catch(e) {
     console.warn('saveLocal error:', e);
-    try {
-      localStorage.setItem('gastos',    JSON.stringify(gastos));
-      localStorage.setItem('historico', JSON.stringify(historico));
-      localStorage.setItem('ahorros',   JSON.stringify(cuentasAhorro));
-    } catch(e2) { console.error('saveLocal fallback error:', e2); }
+    if (!persisted) throw new Error('No se pudo guardar en este dispositivo. Libera espacio y vuelve a intentar.');
+    showToast('Guardado localmente; no se pudo preparar la sincronización.');
+
   }
 }
 
 function loadFromLocal() {
   try {
+    if (currentWorkspaceId() && !localStorage.getItem('lastSync') && !localStorage.getItem('localModified') && !getPendingSyncOps().length) restoreSyncContext();
     const raw = localStorage.getItem(appDataStorageKey());
     if (raw) {
       const data = JSON.parse(raw);
@@ -2793,8 +2828,8 @@ function renderGastos() {
         : `<div class="gasto-icon" onclick="openDetail(${g.id})">${getMotivoIcon(g.motivo)||'📋'}</div>`
       }
       <div class="gasto-info" onclick="${modoMasivo&&!g._esHistorico?`toggleSeleccionMasiva(${g.id})`:`openDetail(${g.id})`}">
-        <div class="gasto-motivo">${g.motivo}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${g.ahorroDesc}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}${g._histPendiente?' <span style="font-size:9px;background:rgba(255,159,67,.16);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">sin abonar</span>':''}</div>
-        <div class="gasto-meta">${g.cuenta}${g.comentarios?' · '+g.comentarios:''} · ${g.fecha}</div>
+        <div class="gasto-motivo">${escapeHtml(g.motivo)}${g.ahorroDesc?` <span style="font-size:10px;color:var(--purple)">🐷 ${escapeHtml(g.ahorroDesc)}</span>`:''}${g._esHistorico?' <span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px">historial</span>':''}${g._histPendiente?' <span style="font-size:9px;background:rgba(255,159,67,.16);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">sin abonar</span>':''}</div>
+        <div class="gasto-meta">${escapeHtml(g.cuenta)}${g.comentarios?' · '+escapeHtml(g.comentarios):''} · ${escapeHtml(g.fecha)}</div>
         <div class="badges">
           ${g.ignorar ? '<span class="badge ignorar">🚫 Ignorado</span>' : ''}
           ${!g.ignorar && iE ? '<span class="badge ext">📤 Externo</span>' : ''}
@@ -2891,19 +2926,19 @@ function renderExternos() {
     const promesaVencida = !iP && g.reembolsoFecha && new Date(g.reembolsoFecha + 'T23:59:59') < new Date();
     return `<div class="ext-item ${iP?'pagado':''}">
       <div class="ext-item-header">
-        <span class="ext-nombre">${getMotivoIcon(g.motivo)||'📋'} ${g.motivo}
-          <span style="font-size:10px;color:var(--text2);font-weight:400">· ${g.cuenta}</span>
+        <span class="ext-nombre">${getMotivoIcon(g.motivo)||'📋'} ${escapeHtml(g.motivo)}
+          <span style="font-size:10px;color:var(--text2);font-weight:400">· ${escapeHtml(g.cuenta)}</span>
         </span>
         <span class="ext-monto ${iP?'pagado':''}">${fmt(g.cantidad)}</span>
       </div>
-      <div class="ext-meta">${g.fecha}${g.comentarios?' · '+g.comentarios:''} ·
+      <div class="ext-meta">${escapeHtml(g.fecha)}${g.comentarios?' · '+escapeHtml(g.comentarios):''} ·
         ${iP?'<strong style="color:var(--green)">Cobrado</strong>':'<strong style="color:var(--orange)">Pendiente de cobro</strong>'}
       </div>
       ${(g.reembolsoPersona || g.reembolsoFecha || g.reembolsoNota) ? `
         <div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.18);font-size:11px;color:var(--text2);line-height:1.45">
-          ${g.reembolsoPersona ? `<div><strong style="color:var(--text)">Persona:</strong> ${g.reembolsoPersona}</div>` : ''}
-          ${g.reembolsoFecha ? `<div><strong style="color:${promesaVencida?'var(--orange)':'var(--text)'}">Promesa:</strong> ${g.reembolsoFecha}${promesaVencida?' · vencida':''}</div>` : ''}
-          ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${g.reembolsoNota}</div>` : ''}
+          ${g.reembolsoPersona ? `<div><strong style="color:var(--text)">Persona:</strong> ${escapeHtml(g.reembolsoPersona)}</div>` : ''}
+          ${g.reembolsoFecha ? `<div><strong style="color:${promesaVencida?'var(--orange)':'var(--text)'}">Promesa:</strong> ${escapeHtml(g.reembolsoFecha)}${promesaVencida?' · vencida':''}</div>` : ''}
+          ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${escapeHtml(g.reembolsoNota)}</div>` : ''}
         </div>` : ''}
       ${!iP
         ? `<button class="btn-marcar-pagado" data-id="${escapeHtml(g.id)}" onclick="marcarExterno(this.dataset.id,'pagado')">✅ Marcar como cobrado</button>`
@@ -3166,7 +3201,7 @@ function openCorteTarjeta(cuenta) {
             <span style="font-size:16px">${g.abonoTarjeta ? '🏦' : getMotivoIcon(g.motivo)}</span>
             <div style="flex:1">
               <div style="font-size:13px;font-weight:600;color:${g.abonoTarjeta?'var(--green)':'var(--text)'}">${g.abonoTarjeta ? 'Abono' : g.motivo}</div>
-              <div style="font-size:11px;color:var(--text2)">${String(g.fecha).slice(0,10)}${g.comentarios?' · '+g.comentarios:''}</div>
+              <div style="font-size:11px;color:var(--text2)">${String(g.fecha).slice(0,10)}${g.comentarios?' · '+escapeHtml(g.comentarios):''}</div>
             </div>
             <div style="font-size:14px;font-weight:700;color:${g.abonoTarjeta?'var(--green)':'var(--text)'}">${g.abonoTarjeta?'-':''}${fmt(g.cantidad)}</div>
           </div>`).join('')
@@ -3393,6 +3428,22 @@ function editarMovimientoAhorro(cuentaId, movIndex) {
   openModal('modal-editar-mov-ahorro');
 }
 
+function pairedTransfer(cuentaId, movement) {
+  const otherId = movement.destino || movement.origen;
+  const other = cuentasAhorro.find(c => c.id === otherId);
+  const own = cuentasAhorro.find(c => c.id === cuentaId);
+  if (!other || !own) return null;
+  const opposite = m => movement.tipo === 'traspaso-out' ? m.tipo === 'traspaso-in' && m.origen === cuentaId : m.tipo === 'traspaso-out' && m.destino === cuentaId;
+  let pair;
+  if (movement.traspasoId) pair = other.movimientos.find(m => opposite(m) && m.traspasoId === movement.traspasoId);
+  else {
+    const same = m => !m.traspasoId && Number(m.cantidad) === Number(movement.cantidad) && m.fecha === movement.fecha && (m.nota || '') === (movement.nota || '');
+    const ownMatches = own.movimientos.filter(m => m.tipo === movement.tipo && (m.destino || m.origen) === otherId && same(m));
+    pair = other.movimientos.filter(m => opposite(m) && same(m))[ownMatches.indexOf(movement)];
+  }
+  return pair ? { cuenta: other, mov: pair, index: other.movimientos.indexOf(pair) } : null;
+}
+
 function confirmarEditarMovAhorro() {
   const cuentaId = parseInt(document.getElementById('editar-mov-cuenta-id').value);
   const movIndex = Number(window._editarMovIndex);
@@ -3402,11 +3453,18 @@ function confirmarEditarMovAhorro() {
   if (!m) return;
 
   const nuevaCantidad = parseFloat(document.getElementById('editar-mov-cantidad').value);
-  if (!nuevaCantidad || nuevaCantidad <= 0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!Number.isFinite(nuevaCantidad) || nuevaCantidad <= 0) { showToast('Ingresa una cantidad válida'); return; }
   const nuevaNota = document.getElementById('editar-mov-nota').value || '';
   const nuevaFecha = document.getElementById('editar-mov-fecha').value || today();
 
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
+
+  const pair = esTraspaso ? pairedTransfer(cuentaId, m) : null;
+  if (esTraspaso && !pair) { showToast('No se encontró la otra parte del traspaso. Revisa ambas cuentas.'); return; }
+  if (esTraspaso) {
+    const source = m.tipo === 'traspaso-out' ? c : pair.cuenta;
+    if (nuevaCantidad > saldoCuenta(source) + Number(m.cantidad)) { showToast('Saldo insuficiente en la cuenta de origen'); return; }
+  }
 
   // Actualizar este movimiento
   m.cantidad = nuevaCantidad;
@@ -3414,24 +3472,10 @@ function confirmarEditarMovAhorro() {
   m.fecha = nuevaFecha;
   m.updatedAt = new Date().toISOString();
 
-  // Si es traspaso, actualizar también el movimiento emparejado
-  if (esTraspaso) {
-    const otroId = m.destino || m.origen;
-    if (otroId) {
-      const otraCuenta = cuentasAhorro.find(x => x.id === otroId);
-      if (otraCuenta) {
-        const otroMov = otraCuenta.movimientos.find(x =>
-          (m.tipo === 'traspaso-out' && x.tipo === 'traspaso-in' && x.origen === cuentaId) ||
-          (m.tipo === 'traspaso-in' && x.tipo === 'traspaso-out' && x.destino === cuentaId)
-        );
-      if (otroMov) {
-          otroMov.cantidad = nuevaCantidad;
-          otroMov.nota = nuevaNota;
-          otroMov.fecha = nuevaFecha;
-          otroMov.updatedAt = new Date().toISOString();
-        }
-      }
-    }
+  if (pair) {
+    const transferId = m.traspasoId || makeLocalId('transfer');
+    m.traspasoId = transferId;
+    Object.assign(pair.mov, {cantidad:nuevaCantidad, nota:nuevaNota, fecha:nuevaFecha, traspasoId:transferId, updatedAt:m.updatedAt});
   }
 
   saveLocal();
@@ -3457,8 +3501,7 @@ function eliminarMovimientoAhorro(cuentaId, movIndex) {
   if (modalBody) modalBody.textContent = '¿Seguro que quieres eliminar este movimiento?' + (esTraspaso ? ' También se eliminará de la otra cuenta.' : '');
   openModal('modal-confirm-eliminar');
   // Reemplazar temporalmente confirmarEliminar
-  window._confirmarEliminarOriginal = window.confirmarEliminarMovimientoAhorro;
-  window.confirmarEliminar = confirmarEliminarMovimientoAhorroHandler;
+  window._eliminarModo = 'ahorro';
 }
 
 function confirmarEliminarMovimientoAhorroHandler() {
@@ -3471,23 +3514,11 @@ function confirmarEliminarMovimientoAhorroHandler() {
 
   const esTraspaso = m.tipo === 'traspaso-in' || m.tipo === 'traspaso-out';
 
-  // Eliminar movimiento emparejado si es traspaso
   if (esTraspaso) {
-    const otroId = m.destino || m.origen;
-    if (otroId) {
-      const otraCuenta = cuentasAhorro.find(x => x.id === otroId);
-      if (otraCuenta) {
-        const idxOtro = otraCuenta.movimientos.findIndex(x =>
-          (m.tipo === 'traspaso-out' && x.tipo === 'traspaso-in' && x.origen === cuentaId) ||
-          (m.tipo === 'traspaso-in' && x.tipo === 'traspaso-out' && x.destino === cuentaId)
-        );
-        if (idxOtro >= 0) {
-          const otroMov = otraCuenta.movimientos[idxOtro];
-          markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(otraCuenta.id, otroMov, idxOtro));
-          otraCuenta.movimientos.splice(idxOtro, 1);
-        }
-      }
-    }
+    const pair = pairedTransfer(cuentaId, m);
+    if (!pair) { showToast('No se encontró la otra parte del traspaso. No se eliminó ningún movimiento.'); return; }
+    markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(pair.cuenta.id, pair.mov, pair.index));
+    pair.cuenta.movimientos.splice(pair.index, 1);
   }
 
   // Eliminar este movimiento
@@ -3501,8 +3532,7 @@ function confirmarEliminarMovimientoAhorroHandler() {
   closeModal('modal-confirm-eliminar');
   showToast('Movimiento eliminado ✓');
 
-  // Restaurar el handler original de confirmarEliminar
-  window.confirmarEliminar = window._confirmarEliminarOriginal || confirmarEliminar;
+  window._eliminarModo = null;
   renderAhorros();
   renderMenu();
 }
@@ -3574,8 +3604,9 @@ async function confirmarTraspaso() {
   if (!origen||!destino) return;
   if (cantidad > saldoCuenta(origen)) { showToast('Saldo insuficiente'); return; }
   const f = today();
-  origen.movimientos.push(nuevoMov({ tipo:'traspaso-out', cantidad, nota, destino:destinoId, fecha:f }));
-  destino.movimientos.push(nuevoMov({ tipo:'traspaso-in', cantidad, nota, origen:traspasoOrigenId, fecha:f }));
+  const traspasoId = makeLocalId('transfer');
+  origen.movimientos.push(nuevoMov({ tipo:'traspaso-out', cantidad, nota, traspasoId, destino:destinoId, fecha:f }));
+  destino.movimientos.push(nuevoMov({ tipo:'traspaso-in', cantidad, nota, traspasoId, origen:traspasoOrigenId, fecha:f }));
   saveLocal();
   closeModal('modal-traspaso');
   showToast(`Traspasado ${fmt(cantidad)} a ${destino.nombre} ✓`);
@@ -3680,8 +3711,8 @@ function renderHistorico() {
       ${items.map(g=>`<div class="hist-item" style="${g.ignorar?'opacity:.5':''}" onclick="editarHistorico(${g.id})">
         <div style="font-size:17px">${getMotivoIcon(g.motivo)||'📋'}</div>
         <div class="hist-info">
-          <div class="hist-motivo">${g.motivo}${g.externo!=='no'?` <span style="font-size:9px;color:${g.externo==='pagado'?'#0d9488':'#d97706'}">${g.externo==='pagado'?'✅':'📤'}</span>`:''}</div>
-          <div class="hist-meta">${g.cuenta} · ${g.fecha}${g.comentarios?' · '+g.comentarios:''}</div>
+          <div class="hist-motivo">${escapeHtml(g.motivo)}${g.externo!=='no'?` <span style="font-size:9px;color:${g.externo==='pagado'?'#0d9488':'#d97706'}">${g.externo==='pagado'?'✅':'📤'}</span>`:''}</div>
+          <div class="hist-meta">${escapeHtml(g.cuenta)} · ${escapeHtml(g.fecha)}${g.comentarios?' · '+escapeHtml(g.comentarios):''}</div>
           <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">
             ${g.abonado?'<span style="font-size:9px;background:rgba(34,211,165,.15);color:var(--green);padding:1px 5px;border-radius:6px;font-weight:600">✓ Abonado</span>':''}
             ${g.ignorar?'<span style="font-size:9px;background:rgba(255,159,67,.15);color:var(--orange);padding:1px 5px;border-radius:6px;font-weight:600">Ignorado</span>':''}
@@ -3764,7 +3795,7 @@ function refreshAhorroSelector() {
 function buscarRetiroAhorroPorGasto(cuenta, gasto) {
   if (!cuenta || !gasto) return -1;
   return cuenta.movimientos.findIndex(m =>
-    m.tipo === 'retiro' && (
+    m.tipo === 'retiro' && !m.revertidoEn && (
       m.gastoId === gasto.id ||
       (!m.gastoId &&
        m.cantidad === gasto.cantidad &&
@@ -3791,7 +3822,10 @@ function upsertRetiroAhorroGasto(gasto, ahorroId, gastoAnterior = null) {
     ca.movimientos[idx].updatedAt = new Date().toISOString();
     for (let i = ca.movimientos.length - 1; i > idx; i--) {
       const m = ca.movimientos[i];
-      if (m.tipo === 'retiro' && m.gastoId === gasto.id) ca.movimientos.splice(i, 1);
+      if (m.tipo === 'retiro' && !m.revertidoEn && m.gastoId === gasto.id) {
+        markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(ca.id, m, i));
+        ca.movimientos.splice(i, 1);
+      }
     }
   } else {
     ca.movimientos.push(nuevoMov(campos));
@@ -3828,7 +3862,20 @@ function aplicarReglaAutomatica(origen = 'comentario') {
   if (cambios.length && origen !== 'silencioso') showToast('Regla aplicada: ' + cambios.join(' · '));
 }
 
+function expenseTransactionSnapshot() {
+  return cloneData({ gastos, historico, cuentasAhorro, recurrentes, deudas, nextId, nextMovId });
+}
+function restoreExpenseTransaction(snapshot) {
+  ({ gastos, historico, cuentasAhorro, recurrentes, deudas, nextId, nextMovId } = snapshot);
+}
 async function guardarGasto() {
+  const snapshot = expenseTransactionSnapshot();
+  try { return await guardarGastoImpl(); }
+  catch (error) { restoreExpenseTransaction(snapshot); throw error; }
+  finally { syncBloqueado = false; }
+}
+
+async function guardarGastoImpl() {
   syncBloqueado = true; // bloquear sync durante guardado
   aplicarReglaAutomatica('silencioso');
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
@@ -3837,9 +3884,10 @@ async function guardarGasto() {
   const isEditing = !!editingId;
   const isHistorico = window._editandoHistorico === true;
   let gastoAnterior = null;
-  if (isEditing && !isHistorico) {
-    const _idx = gastos.findIndex(x => x.id === editingId);
-    gastoAnterior = _idx >= 0 ? gastos[_idx] : null;
+  const destino = isHistorico ? historico : gastos;
+  if (isEditing) {
+    gastoAnterior = destino.find(x => x.id === editingId) || null;
+    if (!gastoAnterior) { syncBloqueado = false; showToast('Este movimiento ya no existe. Actualiza la lista.'); return false; }
   }
 
   // Verificar saldo si se descuenta de ahorro
@@ -3851,7 +3899,7 @@ async function guardarGasto() {
     if (!ca) { syncBloqueado = false; showToast('Selecciona una cuenta de ahorro'); return; }
     // Si es edición y el gasto anterior ya tenía descuento en esta misma cuenta,
     // la cantidad ya fue descontada previamente. Solo verificar si AUMENTÓ.
-    if (gastoAnterior && gastoAnterior.ahorroDesc === ca.nombre) {
+    if (gastoAnterior && gastoAnterior.ahorroDesc === ca.nombre && buscarRetiroAhorroPorGasto(ca, gastoAnterior) >= 0) {
       const diferencia = cantidad - gastoAnterior.cantidad;
       if (diferencia > 0 && diferencia > saldoCuenta(ca)) {
         syncBloqueado = false;
@@ -3866,6 +3914,7 @@ async function guardarGasto() {
     ahorroSelNombre = ca.nombre;
   }
   const gasto = {
+    ...(gastoAnterior || {}),
     id:           editingId || nextId++,
     fecha:        document.getElementById('f-fecha')?.value || today(),
     cuenta:       document.getElementById('f-cuenta').value,
@@ -3885,24 +3934,9 @@ async function guardarGasto() {
     desdeConciliador: window._desdeConciliador ? true : undefined,
   };
 
-  if (isEditing && isHistorico) {
-    window._editandoHistorico = false;
-    const idx = historico.findIndex(x=>x.id===editingId);
-    if (idx >= 0) historico[idx] = {...historico[idx], ...gasto, semana: historico[idx].semana};
-    const _volverConcil = !!window._desdeConciliador;
-    window._desdeConciliador = null;
-    syncBloqueado = false;
-    const destination = window.uiExpenseDestination ? uiExpenseDestination('historico') : 'historico';
-    if (window.uiExpenseSaved) uiExpenseSaved();
-    resetForm(); editingId=null;
-    saveLocal();
-    showTab(destination);
-    refrescarVistasDespuesDeCambio(destination);
-    showToast('Gasto del historial actualizado ✓');
-    return;
-  }
+  if (isHistorico && gastoAnterior) gasto.semana = gastoAnterior.semana;
   if (isEditing) {
-    const idx = gastos.findIndex(x=>x.id===editingId);
+    const idx = destino.findIndex(x=>x.id===editingId);
 
     // Si el gasto anterior tenía descuento de ahorro y el nuevo no (o cambió de cuenta)
     if (gastoAnterior?.ahorroDesc && (!descontarAhorro || ahorroSelNombre !== gastoAnterior.ahorroDesc)) {
@@ -3912,7 +3946,8 @@ async function guardarGasto() {
         if (movIdx !== -1) {
           // Guardar estado pendiente para aplicar después de confirmación
           window._guardarGastoPendiente = {
-            gasto, gastoAnterior, idx, cuentaAnterior,
+            gasto, gastoAnterior, idx, cuentaAnterior, isHistorico,
+            workspaceId: currentWorkspaceId(), userId: currentUserId(),
             ahorroSelId, descontarAhorro,
             _volverConcil: !!window._desdeConciliador
           };
@@ -3927,7 +3962,7 @@ async function guardarGasto() {
         }
       }
     }
-    if (idx >= 0) gastos[idx] = gasto;
+    if (idx >= 0) destino[idx] = gasto;
   } else {
     gastos.push(gasto);
   }
@@ -3937,6 +3972,8 @@ async function guardarGasto() {
     upsertRetiroAhorroGasto(gasto, ahorroSelId, gastoAnterior);
   }
 
+  // El contador del servicio o deuda cambia únicamente al confirmar el gasto.
+  applyScheduledPayment(gasto);
   // Guardar todo junto
   syncBloqueado = false;
   saveLocal();
@@ -3951,15 +3988,43 @@ async function guardarGasto() {
 }
 
 function _confirmarGuardarGastoConRevertAhorro() {
+  const snapshot = expenseTransactionSnapshot();
+  const pending = window._guardarGastoPendiente;
+  try { return confirmarGuardarGastoConRevertAhorroImpl(); }
+  catch (error) {
+    restoreExpenseTransaction(snapshot);
+    window._guardarGastoPendiente = pending;
+    if (pending) pending.cuentaAnterior = cuentasAhorro.find(c => c.id === pending.cuentaAnterior.id) || pending.cuentaAnterior;
+    const field = document.getElementById('form-error');
+    field.textContent = 'No se pudo guardar. Tu borrador sigue disponible; vuelve a intentarlo.'; field.style.display = 'block';
+    showToast('No se pudo guardar el cambio de ahorro.');
+  } finally { syncBloqueado = false; }
+}
+
+function confirmarGuardarGastoConRevertAhorroImpl() {
   const pending = window._guardarGastoPendiente;
   if (!pending) return;
   const { gasto, gastoAnterior, idx, cuentaAnterior, ahorroSelId, descontarAhorro } = pending;
+
+  if (pending.workspaceId !== currentWorkspaceId() || pending.userId !== currentUserId()) {
+    window._guardarGastoPendiente = null;
+    showToast('La base cambió. Abre de nuevo el movimiento antes de guardar.');
+    return;
+  }
+  const currentTarget = pending.isHistorico ? historico : gastos;
+  if (!currentTarget.some(item => item.id === gasto.id)) { showToast('Este movimiento ya no existe. Actualiza la lista.'); return; }
+  const oldMovementIndex = buscarRetiroAhorroPorGasto(cuentaAnterior, gastoAnterior);
+  if (oldMovementIndex < 0) { showToast('El retiro cambió. Revisa el movimiento antes de guardar.'); return; }
+  const oldMovement = cuentaAnterior.movimientos[oldMovementIndex];
+  oldMovement.revertidoEn = new Date().toISOString();
+  oldMovement.updatedAt = oldMovement.revertidoEn;
 
   // Registrar un ABONO en la cuenta anterior para devolver el saldo
   cuentaAnterior.movimientos.push(nuevoMov({
     tipo: 'abono',
     cantidad: gastoAnterior.cantidad,
     nota: `Devolución - ${gastoAnterior.motivo} (editado)`,
+    reversionDeMovId: oldMovement.movId, gastoRevertidoId: gastoAnterior.id,
     fecha: gasto.fecha || today()
   }));
 
@@ -3968,8 +4033,10 @@ function _confirmarGuardarGastoConRevertAhorro() {
     upsertRetiroAhorroGasto(gasto, ahorroSelId);
   }
 
-  // Actualizar el gasto
-  if (idx >= 0) gastos[idx] = gasto;
+  // Resolver por ID: el listado puede haberse reordenado mientras se confirmaba.
+  const target = pending.isHistorico ? historico : gastos;
+  const currentIndex = target.findIndex(item => item.id === gasto.id);
+  if (currentIndex >= 0) target[currentIndex] = gasto;
 
   window._guardarGastoPendiente = null;
   syncBloqueado = false;
@@ -3984,6 +4051,7 @@ function _confirmarGuardarGastoConRevertAhorro() {
 }
 
 function resetForm() {
+  pendingPayment = null;
   document.getElementById('f-cantidad').value    = '';
   document.getElementById('f-comentarios-input').value = ''; document.getElementById('comentario-dropdown').style.display='none';
   const rp = document.getElementById('f-reembolso-persona'); if (rp) rp.value = '';
@@ -4014,18 +4082,18 @@ function openDetail(id) {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
       <div style="font-size:24px">${getMotivoIcon(g.motivo)||'📋'}</div>
       <div style="flex:1">
-        <div style="font-size:15px;font-weight:500;color:var(--text)">${g.motivo}</div>
-        <div style="font-size:12px;color:var(--text2)">${g.cuenta} · ${g.fecha}</div>
+        <div style="font-size:15px;font-weight:500;color:var(--text)">${escapeHtml(g.motivo)}</div>
+        <div style="font-size:12px;color:var(--text2)">${escapeHtml(g.cuenta)} · ${escapeHtml(g.fecha)}</div>
       </div>
       <div style="font-size:17px;font-weight:500;color:${iE?'var(--orange)':iP?'var(--green)':'var(--text)'}">${fmt(g.cantidad)}</div>
     </div>
-    ${g.comentarios?`<div style="font-size:12px;color:var(--text2);margin-bottom:9px">📝 ${g.comentarios}</div>`:''}
-    ${g.ahorroDesc?`<div style="font-size:12px;color:var(--purple);margin-bottom:9px">🐷 Descontado de: ${g.ahorroDesc}</div>`:''}
+    ${g.comentarios?`<div style="font-size:12px;color:var(--text2);margin-bottom:9px">📝 ${escapeHtml(g.comentarios)}</div>`:''}
+    ${g.ahorroDesc?`<div style="font-size:12px;color:var(--purple);margin-bottom:9px">🐷 Descontado de: ${escapeHtml(g.ahorroDesc)}</div>`:''}
     ${(g.reembolsoPersona || g.reembolsoFecha || g.reembolsoNota) ? `
       <div style="font-size:12px;color:var(--text2);margin-bottom:9px;padding:8px 10px;border-radius:8px;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.18)">
-        ${g.reembolsoPersona ? `<div><strong style="color:var(--text)">Reembolso:</strong> ${g.reembolsoPersona}</div>` : ''}
-        ${g.reembolsoFecha ? `<div><strong style="color:var(--text)">Fecha prometida:</strong> ${g.reembolsoFecha}</div>` : ''}
-        ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${g.reembolsoNota}</div>` : ''}
+        ${g.reembolsoPersona ? `<div><strong style="color:var(--text)">Reembolso:</strong> ${escapeHtml(g.reembolsoPersona)}</div>` : ''}
+        ${g.reembolsoFecha ? `<div><strong style="color:var(--text)">Fecha prometida:</strong> ${escapeHtml(g.reembolsoFecha)}</div>` : ''}
+        ${g.reembolsoNota ? `<div><strong style="color:var(--text)">Nota:</strong> ${escapeHtml(g.reembolsoNota)}</div>` : ''}
       </div>` : ''}
     <div class="badges" style="margin-bottom:12px">
       ${esHistorico?'<span style="font-size:9px;background:rgba(108,99,255,.2);color:var(--accent2);padding:1px 5px;border-radius:6px;font-weight:600">historial</span>':''}
@@ -4049,32 +4117,27 @@ function editarDirecto(id) { uiStartEdit(id, false); }
 function editar(id) { uiStartEdit(id, false); }
 
 function eliminar(id) {
+  window._eliminarModo = 'gasto';
   const g = gastos.find(x=>x.id===id);
   if (!g) return;
   // Guardar id para confirmar
   window._eliminarId = id;
   document.getElementById('confirm-eliminar-desc').textContent =
-    `${g.motivo} · ${g.cuenta} · ${fmt(g.cantidad)}`;
+    `${escapeHtml(g.motivo)} · ${escapeHtml(g.cuenta)} · ${fmt(g.cantidad)}`;
   closeModal('modal-detail');
   openModal('modal-confirm-eliminar');
 }
 
 function confirmarEliminar() {
+  if (window._eliminarModo === 'ahorro') return confirmarEliminarMovimientoAhorroHandler();
   const gasto = gastos.find(x => x.id === window._eliminarId);
   // Si el gasto tenía descuento de ahorro, eliminar el movimiento correspondiente
   if (gasto?.ahorroDesc) {
     const cuenta = cuentasAhorro.find(c => c.nombre === gasto.ahorroDesc);
     if (cuenta) {
-      // Buscar el movimiento de retiro que coincida en fecha y cantidad
-      const idx = cuenta.movimientos.findIndex(m =>
-        m.tipo === 'retiro' && (
-          m.gastoId === gasto.id ||
-          (m.cantidad === gasto.cantidad &&
-           m.fecha === gasto.fecha &&
-           (m.nota || '').includes(gasto.motivo))
-        )
-      );
+      const idx = buscarRetiroAhorroPorGasto(cuenta, gasto);
       if (idx !== -1) {
+        markStructuredDeleted('movimientosAhorro', structuredMovimientoRowId(cuenta.id, cuenta.movimientos[idx], idx));
         cuenta.movimientos.splice(idx, 1);
       }
     }
@@ -4087,6 +4150,10 @@ function confirmarEliminar() {
       const mesKey = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
       if (rec.ultimoPago === mesKey) rec.ultimoPago = null;
     }
+  }
+  if (gasto?.deudaId) {
+    const debt=deudas.find(d=>d.id===gasto.deudaId);
+    if(debt){debt.mesesPagados=Math.max(0,Number(debt.mesesPagados || 0)-1);debt.updatedAt=new Date().toISOString();markStructuredDirty('deudas');}
   }
   if (gasto) markStructuredDeleted('gastos', gasto.id);
   gastos = gastos.filter(x => x.id !== window._eliminarId);
@@ -4632,24 +4699,38 @@ function desmarcarPagado(i) {
 }
 
 
-function registrarRecurrente(i) {
-  const r = recurrentes[i];
-  if (!r) return;
-  // Marcar como pagado este mes
-  const hoy = new Date();
-  r.ultimoPago = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
-  r.updatedAt = new Date().toISOString();
-  markStructuredDirty('recurrentes');
-  saveLocal();
-  // Pre-llenar formulario de nuevo gasto
-  showTab('nuevo');
-  setTimeout(() => {
-    document.getElementById('f-cuenta').value            = r.cuenta;
-    document.getElementById('f-motivo').value             = r.motivo;
-    document.getElementById('f-cantidad').value           = r.cantidad;
-    document.getElementById('f-comentarios-input').value  = r.nombre;
-    setAb(false); setIg(false); setExt('no');
-  }, 50);
+function prepareScheduledPayment(type, item) {
+  const open = () => {
+    showTab('nuevo');
+    if (window.uiDiscardDraft) uiDiscardDraft(); else resetForm();
+    pendingPayment = {type, id:item.id, installment:type === 'deuda' ? Number(item.mesesPagados || 0)+1 : null};
+    document.getElementById('f-cuenta').value = item.cuenta;
+    document.getElementById('f-motivo').value = type === 'deuda' ? 'Otros' : item.motivo;
+    document.getElementById('f-cantidad').value = (type === 'deuda' ? item.cuota : item.cantidad) || '';
+    document.getElementById('f-comentarios-input').value = type === 'deuda' ? `${item.nombre} (${pendingPayment.installment}/${item.mesesTotal})` : item.nombre;
+    if (window.uiUpdateForm) { uiUpdateForm(); uiCaptureDraft(); }
+  };
+  let draft;
+  try { draft = window.uiDraftKey ? JSON.parse(localStorage.getItem(uiDraftKey()) || 'null') : null; } catch {}
+  if (draft?.fields?.['f-cantidad'] || draft?.fields?.['f-comentarios-input']) modalConfirmar('Hay un borrador pendiente. ¿Reemplazarlo para registrar este pago?', open);
+  else open();
+}
+function registrarRecurrente(i) { const item=recurrentes[i]; if(item)prepareScheduledPayment('recurrente',item); }
+
+function applyScheduledPayment(gasto) {
+  if (!pendingPayment || editingId) return;
+  const item = (pendingPayment.type === 'deuda' ? deudas : recurrentes).find(r => r.id === pendingPayment.id);
+  if (!item) throw new Error('El servicio o deuda ya no existe.');
+  if (pendingPayment.type === 'deuda') {
+    if (Number(item.mesesPagados || 0) >= pendingPayment.installment) throw new Error('Esta cuota ya se registró en otro movimiento.');
+    item.mesesPagados = Number(item.mesesPagados || 0)+1;
+    gasto.deudaId = item.id; gasto.cuotaNumero = pendingPayment.installment;
+    markStructuredDirty('deudas');
+  } else {
+    item.ultimoPago = gasto.fecha.slice(0,7); gasto.recurrenteId = item.id;
+    markStructuredDirty('recurrentes');
+  }
+  item.updatedAt = new Date().toISOString();
 }
 
 function abrirNuevoRecurrente() {
@@ -4758,24 +4839,9 @@ function renderDeudas() {
 }
 
 function registrarPagoDeuda(i) {
-  const d = deudas[i];
-  if (!d) return;
-  if (d.mesesPagados >= d.mesesTotal) { showToast('Esta deuda ya está liquidada ✓'); return; }
-  // Pre-llenar formulario con la cuota
-  showTab('nuevo');
-  setTimeout(() => {
-    document.getElementById('f-cuenta').value           = d.cuenta;
-    document.getElementById('f-motivo').value            = 'Otros';
-    document.getElementById('f-cantidad').value          = d.cuota;
-    document.getElementById('f-comentarios-input').value = `${d.nombre} (${d.mesesPagados+1}/${d.mesesTotal})`;
-    setAb(false); setIg(false); setExt('no');
-  }, 50);
-  // Incrementar meses pagados
-  deudas[i].mesesPagados = (d.mesesPagados || 0) + 1;
-  deudas[i].updatedAt = new Date().toISOString();
-  markStructuredDirty('deudas');
-  if (deudas[i].mesesPagados >= d.mesesTotal) showToast(`¡${d.nombre} liquidada! 🎉`);
-  saveLocal();
+  const item=deudas[i];if(!item)return;
+  if(Number(item.mesesPagados || 0) >= Number(item.mesesTotal)){showToast('Esta deuda ya está liquidada');return;}
+  prepareScheduledPayment('deuda',item);
 }
 
 function abrirNuevaDeuda() {
@@ -5035,13 +5101,13 @@ function busquedaGlobal() {
     g.motivo.toLowerCase().includes(q) || g.cuenta.toLowerCase().includes(q) ||
     (g.comentarios||'').toLowerCase().includes(q) || String(g.cantidad).includes(q)
   ).forEach(g => resultados.push({ tipo:'Gasto', icon:getMotivoIcon(g.motivo), titulo:g.motivo,
-    sub:`${g.cuenta} · ${g.fecha}`, monto:fmt(g.cantidad), color:'var(--text)',
+    sub:`${escapeHtml(g.cuenta)} · ${escapeHtml(g.fecha)}`, monto:fmt(g.cantidad), color:'var(--text)',
     onClick:`openDetail(${g.id})` }));
   historico.filter(g =>
     g.motivo.toLowerCase().includes(q) || g.cuenta.toLowerCase().includes(q) ||
     (g.comentarios||'').toLowerCase().includes(q) || String(g.cantidad).includes(q)
   ).forEach(g => resultados.push({ tipo:'Historial', icon:getMotivoIcon(g.motivo), titulo:g.motivo,
-    sub:`${g.cuenta} · ${g.fecha}`, monto:fmt(g.cantidad), color:'var(--text2)',
+    sub:`${escapeHtml(g.cuenta)} · ${escapeHtml(g.fecha)}`, monto:fmt(g.cantidad), color:'var(--text2)',
     onClick:`showTab('historico')` }));
   cuentasAhorro.filter(c => c.nombre.toLowerCase().includes(q))
     .forEach(c => resultados.push({ tipo:'Ahorro', icon:'🐷', titulo:c.nombre,
@@ -5205,8 +5271,8 @@ function renderConciliacion() {
                 ${ok?'<span style="color:white;font-size:12px;font-weight:700">✓</span>':''}
               </div>
               <div style="flex:1;min-width:0">
-                <div style="font-size:13px;font-weight:600;color:${ok?'var(--green)':'var(--text)'}">${g.motivo}${g.comentarios?' · '+g.comentarios:''}</div>
-                <div style="font-size:11px;color:var(--text3)">${g.fecha}${g.ignorar?' · Ignorado':''}</div>
+                <div style="font-size:13px;font-weight:600;color:${ok?'var(--green)':'var(--text)'}">${escapeHtml(g.motivo)}${g.comentarios?' · '+escapeHtml(g.comentarios):''}</div>
+                <div style="font-size:11px;color:var(--text3)">${escapeHtml(g.fecha)}${g.ignorar?' · Ignorado':''}</div>
               </div>
               <div style="font-size:14px;font-weight:700;color:${ok?'var(--green)':'var(--text)'};flex-shrink:0">${fmt(g.cantidad)}</div>
             </div>`;
@@ -5462,7 +5528,7 @@ async function procesarEstadoCuenta(event) {
     const prompt = `Eres un asistente de conciliación bancaria.${movsParsedStr}
 
 Mis gastos registrados para el período ${desde} al ${hasta} en cuenta ${concilCuenta} son:
-${items.map(g => `- ID:${g.id} | ${g.fecha} | ${g.motivo}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
+${items.map(g => `- ID:${g.id} | ${escapeHtml(g.fecha)} | ${escapeHtml(g.motivo)}${g.comentarios?' - '+g.comentarios:''} | $${g.cantidad}`).join('\n')}
 
 Devuelve SOLO un JSON con este formato exacto:
 {
@@ -6755,8 +6821,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     openModal('modal-auth');
     return;
   }
-  await ensureUserProfile();
-  await cargarWorkspaces();
+  try { await ensureUserProfile(); await cargarWorkspaces(); }
+  catch (error) { console.warn('Se usa la copia local:', error.message); }
   resetPersonalState();
   try { loadFromLocal(); } catch(e) { console.error('Error cargando cache de workspace:', e); }
 
@@ -6775,7 +6841,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       localStorage.removeItem(workspaceStorageKey('structuredDeleted'));
       localStorage.removeItem(workspaceStorageKey('structuredDirty'));
     }
-    downloadRemote(needsSyncRepair).then(async ok => {
+    downloadRemote(needsSyncRepair && !hasPendingSync()).then(async ok => {
       if (ok && needsSyncRepair) localStorage.setItem(repairKey, SYNC_REPAIR_VERSION);
       // Re-renderizar siempre con los datos más frescos
       actualizarSelectCuentas();

@@ -134,3 +134,13 @@ La app detecta automáticamente SQLite si se abre desde el puerto `8010`. Si la 
 ```text
 http://45.76.0.95:8010/api
 ```
+
+
+## Pruebas de permisos y sincronización
+
+```bash
+python -m pip install -r backend/requirements-dev.txt
+python -m unittest discover -s backend/tests -v
+```
+
+Las pruebas usan bases SQLite temporales y no requieren un servidor de producción. Cubren escritura por workspace, permisos de perfiles y membresías, publicación de archivos, cierre semanal y almacenamiento. La v2.76 del cliente requiere desplegar también las correcciones del backend; reinicia el servicio después de actualizar los archivos.

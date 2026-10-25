@@ -128,9 +128,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hoy-stat-val{font-size:20px;font-weight:700}
 .hoy-stat-lbl{font-size:10px;color:var(--text3);margin-top:2px}
 </style>
-<link rel="stylesheet" href="mobile.css?v=20261025">
+<link rel="stylesheet" href="mobile.css?v=20261025b">
 <meta name="theme-color" content="#101116">
-<script src="theme.js?v=20261025"></script>
+<script src="theme.js?v=20261025b"></script>
 </head>
 <body class="reminders-page">
 <div class="app">
@@ -413,14 +413,14 @@ async function taskAuthFetch(path, body) {
     body: JSON.stringify(body || {})
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || data.message || `Auth HTTP ${res.status}`);
+  if (!res.ok) { const error = new Error(data.detail || data.message || `Auth HTTP ${res.status}`); error.status = res.status; throw error; }
   localStorage.setItem('syncProvider', 'sqlite');
   return data;
 }
 
 async function refreshTaskSession() {
   const auth = getServerAuth();
-  if (!auth?.refresh_token) return false;
+  if (!auth?.refresh_token || !navigator.onLine) return false;
   const expiresAt = Number(auth.expires_at || 0) * 1000;
   if (expiresAt && expiresAt - Date.now() > 60000) return true;
   try {
@@ -429,7 +429,7 @@ async function refreshTaskSession() {
     return true;
   } catch(e) {
     console.warn('Tasks session refresh:', e.message);
-    setServerAuth(null);
+    if (e.status === 401 || e.status === 403) setServerAuth(null);
     return false;
   }
 }

@@ -272,6 +272,13 @@ def can_write_workspace(conn: sqlite3.Connection, user: dict[str, Any], workspac
     return workspace_role(conn, workspace_id, user["id"]) in {"admin", "editor"}
 
 
+def can_manage_workspace(conn: sqlite3.Connection, user: dict[str, Any], workspace_id: str) -> bool:
+    if is_admin(user) or workspace_role(conn, workspace_id, user["id"]) == "admin":
+        return True
+    workspace = conn.execute("select created_by from app_workspaces where id=?", (workspace_id,)).fetchone()
+    return bool(workspace and workspace["created_by"] == user["id"])
+
+
 def row_to_api(table: str, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     raw = dict(row)
     if "data" in raw:
