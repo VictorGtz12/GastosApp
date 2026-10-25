@@ -72,18 +72,19 @@ function renderDespensa(view = pantryView) {
   const nav = document.getElementById('pantry-subnav');
   const body = document.getElementById('pantry-body');
   if (!nav || !body) return;
-  const tabs = [
-    ['inicio','Inicio'], ['inventario','Inventario'], ['productos','Productos'],
-    ['caducidad','Caducidad'], ['categorias','Categorías'], ['ubicaciones','Ubicaciones'], ['historial','Historial']
-  ];
-  nav.innerHTML = tabs.map(([id, label]) => `<div class="chip ${pantryView === id ? 'active' : ''}" onclick="renderDespensa('${id}')">${label}</div>`).join('');
-  if (pantryView === 'inventario') body.innerHTML = renderPantryInventory();
+  const searchFocused = document.activeElement?.id === 'pantry-search';
+  const searchSelection = document.activeElement?.selectionStart;
+  const tabs = [['inicio','Inicio'], ['inventario','Inventario'], ['caducidad','Caducidad'], ['ajustes','Más']];
+  nav.innerHTML = tabs.map(([id, label]) => `<button type="button" class="chip ${pantryView === id ? 'active' : ''}" aria-pressed="${pantryView === id}" onclick="renderDespensa('${id}')">${label}</button>`).join('');
+  if (pantryView === 'ajustes') body.innerHTML = `<div class="more-list">${[['productos','Productos','Catálogo y códigos de barras'],['categorias','Categorías','Organiza tus productos'],['ubicaciones','Ubicaciones','Dónde guardas cada producto'],['historial','Historial','Entradas, consumos y movimientos']].map(([id,label,sub]) => `<button type="button" class="more-item" onclick="renderDespensa('${id}')"><span><strong>${label}</strong><small>${sub}</small></span></button>`).join('')}</div>`;
+  else if (pantryView === 'inventario') body.innerHTML = renderPantryInventory();
   else if (pantryView === 'productos') body.innerHTML = renderPantryProducts();
   else if (pantryView === 'caducidad') body.innerHTML = renderPantryExpiry();
   else if (pantryView === 'categorias') body.innerHTML = renderPantrySimpleCatalog('category');
   else if (pantryView === 'ubicaciones') body.innerHTML = renderPantrySimpleCatalog('location');
   else if (pantryView === 'historial') body.innerHTML = renderPantryHistory();
   else body.innerHTML = renderPantryHome();
+  if (searchFocused) { const input = document.getElementById('pantry-search'); if (input) { input.focus({preventScroll:true}); if (searchSelection != null) input.setSelectionRange(searchSelection,searchSelection); } }
 }
 
 function renderPantryHome() {
@@ -99,20 +100,13 @@ function renderPantryHome() {
       <div class="stat-card"><div class="stat-label">Caducados</div><div class="stat-val red">${expired.length}</div></div>
     </div>
     <div class="pantry-quick">
-      <button onclick="openPantryEntry()">Entrada<br><span class="pantry-meta">Agregar existencia</span></button>
-      <button onclick="openPantryExit()">Salida<br><span class="pantry-meta">Consumir producto</span></button>
-      <button onclick="openPantryTransfer()">Movimiento<br><span class="pantry-meta">Cambiar ubicación</span></button>
-      <button onclick="openPantryWaste()">Tirar<br><span class="pantry-meta">Desecho o merma</span></button>
-      <button onclick="renderDespensa('inventario')">Inventario<br><span class="pantry-meta">Ver lotes</span></button>
-      <button onclick="renderDespensa('productos')">Productos<br><span class="pantry-meta">Catálogo maestro</span></button>
+      <button type="button" onclick="openPantryEntry()">${uiIcon('plus')}<br>Agregar existencias<br><span class="pantry-meta">Escanea o elige un producto</span></button>
+      <button type="button" onclick="openPantryExit()">${uiIcon('check')}<br>Consumir producto<br><span class="pantry-meta">Descontar del inventario</span></button>
+      <button type="button" onclick="scanPantryForHome()">${uiIcon('scan')}<br>Escanear código<br><span class="pantry-meta">Encuentra un producto</span></button>
+      <button type="button" onclick="renderDespensa('inventario')">${uiIcon('search')}<br>Buscar en inventario<br><span class="pantry-meta">Existencias y ubicaciones</span></button>
     </div>
-    <div class="card"><div class="card-title">Accesos</div>
-      <div class="pantry-actions">
-        <button onclick="renderDespensa('categorias')">Categorías</button>
-        <button onclick="renderDespensa('ubicaciones')">Ubicaciones</button>
-        <button onclick="renderDespensa('historial')">Historial</button>
-      </div>
-    </div>
+    <div class="section-heading"><h3>Por caducar</h3><button type="button" class="text-button" onclick="renderDespensa('caducidad')">Ver todos</button></div>
+    ${soon.length ? soon.slice().sort(pantryLotSort).slice(0,4).map(renderLotCard).join('') : '<div class="card"><p class="muted">No tienes productos próximos a caducar.</p></div>'}
     ${expired.length ? `<div class="card"><div class="card-title">Caducados</div>${expired.slice(0, 5).map(renderLotCard).join('')}</div>` : ''}
   `;
 }
@@ -120,6 +114,7 @@ function renderPantryHome() {
 function pantrySearchValue() { return (document.getElementById('pantry-search')?.value || '').trim().toLowerCase(); }
 
 function renderPantryInventory() {
+  const searchText = document.getElementById('pantry-search')?.value || '';
   const q = pantrySearchValue();
   const cat = document.getElementById('pantry-filter-category')?.value || '';
   const loc = document.getElementById('pantry-filter-location')?.value || '';
@@ -135,7 +130,7 @@ function renderPantryInventory() {
     .filter(x => !q || pantryProductLabel(x.p).toLowerCase().includes(q))
     .filter(x => !cat || String(x.p.category_id) === String(cat));
   return `
-    <div class="search-wrap"><span class="search-icon">🔍</span><input id="pantry-search" placeholder="Buscar producto..." oninput="renderDespensa('inventario')" value="${pantryEsc(q)}"></div>
+    <div class="search-wrap"><span class="search-icon">🔍</span><input id="pantry-search" placeholder="Buscar producto..." oninput="renderDespensa('inventario')" value="${pantryEsc(searchText)}"></div>
     <div class="filter-row">
       <select id="pantry-filter-category" onchange="renderDespensa('inventario')" style="flex:1;padding:8px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)"><option value="">Categoría</option>${pantryActive(pantryCategories).map(c => `<option value="${pantryEsc(c.id)}" ${String(cat) === String(c.id) ? 'selected' : ''}>${pantryEsc(c.nombre)}</option>`).join('')}</select>
       <select id="pantry-filter-location" onchange="renderDespensa('inventario')" style="flex:1;padding:8px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)"><option value="">Ubicación</option>${pantryActive(pantryLocations).map(l => `<option value="${pantryEsc(l.id)}" ${String(loc) === String(l.id) ? 'selected' : ''}>${pantryEsc(l.nombre)}</option>`).join('')}</select>
@@ -174,11 +169,12 @@ function renderLotCard(l) {
 }
 
 function renderPantryProducts() {
+  const searchText = document.getElementById('pantry-search')?.value || '';
   const q = pantrySearchValue();
   const products = pantryActive(pantryProducts)
     .filter(p => !q || pantryProductLabel(p).toLowerCase().includes(q) || pantryBarcodes.some(b => String(b.product_id) === String(p.id) && String(b.barcode).includes(q)));
   return `
-    <div class="search-wrap"><span class="search-icon">🔍</span><input id="pantry-search" placeholder="Buscar producto o código..." oninput="renderDespensa('productos')" value="${pantryEsc(q)}"></div>
+    <div class="search-wrap"><span class="search-icon">🔍</span><input id="pantry-search" placeholder="Buscar producto o código..." oninput="renderDespensa('productos')" value="${pantryEsc(searchText)}"></div>
     <button class="btn-teal" style="width:100%;margin-bottom:12px" onclick="openPantryProductForm()">+ Alta de producto</button>
     ${products.length ? products.map(p => `<div class="pantry-card">
       <div class="pantry-row">${pantryPhoto(p)}<div class="pantry-main"><div class="pantry-title">${pantryEsc(pantryProductLabel(p))}</div><div class="pantry-meta">${pantryEsc(pantryName(pantryCategories, p.category_id, 'Sin categoría'))} · Ubicación sugerida: ${pantryEsc(pantryName(pantryLocations, p.default_location_id, 'Sin definir'))}</div></div></div>
@@ -808,3 +804,14 @@ function learnPantryExpiration(productId, date) {
 window.addEventListener('DOMContentLoaded', () => {
   normalizePantryState();
 });
+
+function scanPantryForHome() {
+  startPantryScanner(code => {
+    const product = findPantryProductByBarcode(code);
+    if (product) openPantryLots(product.id);
+    else {
+      pantryFlow = { type: 'entry', origin: 'entry', barcode: code };
+      openPantryModal(`<h2>Producto no registrado</h2><p>Código ${pantryEsc(code)}</p><div class="modal-actions"><button class="mbtn sec" onclick="closeModal('modal-pantry-form')">Volver</button><button class="mbtn prim" onclick="openPantryProductForm('', 'entry')">Registrar producto</button></div>`);
+    }
+  });
+}

@@ -1,4 +1,4 @@
-# Gastos Semanales v2.4
+# Gastos Semanales v2.75
 
 App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
@@ -31,7 +31,10 @@ Usa este mapa para indicar exactamente qué vista y función quieres modificar. 
 | Archivo | Contiene |
 |---------|----------|
 | `index.html` | Estructura HTML, estilos CSS (inline), todos los modales |
-| `app.js` | Toda la lógica JS (~5 500 líneas) |
+| `app.js` | Estado, gastos, cuentas, sincronización y cálculos |
+| `mobile-ui.js` | Navegación móvil, borradores, filtros, actividad e interacciones |
+| `mobile.css` | Diseño para iPhone, áreas seguras y controles táctiles |
+| `theme.js` | Paleta compartida por Gastos y Recordatorios |
 | `despensa.js` | Módulo Despensa: productos, lotes, movimientos, escáner y OCR |
 | `cloudflare-worker.js` | Proxy para IA (conciliación con imagen) |
 
@@ -41,10 +44,10 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 
 | Tab | ID HTML | Función JS | Descripción |
 |-----|---------|------------|-------------|
-| Menu | `content-menu` | `renderMenu()` | Resumen semanal, presupuesto, saldos por cuenta |
+| Inicio | `content-menu` | `renderMenu()` + `uiRenderHome()` | Presupuesto, próximos cargos y últimos movimientos |
 | Nuevo gasto | `content-nuevo` | — | Formulario para agregar/editar un gasto |
-| Mis Gastos | `content-gastos` | `renderGastos()` | Lista de gastos de la semana actual, filtros, edición masiva |
-| Externos | `content-externos` | `renderExternos()` | Gastos por cobrar / ya cobrados |
+| Movimientos | `content-gastos` | `renderGastos()` + `uiRenderMovements()` | Gastos agrupados por fecha, período, búsqueda y filtros |
+| Por cobrar | `content-externos` | `renderExternos()` | Gastos por cobrar / ya cobrados |
 | Cortes | `content-cortes` | `renderCortes()` | Vista por tarjeta con período de corte |
 | Ahorros | `content-ahorros` | `renderAhorros()` | Cuentas de ahorro, saldo, movimientos |
 | Historial | `content-historico` | `renderHistorico()` | Semanas pasadas agrupadas por mes |
@@ -52,6 +55,8 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 | Recurrentes | `content-recurrentes` | `renderRecurrentes()` | Servicios fijos y deudas |
 | Conciliación | `content-conciliacion` | `renderConciliacion()` | Comparar estado de cuenta con gastos registrados |
 | Despensa | `content-despensa` | `renderDespensa()` | Inventario de productos por lotes |
+| Reportes | `content-dashboard` | `renderDashboard()` | Gráficas y comparaciones |
+| Más | `content-mas` | `uiRenderMore()` | Herramientas, recordatorios, ajustes y sesión |
 
 ### Modales principales
 
@@ -74,9 +79,25 @@ Cada vista tiene su contenedor HTML `id="content-{nombre}"` y su función `rende
 | Regla automática | `modal-regla-auto` | — | Regla de auto-categorización |
 | Historial ahorro | `modal-hist-ahorro` | — | Movimientos de una cuenta de ahorro |
 
-### Navegación (Drawer / menú lateral)
+### Navegación en iPhone
 
-El drawer (menú hamburguesa) queda solo para navegación y cuenta: Historial, Catálogos, Recurrentes, Conciliación, Alertas, Mis Recordatorios, Ajustes y Cerrar sesión. Las herramientas de datos viven dentro de Ajustes para no saturar el menú.
+La barra inferior contiene **Inicio, Movimientos, Cuentas, Reportes y Más**. El botón **+ Gasto** abre la captura desde cualquier sección financiera. En Cuentas se alterna entre Tarjetas y Ahorros; en Movimientos se accede a Por cobrar e Historial.
+
+La captura separa Gasto de Abono a tarjeta y deja las opciones de reembolso, ahorro y exclusión del presupuesto dentro de **Más opciones**. Los borradores se guardan por usuario y base en este dispositivo. Al guardar se vuelve a la pantalla de origen y se conservan los filtros. Los abonos nuevos se excluyen del presupuesto y reducen la deuda de la tarjeta.
+
+El diseño respeta las áreas seguras de iOS, permite ampliar con zoom y oculta la barra inferior cuando el teclado reduce el área visible. Recordatorios comparte la paleta y los controles móviles. El cierre semanal se encuentra al final de Inicio.
+
+### Verificación móvil
+
+Las pruebas usan datos ficticios y bloquean las peticiones a servicios externos. Requieren Node.js y las dependencias de desarrollo; la aplicación sigue funcionando sin compilación ni dependencias de Node.
+
+```sh
+npm install
+npx playwright install webkit chromium
+npm run test:mobile
+```
+
+El script levanta un servidor temporal en `127.0.0.1`, prueba WebKit en tamaños de iPhone de 320 a 430 px, verifica borradores, filtros, ediciones, ahorro, abonos y guardado sin conexión, y guarda capturas en `test-results/`. La reapertura de la PWA sin conexión se comprueba en Chromium; WebKit en Windows presenta limitaciones para simular esa navegación. Las pruebas emulan el navegador; cámara, OCR y notificaciones deben revisarse en un iPhone físico.
 
 ---
 
@@ -267,4 +288,4 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 
 ---
 
-*Versión 2.4*
+*Versión 2.75*

@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.74';
-const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20260925a', './despensa.js?v=20260909a', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'gastos-v2.75';
+const ASSETS = ['./', './index.html', './db.js?v=1', './app.js?v=20261025', './despensa.js?v=20261025', './mobile.css?v=20261025', './mobile-ui.js?v=20261025', './theme.js?v=20261025', './tasks.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -36,7 +36,7 @@ self.addEventListener('fetch', e => {
       });
 
       if (isFreshAsset) {
-        return fetchAndCache().catch(() => cached || caches.match('./index.html'));
+        return fetchAndCache().catch(() => cached || (e.request.mode === 'navigate' ? caches.match('./index.html') : Response.error()));
       }
 
       return cached || fetchAndCache();

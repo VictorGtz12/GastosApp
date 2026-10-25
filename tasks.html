@@ -128,15 +128,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hoy-stat-val{font-size:20px;font-weight:700}
 .hoy-stat-lbl{font-size:10px;color:var(--text3);margin-top:2px}
 </style>
+<link rel="stylesheet" href="mobile.css?v=20261025">
+<meta name="theme-color" content="#101116">
+<script src="theme.js?v=20261025"></script>
 </head>
-<body>
+<body class="reminders-page">
 <div class="app">
   <div class="topbar">
     <a href="index.html" class="back-btn">
       <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
       Gastos
     </a>
-    <div class="topbar-title">📋 Mis Recordatorios</div>
+    <div class="topbar-title">Recordatorios</div>
     <span id="mr-sync-status" onclick="syncDown(true).then(()=>renderAll())" style="font-size:10px;padding:3px 8px;border-radius:10px;cursor:pointer;font-weight:600;transition:all .3s"></span>
     <button class="topbar-btn" onclick="solicitarNotificaciones()">🔔</button>
   </div>
@@ -237,7 +240,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
   </div>
 
-  <button class="fab" onclick="abrirNuevo()">+</button>
+  <button type="button" class="fab" onclick="abrirNuevo()" aria-label="Nuevo recordatorio">+ Recordatorio</button>
 </div>
 
 <!-- MODAL: Nueva tarea -->
@@ -384,7 +387,7 @@ async function init() {
   syncDown();
 }
 
-function today() { return new Date().toISOString().slice(0,10); }
+function today() { const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
 function getServerAuth() {
   try { return JSON.parse(localStorage.getItem('serverAuth') || 'null'); }
@@ -1017,7 +1020,7 @@ async function solicitarNotificaciones() {
 }
 
 function programarNotificacion(t) {
-  if (Notification.permission!=='granted') return;
+  if (!('Notification' in window) || Notification.permission!=='granted') return;
   const dt = new Date(t.fecha+'T'+t.hora);
   const delay = dt - Date.now();
   if (delay<=0) return;
@@ -1025,7 +1028,7 @@ function programarNotificacion(t) {
 }
 
 function checkNotificaciones() {
-  if (Notification.permission!=='granted') return;
+  if (!('Notification' in window) || Notification.permission!=='granted') return;
   const ahora = Date.now();
   tasks.filter(t=>t.tipo==='recordatorio'&&t.fecha&&t.hora&&!t.completada).forEach(t=>{
     const dt = new Date(t.fecha+'T'+t.hora);

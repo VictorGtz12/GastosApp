@@ -3,3 +3,7 @@ backend/data/*.sqlite-*
 backend/.venv/
 __pycache__/
 *.pyc
+
+# Capturas y resultados de pruebas locales
+test-results/
+node_modules/

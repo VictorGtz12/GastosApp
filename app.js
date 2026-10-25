@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.74';
+const APP_VERSION = 'v2.75';
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
 // ── Configuración ─────────────────────────────────────────────
@@ -143,7 +143,7 @@ let pantryOcrCorrections = [];
 
 // ── Utilidades ────────────────────────────────────────────────
 const fmt = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const fmtD = d => {
   if (!d) return '';
   if (typeof d === 'string') return d.slice(0,10);
@@ -1851,6 +1851,7 @@ function refrescarVistasDespuesDeCambio(tab = tabActualGlobal) {
   else if (tab === 'recurrentes') renderRecurrentes();
   else if (tab === 'conciliacion') renderConciliacion();
   else if (tab === 'despensa' && typeof renderDespensa === 'function') renderDespensa();
+  if (window.uiAfterNavigation) uiAfterNavigation(tab);
 }
 
 async function refreshData() {
@@ -1902,6 +1903,7 @@ async function afterAuthReady(forceDownload = false) {
 }
 
 function mostrarEstadoSync(ok, estado = null) {
+  if (window.uiSyncStatus) return uiSyncStatus(ok, estado);
   const el = document.getElementById('sync-status');
   if (!el) return;
   el.style.display = 'inline'; el.style.cursor = 'pointer'; el.onclick = () => refreshData();
@@ -2300,16 +2302,7 @@ function saveLocal() {
           const b = document.getElementById('banner-pendientes');
           if (b) b.style.display = 'none';
         } else {
-          const syncEl = document.getElementById('sync-status');
-          if (syncEl) {
-            syncEl.style.display = 'inline';
-            syncEl.textContent   = '⬆️ Sin subir';
-            syncEl.style.color   = 'var(--orange)';
-            syncEl.style.cursor  = 'pointer';
-            syncEl.onclick       = () => refreshData();
-          }
-          const b = document.getElementById('banner-pendientes');
-          if (b) b.style.display = 'flex';
+          mostrarEstadoSync(false, 'error');
         }
       }, 0); // inmediato, sin bloquear el render del guardado
     }
@@ -2426,10 +2419,12 @@ function normAhorro(c) {
 
 
 // ── Navegación ────────────────────────────────────────────────
-const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','dashboard','historico','catalogos','recurrentes','conciliacion','despensa'];
+const TABS = ['menu','gastos','nuevo','externos','cortes','ahorros','dashboard','historico','catalogos','recurrentes','conciliacion','despensa','mas'];
 let tabActualGlobal = 'menu';
 
 function showTab(tab) {
+  if (!TABS.includes(tab)) return;
+  if (window.uiBeforeNavigation) uiBeforeNavigation(tab);
   tabActualGlobal = tab; // siempre actualizar el tab global
   document.body.classList.toggle('pantry-mode', tab === 'despensa');
   TABS.forEach(t => {
@@ -2455,7 +2450,7 @@ function showTab(tab) {
   if (tab === 'nuevo' && !editingId) {
     const fe = document.getElementById('f-fecha'); if (fe && !fe.value) fe.value = today();
   }
-  if (tab === 'gastos')    renderGastos();
+  if (tab === 'gastos') { if (window.uiPopulateFilters) uiPopulateFilters(); renderGastos(); }
   if (tab === 'externos')  renderExternos();
   if (tab === 'cortes')    renderCortes();
   if (tab === 'ahorros')   renderAhorros();
@@ -2465,6 +2460,7 @@ function showTab(tab) {
   if (tab === 'dashboard') renderDashboard();
   if (tab === 'conciliacion') renderConciliacion();
   if (tab === 'despensa' && typeof renderDespensa === 'function') renderDespensa();
+  if (window.uiAfterNavigation) uiAfterNavigation(tab);
 }
 
 // ── Dashboard ──────────────────────────────────────────────────
@@ -2484,7 +2480,7 @@ function renderDashboard() {
   document.getElementById('dashboard-deuda-total').textContent = fmt(totalDeuda);
 
   // Gastos hoy
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = today();
   const gastosHoy = gastos.filter(g => g.fecha === hoy && !g.ignorar);
   document.getElementById('dashboard-gastos-hoy').textContent = fmt(gastosHoy.reduce((s, g) => s + g.cantidad, 0));
   document.getElementById('dashboard-gastos-hoy-count').textContent = `${gastosHoy.length} gasto${gastosHoy.length !== 1 ? 's' : ''}`;
@@ -2522,9 +2518,13 @@ function renderDashboard() {
 // ── Gráficas del Dashboard (Chart.js) ─────────────────────────
 function renderGraficosDashboard() {
   if (typeof Chart === 'undefined') {
-    console.warn('Chart.js no disponible; se omiten gráficas.');
+    document.querySelectorAll('#content-dashboard canvas').forEach(canvas => {
+      if (canvas.parentElement.querySelector('.chart-unavailable')) return;
+      const note = document.createElement('p'); note.className = 'muted chart-unavailable'; note.textContent = 'Las gráficas necesitan conexión para cargarse por primera vez. Tus totales siguen disponibles.'; canvas.before(note);
+    });
     return;
   }
+  document.querySelectorAll('.chart-unavailable').forEach(note => note.remove());
   renderChartGastoMensual();
   renderChartGastoPorCategoria();
   renderChartEgresosUltimos();
@@ -2622,36 +2622,38 @@ function renderMenu() {
   const ajusteSemana = (ajustesPresupuesto || [])
     .reduce((s, a) => s + a.cantidad, 0);
   const presupuestoAjustado = PRESUPUESTO + ajusteSemana;
-  const pct     = Math.min(100, Math.round(total / presupuestoAjustado * 100));
-  const disp    = Math.max(0, presupuestoAjustado - total);
+  const pct     = presupuestoAjustado > 0 ? Math.max(0, Math.round(total / presupuestoAjustado * 100)) : (total > 0 ? 100 : 0);
+  const disp    = presupuestoAjustado - total;
   const extPend = [...gastos, ...historico].filter(g => g.externo === 'externo').reduce((s,g) => s+g.cantidad, 0);
   const totA    = cuentasAhorro.filter(c=>!c.excluirTotal).reduce((s, c) => s + saldoCuenta(c), 0);
 
   document.getElementById('s-total').textContent = fmt(total);
   const dispEl = document.getElementById('s-disp');
-  dispEl.textContent  = fmt(disp);
+  dispEl.textContent  = fmt(Math.abs(disp));
+  document.getElementById('budget-available-label').textContent = disp < 0 ? 'Excediste el presupuesto por' : 'Disponible del presupuesto';
+  document.getElementById('budget-hero').classList.toggle('over-budget', disp < 0);
+  document.getElementById('budget-progress').setAttribute('aria-valuenow', Math.min(100,pct));
   dispEl.className = 'stat-val ' + (disp < 500 ? 'red' : 'green');
-  dispEl.style.cursor = 'pointer';
-  dispEl.onclick = () => abrirAumentarPresupuesto();
-  dispEl.title = 'Toca para aumentar presupuesto desde ahorro';
+  dispEl.style.cursor = 'default';
+  dispEl.onclick = null;
+
   document.getElementById('s-ext').textContent    = fmt(extPend);
   document.getElementById('s-ahorro').textContent = fmt(totA);
-  document.getElementById('p-nums').textContent   = fmt(total) + ' / ' + fmt(presupuestoAjustado);
+  document.getElementById('p-nums').textContent = fmt(presupuestoAjustado);
 
   const fill = document.getElementById('p-fill');
-  fill.style.width  = pct + '%';
+  fill.style.width  = Math.min(100,pct) + '%';
   fill.className    = 'progress-fill' + (pct >= 100 ? ' over' : pct >= 80 ? ' warn' : '');
   document.getElementById('p-pct').textContent   = pct + '% usado';
   const restaEl = document.getElementById('p-resta');
   if (ajusteSemana > 0) {
-    restaEl.innerHTML = 'Resta ' + fmt(disp) + ' <span style="font-size:10px;color:var(--accent2)">(+' + fmt(ajusteSemana) + ' ajustado)</span>';
+    restaEl.innerHTML = (disp < 0 ? 'Exceso ' + fmt(-disp) : 'Resta ' + fmt(disp)) + ' <span style="font-size:10px;color:var(--accent2)">(+' + fmt(ajusteSemana) + ' ajustado)</span>';
   } else {
-    restaEl.textContent = 'Resta ' + fmt(disp);
+    restaEl.textContent = disp < 0 ? 'Exceso ' + fmt(-disp) : 'Resta ' + fmt(disp);
   }
-  // Hacer clic en Resta para abrir modal de aumentar presupuesto
-  restaEl.style.cursor = 'pointer';
-  restaEl.onclick = () => abrirAumentarPresupuesto();
-  restaEl.title = 'Toca para aumentar presupuesto desde ahorro';
+  restaEl.style.cursor = 'default';
+  restaEl.onclick = null;
+
 
   const rows = getCuentas().map(c => {
     const sum = activos.filter(g => g.cuenta === c).reduce((s,g) => s+g.cantidad, 0);
@@ -2665,6 +2667,7 @@ function renderMenu() {
     '<div style="font-size:12px;color:var(--text2);padding:6px 0">Sin gastos esta semana</div>';
   verificarCortesProximos();
   verificarRecurrentesProximos();
+  if (window.uiRenderHome) uiRenderHome();
 }
 
 // ── Gastos ────────────────────────────────────────────────────
@@ -2729,6 +2732,7 @@ function aplicarEdicionMasiva() {
 }
 
 function renderGastos() {
+  if (window.uiRenderMovements) return uiRenderMovements();
   const q = (document.getElementById('search-in').value || '').toLowerCase();
   const histPendientes = historico
     .filter(g => !g.abonado && !g.ignorar && g.externo === 'no')
@@ -3144,6 +3148,7 @@ function openCorteTarjeta(cuenta) {
         </div>
       </div>
 
+      <div class="action-row"><button type="button" class="btn-retirar" data-concile-account="${escapeHtml(cuenta)}">Conciliar tarjeta</button></div>
       ${totalAbonos ? `<div style="background:rgba(34,211,165,.08);border:1px solid rgba(34,211,165,.2);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:12px;color:var(--green);font-weight:500">🏦 Abonos recibidos</span>
         <span style="font-size:16px;font-weight:700;color:var(--green)">${fmt(totalAbonos)}</span>
@@ -3515,7 +3520,7 @@ function openMovAhorro(id, tipo) {
 
 async function confirmarMovAhorro() {
   const cantidad = parseFloat(document.getElementById('ahorro-cantidad').value);
-  if (!cantidad||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!Number.isFinite(cantidad)||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
   const nota = document.getElementById('ahorro-nota').value;
   const c = cuentasAhorro.find(x=>x.id===movCuentaId);
   if (!c) return;
@@ -3561,7 +3566,7 @@ function openTraspaso(origenId) {
 
 async function confirmarTraspaso() {
   const cantidad   = parseFloat(document.getElementById('traspaso-cantidad').value);
-  if (!cantidad||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
+  if (!Number.isFinite(cantidad)||cantidad<=0) { showToast('Ingresa una cantidad válida'); return; }
   const destinoId  = parseInt(document.getElementById('traspaso-destino').value);
   const nota       = document.getElementById('traspaso-nota').value;
   const origen     = cuentasAhorro.find(x=>x.id===traspasoOrigenId);
@@ -3696,8 +3701,8 @@ function renderHistorico() {
 // ── Formulario nuevo gasto ────────────────────────────────────
 function setAbonoTarjeta(v) {
   abonoTarjeta = !!v;
-  document.getElementById('abono-tarjeta-si').classList.toggle('sel-no',!v);
-  document.getElementById('abono-tarjeta-no').classList.toggle('sel-no',v);
+  document.getElementById('abono-tarjeta-si').classList.toggle('sel-no',!!v);
+  document.getElementById('abono-tarjeta-no').classList.toggle('sel-no',!v);
 }
 
 function toggleAbonoTarjetaVisibility() {
@@ -3811,14 +3816,15 @@ function aplicarReglaAutomatica(origen = 'comentario') {
   const cuentaSel = document.getElementById('f-cuenta');
   const motivoSel = document.getElementById('f-motivo');
   let cambios = [];
-  if (regla.cuenta && cuentaSel && getCuentas().includes(regla.cuenta)) {
+  if (regla.cuenta && cuentaSel && getCuentas().includes(regla.cuenta) && !(window.uiAccountWasEdited && uiAccountWasEdited())) {
     cuentaSel.value = regla.cuenta;
     cambios.push(regla.cuenta);
   }
-  if (regla.motivo && motivoSel && catalogoMotivos.includes(regla.motivo)) {
+  if (regla.motivo && motivoSel && catalogoMotivos.includes(regla.motivo) && !(window.uiCategoryWasEdited && uiCategoryWasEdited())) {
     motivoSel.value = regla.motivo;
     cambios.push(regla.motivo);
   }
+  if (window.uiRuleApplied) uiRuleApplied(cambios);
   if (cambios.length && origen !== 'silencioso') showToast('Regla aplicada: ' + cambios.join(' · '));
 }
 
@@ -3826,7 +3832,7 @@ async function guardarGasto() {
   syncBloqueado = true; // bloquear sync durante guardado
   aplicarReglaAutomatica('silencioso');
   const cantidad = parseFloat(document.getElementById('f-cantidad').value);
-  if (!cantidad||cantidad<=0) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
+  if (!Number.isFinite(cantidad)||cantidad<=0) { syncBloqueado = false; showToast('Ingresa una cantidad válida'); return; }
 
   const isEditing = !!editingId;
   const isHistorico = window._editandoHistorico === true;
@@ -3886,10 +3892,12 @@ async function guardarGasto() {
     const _volverConcil = !!window._desdeConciliador;
     window._desdeConciliador = null;
     syncBloqueado = false;
+    const destination = window.uiExpenseDestination ? uiExpenseDestination('historico') : 'historico';
+    if (window.uiExpenseSaved) uiExpenseSaved();
     resetForm(); editingId=null;
     saveLocal();
-    showTab('historico');
-    refrescarVistasDespuesDeCambio('historico');
+    showTab(destination);
+    refrescarVistasDespuesDeCambio(destination);
     showToast('Gasto del historial actualizado ✓');
     return;
   }
@@ -3934,9 +3942,11 @@ async function guardarGasto() {
   saveLocal();
   const _volverConcil = !!window._desdeConciliador;
   window._desdeConciliador = null;
+  const destination = _volverConcil ? 'conciliacion' : (window.uiExpenseDestination ? uiExpenseDestination() : 'gastos');
+  if (window.uiExpenseSaved) uiExpenseSaved();
   resetForm(); editingId=null;
-  showTab(_volverConcil ? 'conciliacion' : 'gastos');
-  refrescarVistasDespuesDeCambio(_volverConcil ? 'conciliacion' : 'gastos');
+  showTab(destination);
+  refrescarVistasDespuesDeCambio(destination);
   showToast('Gasto guardado ✓');
 }
 
@@ -3964,10 +3974,12 @@ function _confirmarGuardarGastoConRevertAhorro() {
   window._guardarGastoPendiente = null;
   syncBloqueado = false;
   saveLocal();
+  const destination = pending._volverConcil ? 'conciliacion' : (window.uiExpenseDestination ? uiExpenseDestination() : 'gastos');
+  if (window.uiExpenseSaved) uiExpenseSaved();
   resetForm();
   editingId = null;
-  showTab(pending._volverConcil ? 'conciliacion' : 'gastos');
-  refrescarVistasDespuesDeCambio(pending._volverConcil ? 'conciliacion' : 'gastos');
+  showTab(destination);
+  refrescarVistasDespuesDeCambio(destination);
   showToast('Gasto guardado ✓');
 }
 
@@ -3982,10 +3994,12 @@ function resetForm() {
   if (cuentaEl) cuentaEl.value = getCuentas().includes('Banamex') ? 'Banamex' : (getCuentas()[0] || '');
   if (motivoEl) motivoEl.value = catalogoMotivos.includes('Comida') ? 'Comida' : (catalogoMotivos[0] || '');
   const fe = document.getElementById('f-fecha'); if (fe) fe.value = today();
+  const hint = document.getElementById('rule-hint'); if (hint) hint.textContent = '';
   setAb(false); setAbonoTarjeta(false); setIg(false); setExt('no'); setDescAhorro(false);
   toggleAbonoTarjetaVisibility();
 }
 function cancelForm() {
+  if (window.uiCancelExpense) return uiCancelExpense();
   editingId=null; resetForm();
   showTab(gastos.length?'gastos':'menu');
 }
@@ -4003,7 +4017,7 @@ function openDetail(id) {
         <div style="font-size:15px;font-weight:500;color:var(--text)">${g.motivo}</div>
         <div style="font-size:12px;color:var(--text2)">${g.cuenta} · ${g.fecha}</div>
       </div>
-      <div style="font-size:17px;font-weight:500;color:${iE?'#d97706':iP?'#0d9488':'#1e293b'}">${fmt(g.cantidad)}</div>
+      <div style="font-size:17px;font-weight:500;color:${iE?'var(--orange)':iP?'var(--green)':'var(--text)'}">${fmt(g.cantidad)}</div>
     </div>
     ${g.comentarios?`<div style="font-size:12px;color:var(--text2);margin-bottom:9px">📝 ${g.comentarios}</div>`:''}
     ${g.ahorroDesc?`<div style="font-size:12px;color:var(--purple);margin-bottom:9px">🐷 Descontado de: ${g.ahorroDesc}</div>`:''}
@@ -4030,86 +4044,9 @@ function openDetail(id) {
   openModal('modal-detail');
 }
 
-function editarHistorico(id) {
-  const g = historico.find(x => x.id === id);
-  if (!g) return;
-  // Mover temporalmente a gastos para editar
-  editingId = id;
-  // Llenar el formulario
-  showTab('nuevo');
-  setTimeout(() => {
-    document.getElementById('f-cantidad').value = g.cantidad;
-    document.getElementById('f-fecha').value    = g.fecha;
-    document.getElementById('f-cuenta').value   = g.cuenta;
-    // Motivo
-    const motSel = document.getElementById('f-motivo');
-    if (motSel) { motSel.value = g.motivo; }
-    const coSel = document.getElementById('f-comentarios-input');
-    if (coSel) coSel.value = g.comentarios || '';
-    setAb(g.abonado !== false);
-    setIg(!!g.ignorar);
-    setExt(g.externo || 'no');
-    llenarReembolsoForm(g);
-    toggleAbonoTarjetaVisibility();
-    if (g.abonoTarjeta) setAbonoTarjeta(true);
-    // Marcar que es del historico
-    window._editandoHistorico = true;
-    showToast('Editando gasto del historial');
-  }, 150);
-}
-
-function editarDirecto(id) {
-  const g = gastos.find(x=>x.id===id); if(!g) return;
-  editingId=id;
-  document.getElementById('f-cuenta').value            = g.cuenta;
-  document.getElementById('f-motivo').value             = g.motivo;
-  document.getElementById('f-cantidad').value           = g.cantidad;
-  document.getElementById('f-comentarios-input').value  = g.comentarios||'';
-  const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
-  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); llenarReembolsoForm(g);
-  toggleAbonoTarjetaVisibility();
-  if (g.abonoTarjeta) setAbonoTarjeta(true);
-  // Restaurar estado de descuento de ahorro
-  if (g.ahorroDesc) {
-    setDescAhorro(true);
-    setTimeout(() => {
-      const sel = document.getElementById('f-ahorro-cuenta');
-      if (sel) {
-        const ca = cuentasAhorro.find(c => c.nombre === g.ahorroDesc);
-        if (ca) sel.value = ca.id;
-      }
-    }, 50);
-  } else { setDescAhorro(false); }
-  showTab('nuevo');
-  document.getElementById('topbar-title').textContent = 'Editar Gasto';
-}
-
-function editar(id) {
-  closeModal('modal-detail');
-  const g = gastos.find(x=>x.id===id); if(!g) return;
-  editingId=id;
-  document.getElementById('f-cuenta').value            = g.cuenta;
-  document.getElementById('f-motivo').value             = g.motivo;
-  document.getElementById('f-cantidad').value           = g.cantidad;
-  document.getElementById('f-comentarios-input').value  = g.comentarios||'';
-  const fe = document.getElementById('f-fecha'); if (fe) fe.value = g.fecha || today();
-  setAb(g.abonado); setIg(g.ignorar||false); setExt(g.externo||'no'); llenarReembolsoForm(g);
-  toggleAbonoTarjetaVisibility();
-  if (g.abonoTarjeta) setAbonoTarjeta(true);
-  // Restaurar estado de descuento de ahorro
-  if (g.ahorroDesc) {
-    setDescAhorro(true);
-    setTimeout(() => {
-      const sel = document.getElementById('f-ahorro-cuenta');
-      if (sel) {
-        const ca = cuentasAhorro.find(c => c.nombre === g.ahorroDesc);
-        if (ca) sel.value = ca.id;
-      }
-    }, 50);
-  } else { setDescAhorro(false); }
-  showTab('nuevo');
-  document.getElementById('topbar-title').textContent = 'Editar Gasto';
-}
+function editarHistorico(id) { uiStartEdit(id, true); }
+function editarDirecto(id) { uiStartEdit(id, false); }
+function editar(id) { uiStartEdit(id, false); }
 
 function eliminar(id) {
   const g = gastos.find(x=>x.id===id);
@@ -4273,6 +4210,7 @@ function openModal(id)  {
   if (!modal) return;
   modal.classList.add('open');
   bloquearFondoModal();
+  if (window.uiModalOpened) uiModalOpened(id);
 }
 
 function closeModal(id) {
@@ -4280,6 +4218,7 @@ function closeModal(id) {
   if (!modal) return;
   modal.classList.remove('open');
   liberarFondoModalSiAplica();
+  if (window.uiModalClosed) uiModalClosed(id);
 }
 
 function showToast(msg) {
@@ -5179,9 +5118,14 @@ function actualizarPeriodosConcil() {
        .map(g => g.periodoCorte)
   )].sort((a,b) => b.localeCompare(a)); // más reciente primero
 
+  const actual = getPeriodoActualKey(cuenta);
+  if (actual && !periodos.includes(actual)) periodos.unshift(actual);
+
   const selP = document.getElementById('concil-periodo');
   if (!periodos.length) {
-    selP.innerHTML = '<option>Sin períodos disponibles</option>';
+    concilPeriodo = '';
+    window._bancMovs = []; window._noConcilBanco = []; window._posiblesMatches = [];
+    selP.innerHTML = '<option value="">Sin períodos disponibles</option>';
     document.getElementById('concil-results').innerHTML =
       '<div class="empty">Sin gastos con período de corte para esta cuenta</div>';
     return;
@@ -5208,7 +5152,7 @@ function renderConciliacion() {
   concilPeriodo = periodo;
 
   const el = document.getElementById('concil-results');
-  if (!el || !periodo) return;
+  if (!el || !periodo || !periodo.includes('|')) return;
 
   const [, hasta] = periodo.split('|');
   const desde     = periodoDesde(periodo);
@@ -5342,6 +5286,7 @@ function toggleConcil(gastoId) {
 }
 
 function mostrarSubirImagenes() {
+  if (!concilCuenta || !concilPeriodo) { showToast('Selecciona una tarjeta y un período antes de subir tu estado de cuenta'); return; }
   document.getElementById('concil-img-input').click();
 }
 
@@ -5447,6 +5392,7 @@ function conciliarTodos() {
 // ── Conciliación automática con PDF ──────────────────────────
 
 function subirEstadoCuenta() {
+  if (!concilCuenta || !concilPeriodo) { showToast('Selecciona una tarjeta y un período antes de subir tu estado de cuenta'); return; }
   document.getElementById('concil-pdf-input').click();
 }
 
@@ -6739,6 +6685,7 @@ function aplicarTema(modo) {
     root.style.setProperty('--orange',  '#ff9f43');
     document.body.style.background = '#0f1117';
   }
+  if (window.uiApplyTheme) uiApplyTheme(modo);
   localStorage.setItem('tema', modo);
   const btn = document.getElementById('btn-tema');
   const temas = { oscuro: '☀️ Modo claro', claro: '🌑 Tema Revolut', revolut: '🌙 Modo oscuro' };
@@ -6778,7 +6725,12 @@ function aplicarVisibilidadAhorros() {
   // Botones ojito
   ['btn-eye-ahorro','btn-eye-menu','btn-eye-dashboard'].forEach(id => {
     const btn = document.getElementById(id);
-    if (btn) btn.textContent = ahorroVisible ? '👁' : '🙈';
+    if (btn) {
+      if (window.uiIcon) btn.innerHTML = uiIcon(ahorroVisible ? 'hidden' : 'eye');
+      else btn.textContent = ahorroVisible ? 'Ocultar' : 'Mostrar';
+      btn.setAttribute('aria-label', ahorroVisible ? 'Ocultar ahorros' : 'Mostrar ahorros');
+      btn.setAttribute('aria-pressed', ahorroVisible);
+    }
   });
 }
 
@@ -6793,7 +6745,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   normalizarCatalogoComentarios();
   // Inicializar fecha
   const fechaEl = document.getElementById('f-fecha');
-  if (fechaEl) fechaEl.value = new Date().toISOString().slice(0,10);
+  if (fechaEl) fechaEl.value = today();
   aplicarTema(localStorage.getItem('tema') || 'oscuro');
   // Inicializar IndexedDB (no crítico, en segundo plano)
   try { if (window.DB) DB.migrar(); } catch(e) {}

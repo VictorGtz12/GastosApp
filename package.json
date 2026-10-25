@@ -1,0 +1,12 @@
+{
+  "name": "gastosapp",
+  "version": "2.75.0",
+  "private": true,
+  "description": "PWA de gastos personales para iPhone",
+  "scripts": {
+    "test:mobile": "node tests/mobile-ui.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}
