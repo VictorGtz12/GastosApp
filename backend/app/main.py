@@ -447,7 +447,7 @@ def rest_patch(conn, current, table: str, params: dict[str, str], row: dict[str,
 def static_frontend(path: str):
     public_files = {
         "index.html", "tasks.html", "app.js", "db.js", "despensa.js", "mobile-ui.js", "movement-filters.js", "task-sync.js",
-        "mobile.css", "theme.js", "sw.js", "manifest.json", "icon-192.png", "icon-512.png",
+        "mobile.css", "theme.js", "sw.js", "manifest.json", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "favicon-32.png",
         "parsers.js", "conciliacion.js", "cuentas-finanzas.js",
     }
     name = path or "index.html"

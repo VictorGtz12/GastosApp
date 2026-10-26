@@ -55,7 +55,9 @@ async function seed(page) {
     await context.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
     const page=await context.newPage();const errors=[];
     page.on('pageerror',err=>errors.push(err.message));
-    await page.goto(base);await page.waitForSelector('#modal-auth.open');await seed(page);
+    await page.goto(base);await page.waitForSelector('#modal-auth.open');
+    await page.screenshot({path:path.join(output,'iphone-login.png')});
+    await seed(page);
     if(process.env.REMINDER_ONLY){
       await require('./reminders.cjs')(context,check,base);
       await context.close();console.log(`Verified ${checks.length} reminder scenarios.`);return;
@@ -253,8 +255,8 @@ async function seed(page) {
       await offlinePage.waitForFunction(()=>!!navigator.serviceWorker.controller);
       await offlinePage.waitForLoadState('networkidle');
       await offlinePage.waitForSelector('#modal-auth.open');
-      const assets=await offlinePage.evaluate(async()=>{const cache=await caches.open('gastos-v2.78');return (await cache.keys()).map(r=>new URL(r.url).pathname);});
-      for(const asset of ['/mobile.css','/mobile-ui.js','/theme.js','/movement-filters.js','/task-sync.js'])assert.ok(assets.includes(asset),asset+' must be cached');
+      const assets=await offlinePage.evaluate(async()=>{const cache=await caches.open('gastos-v2.79');return (await cache.keys()).map(r=>new URL(r.url).pathname);});
+      for(const asset of ['/mobile.css','/mobile-ui.js','/theme.js','/movement-filters.js','/task-sync.js','/icon-192.png','/icon-512.png','/apple-touch-icon.png','/favicon-32.png'])assert.ok(assets.includes(asset),asset+' must be cached');
       await pwa.setOffline(true);
       await offlinePage.goto(base+'/index.html',{waitUntil:'domcontentloaded'});
       await offlinePage.waitForSelector('#modal-auth.open');

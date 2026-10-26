@@ -1,4 +1,4 @@
-# Gastos Semanales v2.78
+# Gastos Semanales v2.79
 
 App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
@@ -101,6 +101,17 @@ npm run test:mobile
 ```
 
 El script levanta un servidor temporal en `127.0.0.1`, prueba WebKit en tamaños de iPhone de 320 a 430 px, verifica borradores, filtros, ediciones, ahorro, abonos y guardado sin conexión, y guarda capturas en `test-results/`. La reapertura de la PWA sin conexión se comprueba en Chromium; WebKit en Windows presenta limitaciones para simular esa navegación. Las pruebas emulan el navegador; cámara, OCR y notificaciones deben revisarse en un iPhone físico.
+
+### Identidad visual en v2.79
+
+El nuevo logo usa una G geométrica que sugiere una cartera: blanco sobre violeta y un acento verde menta. Se generó con la herramienta integrada imagegen. El prompt completo, la paleta y los tamaños de exportación están en `branding.json`.
+
+- `logo-gastos.png`: original final de 1024 × 1024 px.
+- `icon-512.png` e `icon-192.png`: iconos de la PWA y las notificaciones.
+- `apple-touch-icon.png`: versión de 180 × 180 px para iPhone.
+- `favicon-32.png`: versión del navegador de 32 × 32 px.
+
+Las imágenes son opacas y cubren el cuadrado completo; el dispositivo aplica su máscara exterior. El logo también aparece en la cabecera y en el inicio de sesión. Los enlaces usan una nueva revisión y el caché `gastos-v2.79` incluye los iconos de iPhone y navegador. Para que esta revisión se vea en el dispositivo se deben publicar los archivos y actualizar el backend que permite servir los nuevos PNG.
 
 ### Revisión de flujos en v2.78
 
@@ -342,4 +353,4 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 
 ---
 
-*Versión 2.78*
+*Versión 2.79*

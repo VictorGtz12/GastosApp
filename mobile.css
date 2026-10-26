@@ -219,3 +219,11 @@ body.keyboard-open .form-actions{position:static}
 .reminders-page #mr-sync-status{max-width:95px;min-height:44px;flex-shrink:0}
 .task-title,.proj-name,.nota-titulo,.nota-body,.modal h2{overflow-wrap:anywhere}
 .proj-info{min-width:0}
+
+/* Shared visual identity, kept compact for iPhone headers. */
+.topbar-kicker{display:inline-flex;align-items:center;gap:7px}
+.brand-mark{display:block;flex:none;border-radius:5px}
+.auth-brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.auth-brand img{display:block;flex:none;border-radius:13px}
+.auth-brand span{font-size:23px;line-height:1.15;font-weight:700;letter-spacing:-.6px;color:var(--text)}
+.modal[tabindex="-1"]:focus{outline:none}

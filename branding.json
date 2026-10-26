@@ -1,0 +1,44 @@
+{
+  "generator": "imagegen (built-in tool)",
+  "prompt": "Use case: logo-design. Create one final production app icon for a Spanish personal expense tracking app named Gastos. Output exactly ONE square 1024x1024 artwork, edge-to-edge, ready to become the iPhone home screen icon, not a mockup or presentation. New original design. A bold minimalist custom monogram merging a lowercase-friendly geometric capital G with the silhouette of a wallet: one confident continuous soft off-white rounded ribbon forming an open circular/squarish G, with a small crisp mint-green wallet tab or horizontal crossbar extending inward from its right side. The mark must be immediately readable and recognizable at 32 pixels. Flat graphic design with only extremely subtle material depth, no illustration, no tiny details. Vivid sophisticated violet full-bleed background, smoothly transitioning from #8B78F5 at top left to #6351CC at bottom right; off-white main mark #FAFAFF and a single mint accent #72E4BF. Centered composition with generous breathing room; all of the logo symbol fits within the central 65 percent of the canvas, inside an approximately 320px-radius circle centered on the 1024 square, so it survives maskable icon crops. The background must be opaque and cover every corner of the square uniformly, with NO pre-rounded outer corners, no transparent margins, no external cast shadow, no phone, no frame, no border. Premium contemporary mobile fintech identity, elegant geometry and balanced negative space. Avoid dollar signs, coins, banknotes, charts, arrows, gradients inside the white mark, multiple objects, complex 3D scenes, texture, text, lettering besides the abstract G monogram, watermarks, and existing company logos. Do not reproduce the Google G shape or a bank logo.",
+  "palette": {
+    "violetLight": "#8B78F5",
+    "violetDeep": "#6351CC",
+    "white": "#FAFAFF",
+    "mint": "#72E4BF"
+  },
+  "exports": [
+    {
+      "file": "logo-gastos.png",
+      "width": 1024,
+      "height": 1024,
+      "use": "Master artwork"
+    },
+    {
+      "file": "icon-512.png",
+      "width": 512,
+      "height": 512,
+      "use": "PWA icon"
+    },
+    {
+      "file": "icon-192.png",
+      "width": 192,
+      "height": 192,
+      "use": "PWA, notifications and in-app brand mark"
+    },
+    {
+      "file": "apple-touch-icon.png",
+      "width": 180,
+      "height": 180,
+      "use": "iPhone home screen"
+    },
+    {
+      "file": "favicon-32.png",
+      "width": 32,
+      "height": 32,
+      "use": "Browser favicon"
+    }
+  ],
+  "background": "Opaque and full bleed; outer icon masks are applied by the device.",
+  "resizing": "Downscaled with Lanczos3 from the generated artwork; no creative edits."
+}
