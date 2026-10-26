@@ -1,4 +1,4 @@
-# Gastos Semanales v2.79
+# Gastos Semanales v2.80
 
 App web para control de gastos con tarjetas de crédito, ahorros y servicios recurrentes. Funciona como PWA instalable en iPhone y Android.
 
@@ -102,6 +102,10 @@ npm run test:mobile
 
 El script levanta un servidor temporal en `127.0.0.1`, prueba WebKit en tamaños de iPhone de 320 a 430 px, verifica borradores, filtros, ediciones, ahorro, abonos y guardado sin conexión, y guarda capturas en `test-results/`. La reapertura de la PWA sin conexión se comprueba en Chromium; WebKit en Windows presenta limitaciones para simular esa navegación. Las pruebas emulan el navegador; cámara, OCR y notificaciones deben revisarse en un iPhone físico.
 
+### Semana de gastos en v2.80
+
+Los filtros **Semana actual** y **Semana pasada** usan cortes de sábado a viernes, con ambos días incluidos. Semana pasada muestra solo los siete días anteriores al sábado actual; Semanas anteriores conserva todos los movimientos anteriores a ese sábado. El rango de Inicio utiliza la misma regla. Por ejemplo, el lunes 26 de octubre de 2026 la semana actual es del 24 al 30 de octubre y la pasada del 17 al 23. La revisión renueva el caché de la PWA para iPhone.
+
 ### Identidad visual en v2.79
 
 El nuevo logo usa una G geométrica que sugiere una cartera: blanco sobre violeta y un acento verde menta. Se generó con la herramienta integrada imagegen. El prompt completo, la paleta y los tamaños de exportación están en `branding.json`.
@@ -130,7 +134,7 @@ Los avisos de Recordatorios usan temporizadores mientras la app está abierta. E
 
 ### Filtros de Movimientos en v2.77
 
-**Semana actual** incluye las fechas de lunes a domingo de la semana local del dispositivo. El rango aparece debajo del selector y se actualiza al volver a la app después de un cambio de día, incluso sin conexión. Se consulta tanto gastos abiertos como archivados por su fecha; el cierre manual de una semana no cambia ese rango. **Semanas anteriores** termina el domingo anterior y **Todas las fechas** elimina únicamente la restricción temporal.
+**Semana actual** incluye las fechas de sábado a viernes de la semana local del dispositivo. **Semana pasada** incluye exactamente el sábado a viernes anterior. El rango aparece debajo del selector y se actualiza al volver a la app después de un cambio de día, incluso sin conexión. Se consulta tanto gastos abiertos como archivados por su fecha; el cierre manual de una semana no cambia ese rango. **Semanas anteriores** termina el viernes anterior a la semana actual y **Todas las fechas** elimina únicamente la restricción temporal.
 
 Período, estado, cuenta, categoría, tipo, presupuesto y búsqueda se combinan por intersección. Solo hay tres estados: Todos los estados, Sin abonar y Abonados. Los abonos a tarjeta son operaciones distintas y se consultan con Tipo; los estados de abono se aplican a gastos. Un gasto fuera del presupuesto o por cobrar conserva su propio estado de abono. La búsqueda admite tildes, varias palabras e importes con formato monetario y siempre respeta el período.
 
@@ -140,7 +144,7 @@ El aviso de pendientes anteriores usa la cuenta, categoría, tipo, presupuesto y
 
 La selección masiva solo incluye gastos abiertos visibles. Cambiar filtros elimina las selecciones ocultas; cambiar de cuenta recalcula el período de corte. Los abonos no pueden convertirse en pendientes ni asignarse a débito. Si falla el guardado local, se revierte el cambio y se conserva la selección para reintentar.
 
-`npm run test:filters` verifica 1,215 combinaciones, límites de semana, mes y año, días bisiestos, zonas horarias y duplicados. `tests/movement-ui.cjs`, incluido en `npm run test:mobile`, comprueba los filtros y la edición masiva en WebKit para iPhone. El módulo también se incluye en el caché de la PWA y en los archivos públicos permitidos por el servidor.
+`npm run test:filters` verifica 1,458 combinaciones, límites de sábado/viernes, mes y año, días bisiestos, zonas horarias y duplicados. `tests/movement-ui.cjs`, incluido en `npm run test:mobile`, comprueba los filtros y la edición masiva en WebKit para iPhone. El módulo también se incluye en el caché de la PWA y en los archivos públicos permitidos por el servidor.
 
 ### Correcciones verificadas en v2.76
 
@@ -353,4 +357,4 @@ La sesión se maneja dentro del backend FastAPI. Cada usuario tiene su perfil en
 
 ---
 
-*Versión 2.79*
+*Versión 2.80*

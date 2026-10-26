@@ -255,7 +255,7 @@ async function seed(page) {
       await offlinePage.waitForFunction(()=>!!navigator.serviceWorker.controller);
       await offlinePage.waitForLoadState('networkidle');
       await offlinePage.waitForSelector('#modal-auth.open');
-      const assets=await offlinePage.evaluate(async()=>{const cache=await caches.open('gastos-v2.79');return (await cache.keys()).map(r=>new URL(r.url).pathname);});
+      const assets=await offlinePage.evaluate(async()=>{const cache=await caches.open('gastos-v2.80');return (await cache.keys()).map(r=>new URL(r.url).pathname);});
       for(const asset of ['/mobile.css','/mobile-ui.js','/theme.js','/movement-filters.js','/task-sync.js','/icon-192.png','/icon-512.png','/apple-touch-icon.png','/favicon-32.png'])assert.ok(assets.includes(asset),asset+' must be cached');
       await pwa.setOffline(true);
       await offlinePage.goto(base+'/index.html',{waitUntil:'domcontentloaded'});

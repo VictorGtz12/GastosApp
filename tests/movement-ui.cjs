@@ -10,9 +10,9 @@ module.exports=async function movementChecks(page,check,seed){
     await seed(page);
     await page.evaluate(()=>{
       activeFilter='todos';modoMasivo=false;seleccionMasiva.clear();
-      const now=new Date(),monday=new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
-      monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
-      const day=offset=>{const d=new Date(monday);d.setDate(d.getDate()+offset);return fmtD(d);};
+      const now=new Date(),saturday=new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
+      saturday.setDate(saturday.getDate()-(saturday.getDay()+1)%7);
+      const day=offset=>{const d=new Date(saturday);d.setDate(d.getDate()+offset);return fmtD(d);};
       const row=(id,fecha,props={})=>({id,fecha,cuenta:'Banamex',motivo:'Comida',cantidad:10,comentarios:'Compra '+id,abonado:false,ignorar:false,externo:'no',...props});
       gastos=[row(11,day(0)),row(12,today(),{abonado:true}),row(13,day(-1)),row(14,day(7)),row(15,today(),{abonoTarjeta:true,abonado:true,ignorar:true}),row(16,today(),{ignorar:true}),row(17,today(),{externo:'externo'}),row(18,today(),{cuenta:'Debito',motivo:'Otros',cantidad:25}),row(19,day(-4),{cuenta:'Debito',motivo:'Otros'}),row(20,today(),{externo:'pagado'})];
       historico=[row(21,day(-7)),row(22,today(),{cantidad:30}),row(11,day(0)),row(23,day(-14),{cuenta:'Cuenta antigua',motivo:'Categoría anterior'})];
@@ -32,10 +32,47 @@ module.exports=async function movementChecks(page,check,seed){
   await run('calendar week uses dates from active and historical collections exactly once',async()=>{
     assert.deepEqual(await ids(),[11,12,15,16,17,18,20,22]);
   });
+  await run('last week shows only the previous Saturday to Friday and intersects payment status',async()=>{
+    await page.locator('#movement-period').selectOption('pasada');
+    assert.deepEqual(await ids(),[13,19,21]);
+    assert.match(await page.locator('#movement-period-range').innerText(),/sábado a viernes/);
+    await page.evaluate(()=>{historico.find(g=>g.id===21).abonado=true;setFilter('pendiente');});
+    assert.deepEqual(await ids(),[13,19]);
+    await page.evaluate(()=>setFilter('abonado'));assert.deepEqual(await ids(),[21]);
+  });
+  await run('week changes on Saturday with inclusive Friday limits and matching home dates',async()=>{
+    const results=await page.evaluate(()=>{
+      const OriginalDate=window.Date,results=[];
+      gastos=['2026-10-16','2026-10-17','2026-10-23','2026-10-24','2026-10-30','2026-10-31'].map((fecha,index)=>({id:index+1,fecha,cuenta:'Banamex',motivo:'Comida',cantidad:10,abonado:false,comentarios:'Límite '+fecha}));
+      historico=[];
+      try {
+        for(const day of ['2026-10-23','2026-10-24','2026-10-25','2026-10-26','2026-10-30','2026-10-31']){
+          const timestamp=new OriginalDate(day+'T12:00:00').getTime();
+          window.Date=class extends OriginalDate {constructor(...args){super(...(args.length?args:[timestamp]));}static now(){return timestamp;}};
+          uiRenderHome();
+          const home=document.getElementById('hero-week').textContent;
+          for(const period of ['semana','pasada']){
+            document.getElementById('movement-period').value=period;renderGastos();
+            results.push({day,period,home,range:document.getElementById('movement-period-range').textContent,ids:[...document.querySelectorAll('#gastos-list .movement-row')].map(row=>Number(row.dataset.movement)).sort((a,b)=>a-b)});
+          }
+        }
+      } finally {window.Date=OriginalDate;}
+      return results;
+    });
+    for(const result of results){
+      const first=result.day==='2026-10-23',last=result.day==='2026-10-31';
+      assert.deepEqual(result.ids,result.period==='semana'?(first?[2,3]:last?[6]:[4,5]):(first?[1]:last?[4,5]:[2,3]),JSON.stringify(result));
+      assert.match(result.range,/sábado a viernes/);
+      if(result.period==='semana'){
+        const [from,to]=result.home.split(' — ');
+        assert.equal(result.range,`Del ${from} al ${to} · sábado a viernes`);
+      }
+    }
+  });
   await run('returning to the iPhone app after the week changes refreshes offline results',async()=>{
     const result=await page.evaluate(()=>{
       const OriginalDate=window.Date;
-      // Resume on the known fixture's next-week Monday.
+      // Resume on the known fixture's next-week Saturday.
       const target=gastos.find(g=>g.id===14).fecha+'T12:00:00';
       const timestamp=new OriginalDate(target).getTime();
       window.Date=class extends OriginalDate {

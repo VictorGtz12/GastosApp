@@ -238,10 +238,8 @@ function uiRenderHome() {
   if (!document.getElementById('home-recent')) return;
   const now = new Date();
   document.getElementById('home-date').textContent = now.toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'});
-  const weekStart = new Date(now.getFullYear(),now.getMonth(),now.getDate());
-  weekStart.setDate(weekStart.getDate() - (weekStart.getDay()+6)%7);
-  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
-  document.getElementById('hero-week').textContent = `${weekStart.toLocaleDateString('es-MX',{day:'numeric',month:'short'})} — ${weekEnd.toLocaleDateString('es-MX',{day:'numeric',month:'short'})}`;
+  const week = MovementFilters.range('semana',today());
+  document.getElementById('hero-week').textContent = `${uiMovementDateLabel(week.from)} — ${uiMovementDateLabel(week.to)}`;
   const recent = [...gastos,...historico].sort(uiSortMovements).slice(0,4);
   document.getElementById('home-recent').innerHTML = recent.length ? `<div class="movement-list">${recent.map(g => uiMovementRow(g)).join('')}</div>` : uiEmpty('Tus movimientos empiezan aquí','Agrega tu primer gasto para ver cómo va tu semana.','Registrar gasto','nuevo');
   const upcoming = [];
@@ -328,7 +326,7 @@ function uiRenderMovements() {
   const hasFilters=filters.state!=='todos' || filters.period!=='semana' || activeCount>0 || !!filters.query.trim();
   document.getElementById('clear-movement-filters').hidden=!hasFilters;
   const bounds=MovementFilters.range(filters.period,referenceDay);
-  uiText('movement-period-range',filters.period==='todos'?'Todas las fechas, incluido el historial':filters.period==='anteriores'?`Hasta el ${uiMovementDateLabel(bounds.to)} · antes de esta semana`:filters.period==='hoy'?`Solo el ${uiMovementDateLabel(bounds.from)}`:`Del ${uiMovementDateLabel(bounds.from)} al ${uiMovementDateLabel(bounds.to)}${filters.period==='semana'?' · lunes a domingo':''}`);
+  uiText('movement-period-range',filters.period==='todos'?'Todas las fechas, incluido el historial':filters.period==='anteriores'?`Hasta el ${uiMovementDateLabel(bounds.to)} · antes de esta semana`:filters.period==='hoy'?`Solo el ${uiMovementDateLabel(bounds.from)}`:`Del ${uiMovementDateLabel(bounds.from)} al ${uiMovementDateLabel(bounds.to)}${['semana','pasada'].includes(filters.period)?' · sábado a viernes':''}`);
   const groups=new Map();
   for(const g of list){const key=MovementFilters.date(g.fecha)||'Sin fecha';if(!groups.has(key))groups.set(key,[]);groups.get(key).push(g);}
   let html=filters.state==='pendiente' && list.length ? renderResumenSinAbonarPorCuenta(list) : '';

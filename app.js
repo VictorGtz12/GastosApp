@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 //  GASTOS SEMANALES — app.js v3
 // ════════════════════════════════════════════════════════════
-const APP_VERSION = 'v2.79';
+const APP_VERSION = 'v2.80';
 let activeLocalTransaction = null;
 const SYNC_REPAIR_VERSION = 'savings-sync-stable-ids-v1';
 
@@ -2238,7 +2238,7 @@ async function guardarAlertasCorte() {
       if (sw) {
         sw.postMessage({ type: 'SCHEDULE_NOTIFICATION', title, body, delay, tag: 'corte-'+cuenta+'-'+d });
       } else {
-        setTimeout(() => new Notification(title, { body, icon: 'icon-192.png?v=20261025e' }), delay);
+        setTimeout(() => new Notification(title, { body, icon: 'icon-192.png?v=20261026a' }), delay);
       }
       programadas++;
     });

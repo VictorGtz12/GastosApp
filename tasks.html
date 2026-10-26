@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20261025e">
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=20261025e">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20261026a">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=20261026a">
 <title>Mis Recordatorios</title>
 <style>
 :root{--bg:#0f1117;--bg2:#1a1d27;--bg3:#22263a;--border:rgba(255,255,255,.07);--border2:rgba(255,255,255,.12);--text:#f0f2ff;--text2:#8b92b0;--text3:#555d7a;--accent:#6c63ff;--accent2:#a78bfa;--green:#22d3a5;--red:#ff5e7a;--orange:#ff9f43;--yellow:#ffd166;--p-high:#ff5e7a;--p-med:#ff9f43;--p-low:#22d3a5}
@@ -128,9 +128,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hoy-stat-val{font-size:20px;font-weight:700}
 .hoy-stat-lbl{font-size:10px;color:var(--text3);margin-top:2px}
 </style>
-<link rel="stylesheet" href="mobile.css?v=20261025e">
+<link rel="stylesheet" href="mobile.css?v=20261026a">
 <meta name="theme-color" content="#101116">
-<script src="theme.js?v=20261025e"></script>
+<script src="theme.js?v=20261026a"></script>
 </head>
 <body class="reminders-page">
 <div class="app">
@@ -1025,7 +1025,7 @@ function programarNotificacion(t) {
     const current=getAllTasks().find(row=>row.id===t.id);
     if(!current||current.completada||current.tipo!=='recordatorio'||current.fecha!==t.fecha||current.hora!==t.hora)return;
     if(Date.now()<due){checkNotificaciones();return;}
-    const options={body:current.descripcion||'Recordatorio',icon:'icon-192.png?v=20261025e',tag:'task-'+current.id};
+    const options={body:current.descripcion||'Recordatorio',icon:'icon-192.png?v=20261026a',tag:'task-'+current.id};
     try{const registration=await navigator.serviceWorker?.getRegistration();if(registration?.showNotification)await registration.showNotification(current.titulo,options);else new Notification(current.titulo,options);}
     catch{taskNotice('No se pudo mostrar el aviso. El recordatorio sigue en Hoy.',true);}
   },Math.min(delay,86400000)));
@@ -1116,6 +1116,6 @@ document.getElementById('f-subtarea-nueva').addEventListener('keydown', e => { i
 
 window.addEventListener('DOMContentLoaded',init);
 </script>
-<script src="task-sync.js?v=20261025e"></script>
+<script src="task-sync.js?v=20261026a"></script>
 </body>
 </html>

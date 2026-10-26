@@ -1,6 +1,6 @@
 /* One query model for the movement list. Periods always refer to local dates. */
 (function(root){
-  const PERIODS=Object.freeze(['semana','hoy','mes','anteriores','todos']);
+  const PERIODS=Object.freeze(['semana','pasada','hoy','mes','anteriores','todos']);
   const STATES=Object.freeze(['todos','pendiente','abonado']);
   const TYPES=Object.freeze(['todos','gastos','abonos']);
   const BUDGETS=Object.freeze(['todos','incluidos','excluidos']);
@@ -17,13 +17,15 @@
   function range(period,today=dateKey(new Date())){
     const key=date(today);if(!key)throw new Error('Fecha de referencia inválida');
     const [year,month,day]=key.split('-').map(Number),now=new Date(year,month-1,day,12);
-    const monday=new Date(now);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
+    // Expense weeks run from Saturday through Friday, using local calendar days.
+    const start=new Date(now);start.setDate(start.getDate()-(start.getDay()+1)%7);
     if(period==='todos')return {from:null,to:null};
     if(period==='hoy')return {from:key,to:key};
     if(period==='mes')return {from:dateKey(new Date(year,month-1,1,12)),to:dateKey(new Date(year,month,0,12))};
-    if(period==='anteriores'){const previous=new Date(monday);previous.setDate(previous.getDate()-1);return {from:null,to:dateKey(previous)};}
-    const sunday=new Date(monday);sunday.setDate(sunday.getDate()+6);
-    return {from:dateKey(monday),to:dateKey(sunday)};
+    if(period==='anteriores'){const previous=new Date(start);previous.setDate(previous.getDate()-1);return {from:null,to:dateKey(previous)};}
+    if(period==='pasada')start.setDate(start.getDate()-7);
+    const end=new Date(start);end.setDate(end.getDate()+6);
+    return {from:dateKey(start),to:dateKey(end)};
   }
   function paymentState(record){return flag(record.abonoTarjeta)?null:flag(record.abonado)?'abonado':'pendiente';}
   function collect(active=[],historical=[]){

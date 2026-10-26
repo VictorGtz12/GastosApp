@@ -1,5 +1,5 @@
-const CACHE = 'gastos-v2.79';
-const ASSETS = ['./', './index.html', './db.js?v=2', './app.js?v=20261025e', './despensa.js?v=20261025e', './mobile.css?v=20261025e', './mobile-ui.js?v=20261025e', './movement-filters.js?v=20261025e', './theme.js?v=20261025e', './tasks.html', './task-sync.js?v=20261025e', './manifest.json', './icon-192.png?v=20261025e', './icon-512.png?v=20261025e', './apple-touch-icon.png?v=20261025e', './favicon-32.png?v=20261025e'];
+const CACHE = 'gastos-v2.80';
+const ASSETS = ['./', './index.html', './db.js?v=2', './app.js?v=20261026a', './despensa.js?v=20261026a', './mobile.css?v=20261026a', './mobile-ui.js?v=20261026a', './movement-filters.js?v=20261026a', './theme.js?v=20261026a', './tasks.html', './task-sync.js?v=20261026a', './manifest.json', './icon-192.png?v=20261026a', './icon-512.png?v=20261026a', './apple-touch-icon.png?v=20261026a', './favicon-32.png?v=20261026a'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -48,7 +48,7 @@ self.addEventListener('fetch', e => {
 self.addEventListener('push', e => {
   const data = e.data?.json() || { title: '📅 Corte próximo', body: 'Revisa tu tarjeta' };
   e.waitUntil(self.registration.showNotification(data.title, {
-    body: data.body, icon: './icon-192.png?v=20261025e', badge: './icon-192.png?v=20261025e', tag: data.tag || 'gastos'
+    body: data.body, icon: './icon-192.png?v=20261026a', badge: './icon-192.png?v=20261026a', tag: data.tag || 'gastos'
   }));
 });
 
@@ -62,7 +62,7 @@ self.addEventListener('message', e => {
   if (e.data?.type === 'SCHEDULE_NOTIFICATION') {
     const { title, body, delay, tag } = e.data;
     setTimeout(() => {
-      self.registration.showNotification(title, { body, icon: './icon-192.png?v=20261025e', tag });
+      self.registration.showNotification(title, { body, icon: './icon-192.png?v=20261026a', tag });
     }, delay);
   }
 });

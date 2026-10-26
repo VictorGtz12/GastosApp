@@ -2,18 +2,18 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {execFileSync}=require('node:child_process');
 const F=require('../movement-filters.js');
-const today='2026-10-25'; // Sunday: week is October 19–25.
+const today='2026-10-25'; // Sunday: expense week is October 24–30.
 const make=(id,fecha,fields={})=>({id,fecha,comentarios:'Compra '+id,cuenta:'Tarjeta',motivo:'Comida',cantidad:10,abonado:false,ignorar:false,externo:'no',...fields});
 const rows=[
-  make(1,'2026-10-19'),make(2,today,{abonado:true}),make(3,'2026-10-18'),
-  make(4,'2026-10-26'),make(5,today,{abonoTarjeta:true,abonado:true,ignorar:true}),
+  make(1,'2026-10-24'),make(2,today,{abonado:true}),make(3,'2026-10-23'),
+  make(4,'2026-10-31'),make(5,today,{abonoTarjeta:true,abonado:true,ignorar:true}),
   make(6,today,{ignorar:true}),make(7,today,{externo:'externo'}),
   make(8,today,{cuenta:'Débito',motivo:'Otros',cantidad:25}),make(9,'2026-09-30'),
   make(10,'2026-11-01'),make(11,'fecha inválida'),make(12,today,{externo:'pagado'})
 ];
 const ids=rows=>rows.map(r=>r.id).sort((a,b)=>a-b);
-test('1,215 combinations intersect date, state, type, budget, account and category',()=>{
-  const dateIds={semana:[1,2,5,6,7,8,12],hoy:[2,5,6,7,8,12],mes:[1,2,3,4,5,6,7,8,12],anteriores:[3,9],todos:rows.map(r=>r.id)};
+test('1,458 combinations intersect date, state, type, budget, account and category',()=>{
+  const dateIds={semana:[1,2,5,6,7,8,12],pasada:[3],hoy:[2,5,6,7,8,12],mes:[1,2,3,4,5,6,7,8,12],anteriores:[3,9],todos:rows.map(r=>r.id)};
   let combinations=0;
   for(const period of F.PERIODS)for(const state of F.STATES)for(const type of F.TYPES)
   for(const budget of F.BUDGETS)for(const account of ['', 'Tarjeta','Débito'])for(const category of ['', 'Comida','Otros']){
@@ -26,25 +26,44 @@ test('1,215 combinations intersect date, state, type, budget, account and catego
     assert.deepEqual(ids(F.query(rows,filters,today)),ids(expected),JSON.stringify(filters));
     combinations++;
   }
-  assert.equal(combinations,1215);
+  assert.equal(combinations,1458);
 });
-test('Monday and Sunday are inclusive; adjacent weeks never leak',()=>{
-  for(const now of ['2026-10-19','2026-10-21','2026-10-25']){
-    assert.deepEqual(F.range('semana',now),{from:'2026-10-19',to:'2026-10-25'});
+test('Saturday through Friday stay in one expense week, including Sunday and Monday',()=>{
+  for(const now of ['2026-10-24','2026-10-25','2026-10-26','2026-10-27','2026-10-28','2026-10-29','2026-10-30']){
+    assert.deepEqual(F.range('semana',now),{from:'2026-10-24',to:'2026-10-30'});
+    assert.deepEqual(F.range('pasada',now),{from:'2026-10-17',to:'2026-10-23'});
+    assert.deepEqual(F.range('anteriores',now),{from:null,to:'2026-10-23'});
     assert.deepEqual(ids(F.query(rows,{period:'semana'},now)),[1,2,5,6,7,8,12]);
   }
 });
+test('Friday and Saturday boundaries separate current, last and older weeks',()=>{
+  const records=['2026-10-16','2026-10-17','2026-10-23','2026-10-24','2026-10-30','2026-10-31'].map((fecha,index)=>make(index+1,fecha));
+  assert.deepEqual(ids(F.query(records,{period:'semana'},'2026-10-23')),[2,3]);
+  assert.deepEqual(ids(F.query(records,{period:'pasada'},'2026-10-23')),[1]);
+  for(const now of ['2026-10-24','2026-10-30']){
+    assert.deepEqual(ids(F.query(records,{period:'semana'},now)),[4,5]);
+    assert.deepEqual(ids(F.query(records,{period:'pasada'},now)),[2,3]);
+    assert.deepEqual(ids(F.query(records,{period:'anteriores'},now)),[1,2,3]);
+  }
+  assert.deepEqual(ids(F.query(records,{period:'semana'},'2026-10-31')),[6]);
+  assert.deepEqual(ids(F.query(records,{period:'pasada'},'2026-10-31')),[4,5]);
+});
 test('calendar boundaries handle years, leap days and full months',()=>{
-  assert.deepEqual(F.range('semana','2027-01-01'),{from:'2026-12-28',to:'2027-01-03'});
-  assert.deepEqual(F.range('anteriores','2027-01-01'),{from:null,to:'2026-12-27'});
+  assert.deepEqual(F.range('semana','2027-01-01'),{from:'2026-12-26',to:'2027-01-01'});
+  assert.deepEqual(F.range('pasada','2027-01-01'),{from:'2026-12-19',to:'2026-12-25'});
+  assert.deepEqual(F.range('anteriores','2027-01-01'),{from:null,to:'2026-12-25'});
+  assert.deepEqual(F.range('semana','2027-01-02'),{from:'2027-01-02',to:'2027-01-08'});
+  assert.deepEqual(F.range('pasada','2027-01-02'),{from:'2026-12-26',to:'2027-01-01'});
+  assert.deepEqual(F.range('semana','2024-02-29'),{from:'2024-02-24',to:'2024-03-01'});
+  assert.deepEqual(F.range('pasada','2024-03-02'),{from:'2024-02-24',to:'2024-03-01'});
   assert.deepEqual(F.range('mes','2024-02-20'),{from:'2024-02-01',to:'2024-02-29'});
   assert.deepEqual(F.range('mes','2025-02-20'),{from:'2025-02-01',to:'2025-02-28'});
   assert.deepEqual(F.range('mes','2026-12-01'),{from:'2026-12-01',to:'2026-12-31'});
 });
 test('local week boundaries survive DST and differing time zones',()=>{
   for(const TZ of ['America/Los_Angeles','America/Mexico_City','Pacific/Auckland']){
-    const actual=JSON.parse(execFileSync(process.execPath,['-e',`const f=require('./movement-filters.js');console.log(JSON.stringify([f.range('semana','2026-03-08'),f.range('semana','2026-11-01')]));`],{cwd:require('node:path').resolve(__dirname,'..'),env:{...process.env,TZ},encoding:'utf8'}));
-    assert.deepEqual(actual,[{from:'2026-03-02',to:'2026-03-08'},{from:'2026-10-26',to:'2026-11-01'}],TZ);
+    const actual=JSON.parse(execFileSync(process.execPath,['-e',`const f=require('./movement-filters.js');console.log(JSON.stringify(['semana','pasada'].flatMap(period=>['2026-03-08','2026-11-01'].map(day=>f.range(period,day)))));`],{cwd:require('node:path').resolve(__dirname,'..'),env:{...process.env,TZ},encoding:'utf8'}));
+    assert.deepEqual(actual,[{from:'2026-03-07',to:'2026-03-13'},{from:'2026-10-31',to:'2026-11-06'},{from:'2026-02-28',to:'2026-03-06'},{from:'2026-10-24',to:'2026-10-30'}],TZ);
   }
 });
 test('invalid dates stay out of bounded periods and remain discoverable in all dates',()=>{
